@@ -11,6 +11,12 @@ import java.util.regex.Pattern;
 
 public class NgSpiceRunner {
 
+    /**
+     * Prefer ngspice_con (Windows console build — no GUI window) over ngspice.
+     * Falls back to ngspice if ngspice_con is not found.
+     */
+    private static final String[] CANDIDATES = { "ngspice_con", "ngspice" };
+
     public static class Result {
         public List<String> output = new ArrayList<>();
         public String error = null;
@@ -34,7 +40,6 @@ public class NgSpiceRunner {
         }
 
         public String getBranchCurrent(String sourceName) {
-            // Try exact and case-insensitive match for "sourceName#branch"
             String key = sourceName.toLowerCase() + "#branch";
             for (Map.Entry<String, Double> entry : branchCurrents.entrySet()) {
                 if (entry.getKey().toLowerCase().equals(key)
@@ -42,7 +47,6 @@ public class NgSpiceRunner {
                     return String.format("%.6f A", entry.getValue());
                 }
             }
-            // Also try without #branch suffix
             for (Map.Entry<String, Double> entry : branchCurrents.entrySet()) {
                 if (entry.getKey().toLowerCase().contains(sourceName.toLowerCase())) {
                     return String.format("%.6f A", entry.getValue());
@@ -68,45 +72,33 @@ public class NgSpiceRunner {
             return result;
         }
 
-        // Check ngspice is available
-        try {
-            Process testProcess = new ProcessBuilder("ngspice", "-v")
-                    .redirectErrorStream(true).start();
-            boolean finished = testProcess.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-            if (!finished) {
-                testProcess.destroyForcibly();
-                result.error = "ngspice did not respond.";
-                return result;
-            }
-        } catch (IOException e) {
-            result.error = "ngspice was not found. Please install ngspice and add it to your PATH.";
-            return result;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            result.error = "ngspice check was interrupted.";
+        // Find the best available ngspice executable
+        String executable = resolveExecutable();
+        if (executable == null) {
+            result.error = "ngspice was not found. Please install ngspice and ensure " +
+                    "ngspice_con.exe (or ngspice) is on your PATH.";
             return result;
         }
 
         Path outputFile = tempDir.resolve("output.txt");
 
-        // Run ngspice — redirect stderr to NUL/dev/null to suppress info messages
         Process process;
         try {
             ProcessBuilder pb = new ProcessBuilder(
-                    "ngspice", "-b", "-o",
+                    executable, "-b", "-o",
                     outputFile.toAbsolutePath().toString(),
                     netlistFile.toAbsolutePath().toString()
             );
-            // Suppress stderr (the "Information during setup" message comes from stderr)
+            // Discard stderr — suppresses "Information during setup" on both builds
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             pb.directory(tempDir.toFile());
             process = pb.start();
         } catch (IOException e) {
-            result.error = "Failed to start ngspice: " + e.getMessage();
+            result.error = "Failed to start " + executable + ": " + e.getMessage();
             return result;
         }
 
-        // Capture stdout only
+        // Drain stdout (ngspice_con writes some info there; we use the -o file instead)
         String stdoutText;
         try {
             stdoutText = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -129,18 +121,16 @@ public class NgSpiceRunner {
             return result;
         }
 
-        // Read the -o output file
+        // Read the -o output file; fall back to stdout
         String fileText = "";
         if (Files.exists(outputFile)) {
             try {
                 fileText = Files.readString(outputFile, StandardCharsets.UTF_8);
             } catch (IOException ignored) {}
         }
-
-        // Use file output as primary, stdout as fallback
         String fullOutput = fileText.isEmpty() ? stdoutText : fileText;
 
-        // Clean up
+        // Clean up temp files
         try {
             Files.deleteIfExists(netlistFile);
             Files.deleteIfExists(outputFile);
@@ -182,32 +172,52 @@ public class NgSpiceRunner {
         return result;
     }
 
+    /**
+     * Try each candidate executable in order; return the first one that responds
+     * to a quick version check, or null if none are available.
+     */
+    private static String resolveExecutable() {
+        for (String candidate : CANDIDATES) {
+            try {
+                Process p = new ProcessBuilder(candidate, "-v")
+                        .redirectErrorStream(true)
+                        .start();
+                // Drain output so the process doesn't hang
+                p.getInputStream().readAllBytes();
+                boolean finished = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+                if (!finished) {
+                    p.destroyForcibly();
+                    continue;
+                }
+                return candidate; // found one that works
+            } catch (IOException | InterruptedException ignored) {
+                // Not available, try next
+            }
+        }
+        return null;
+    }
+
     private static void parseOutput(String output, Result result) {
         String[] lines = output.split("\n");
 
-        Pattern sciPattern = Pattern.compile(
-                "^\\s*([a-zA-Z][a-zA-Z0-9_#]*)\\s+([-+]?[0-9]*\\.?[0-9]+[eE][-+]?[0-9]+)\\s*$");
-        Pattern decPattern = Pattern.compile(
-                "^\\s*([a-zA-Z][a-zA-Z0-9_#]*)\\s+([-+]?[0-9]+\\.?[0-9]*)\\s*$");
-
-        boolean inNodeSection = false;
+        boolean inNodeSection    = false;
         boolean inCurrentSection = false;
 
         for (String rawLine : lines) {
             String line = rawLine.trim();
 
             if (line.toLowerCase().contains("node") && line.toLowerCase().contains("voltage")) {
-                inNodeSection = true;
+                inNodeSection    = true;
                 inCurrentSection = false;
                 continue;
             }
             if (line.toLowerCase().contains("voltage source") && line.toLowerCase().contains("current")) {
                 inCurrentSection = true;
-                inNodeSection = false;
+                inNodeSection    = false;
                 continue;
             }
             if (line.isEmpty()) {
-                inNodeSection = false;
+                inNodeSection    = false;
                 inCurrentSection = false;
                 continue;
             }
@@ -217,7 +227,7 @@ public class NgSpiceRunner {
                 if (parts.length >= 2) {
                     try {
                         double value = Double.parseDouble(parts[parts.length - 1]);
-                        String name = parts[0].toLowerCase();
+                        String name  = parts[0].toLowerCase();
                         if (inNodeSection && !name.contains("#")) {
                             result.nodeVoltages.put(name, value);
                         } else if (name.contains("#branch")) {
