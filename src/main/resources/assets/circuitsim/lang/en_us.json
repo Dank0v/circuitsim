@@ -1,0 +1,31 @@
+{
+    "block.circuitsim.resistor": "Resistor",
+    "block.circuitsim.capacitor": "Capacitor",
+    "block.circuitsim.inductor": "Inductor",
+    "block.circuitsim.voltage_source": "Voltage Source",
+    "block.circuitsim.current_source": "Current Source",
+    "block.circuitsim.diode": "Diode",
+    "block.circuitsim.wire": "Wire",
+    "block.circuitsim.ground": "Ground",
+    "block.circuitsim.probe": "Probe",
+    "block.circuitsim.current_probe": "Current Probe",
+    "block.circuitsim.simulate": "Simulate Block",
+
+    "gui.circuitsim.title": "Edit Component",
+    "gui.circuitsim.value": "Value:",
+    "gui.circuitsim.resistance": "Resistance (\u03A9):",
+    "gui.circuitsim.capacitance": "Capacitance (F):",
+    "gui.circuitsim.inductance": "Inductance (H):",
+    "gui.circuitsim.voltage": "Voltage (V):",
+    "gui.circuitsim.current": "Current (A):",
+    "gui.circuitsim.source_type": "Source Type (DC/AC):",
+    "gui.circuitsim.frequency": "Frequency (Hz):",
+    "gui.circuitsim.probe_label": "Probe Label:",
+    "gui.circuitsim.done": "Done",
+
+    "chat.circuitsim.simulation_start": "Starting circuit simulation...",
+    "chat.circuitsim.simulation_complete": "=== Simulation Complete ===",
+    "chat.circuitsim.simulation_error": "Simulation error: %s",
+    "chat.circuitsim.ngspice_not_found": "ngspice was not found. Please install it and add it to your PATH.",
+    "chat.circuitsim.no_circuit": "No connected circuit found! Place component blocks and wires adjacent to the Simulate Block."
+}

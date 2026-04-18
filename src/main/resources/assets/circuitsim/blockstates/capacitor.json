@@ -1,0 +1,8 @@
+{
+    "variants": {
+        "facing=north": { "model": "circuitsim:block/capacitor" },
+        "facing=south": { "model": "circuitsim:block/capacitor", "y": 180 },
+        "facing=east":  { "model": "circuitsim:block/capacitor", "y": 90 },
+        "facing=west":  { "model": "circuitsim:block/capacitor", "y": 270 }
+    }
+}

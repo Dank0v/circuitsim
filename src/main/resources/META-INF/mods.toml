@@ -1,0 +1,28 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="circuitsim"
+version="1.0.0"
+displayName="Circuit Simulator"
+authors="circuitium"
+description='''
+A Minecraft mod that integrates ngspice circuit simulation.
+Place blocks to represent electronic components, connect them with wires,
+and simulate circuits using ngspice.
+'''
+
+[[dependencies.circuitsim]]
+modId="forge"
+mandatory=true
+versionRange="[47,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.circuitsim]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.21)"
+ordering="NONE"
+side="BOTH"

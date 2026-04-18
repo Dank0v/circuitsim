@@ -1,0 +1,8 @@
+{
+    "variants": {
+        "facing=north": { "model": "circuitsim:block/resistor" },
+        "facing=south": { "model": "circuitsim:block/resistor", "y": 180 },
+        "facing=east":  { "model": "circuitsim:block/resistor", "y": 90 },
+        "facing=west":  { "model": "circuitsim:block/resistor", "y": 270 }
+    }
+}

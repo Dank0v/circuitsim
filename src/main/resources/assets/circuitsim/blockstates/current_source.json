@@ -1,0 +1,8 @@
+{
+    "variants": {
+        "facing=north": { "model": "circuitsim:block/current_source" },
+        "facing=south": { "model": "circuitsim:block/current_source", "y": 180 },
+        "facing=east":  { "model": "circuitsim:block/current_source", "y": 90 },
+        "facing=west":  { "model": "circuitsim:block/current_source", "y": 270 }
+    }
+}

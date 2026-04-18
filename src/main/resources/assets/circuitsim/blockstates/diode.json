@@ -1,0 +1,8 @@
+{
+    "variants": {
+        "facing=north": { "model": "circuitsim:block/diode" },
+        "facing=south": { "model": "circuitsim:block/diode", "y": 180 },
+        "facing=east":  { "model": "circuitsim:block/diode", "y": 90 },
+        "facing=west":  { "model": "circuitsim:block/diode", "y": 270 }
+    }
+}
