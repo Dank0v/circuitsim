@@ -17,7 +17,6 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
 
     private EditBox valueField;
     private EditBox sourceTypeField;
-    private EditBox frequencyField;
     private EditBox labelField;
     private Button doneButton;
     private Button cancelButton;
@@ -25,7 +24,6 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
 
     private boolean showValue;
     private boolean showSourceType;
-    private boolean showFrequency;
     private boolean showLabel;
 
     /**
@@ -63,13 +61,11 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
 
         double currentValue      = 0.0;
         String currentSourceType = "DC";
-        double currentFrequency  = 60.0;
         String currentLabel      = "";
 
         if (be instanceof ComponentBlockEntity cbe) {
             currentValue      = cbe.getValue();
             currentSourceType = cbe.getSourceType();
-            currentFrequency  = cbe.getFrequency();
             currentLabel      = cbe.getLabel();
             componentType     = cbe.getComponentType();
         } else {
@@ -83,13 +79,11 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
 
         showValue      = !isProbe && !isCurrentProbe && !isDiode;
         showSourceType = isVoltSrc;
-        showFrequency  = isVoltSrc;
         showLabel      = isProbe || isCurrentProbe;
 
         int rowCount = 0;
         if (showValue)      rowCount++;
         if (showSourceType) rowCount++;
-        if (showFrequency)  rowCount++;
         if (showLabel)      rowCount++;
 
         // top(10) + title(10) + underline-gap(10) + rows + buttons-area(36)
@@ -110,10 +104,6 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         }
         if (showSourceType) {
             sourceTypeField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW, currentSourceType, 8);
-            cursorY += ROW_H;
-        }
-        if (showFrequency) {
-            frequencyField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW, formatValue(currentFrequency), 32);
             cursorY += ROW_H;
         }
         if (showLabel) {
@@ -203,11 +193,6 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
                     "Source Type (DC / AC):", labelX, cursorY, LABEL_COLOR);
             cursorY += ROW_H;
         }
-        if (showFrequency) {
-            g.drawString(Minecraft.getInstance().font,
-                    "Frequency (Hz):", labelX, cursorY, LABEL_COLOR);
-            cursorY += ROW_H;
-        }
         if (showLabel) {
             g.drawString(Minecraft.getInstance().font,
                     "Probe Label:", labelX, cursorY, LABEL_COLOR);
@@ -228,16 +213,12 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         if (sourceTypeField != null) {
             srcType = "AC".equalsIgnoreCase(sourceTypeField.getValue()) ? "AC" : "DC";
         }
-        double freq = 60.0;
-        if (frequencyField != null) {
-            try { freq = Double.parseDouble(frequencyField.getValue()); }
-            catch (NumberFormatException ignored) {}
-        }
         String lbl = "";
         if (labelField != null) {
             lbl = labelField.getValue();
         }
-        ModMessages.sendToServer(new ComponentUpdatePacket(pos, value, srcType, freq, lbl));
+        // frequency is no longer user-configurable; pass 0 to preserve packet compatibility
+        ModMessages.sendToServer(new ComponentUpdatePacket(pos, value, srcType, 0.0, lbl));
     }
 
     private String getValueLabel(String type) {

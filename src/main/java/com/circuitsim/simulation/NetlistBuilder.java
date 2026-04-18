@@ -20,7 +20,6 @@ public class NetlistBuilder {
         for (CircuitComponent comp : components) {
             String line;
             if (comp.block instanceof ResistorBlock) {
-                // Resistors are non-polar, order doesn't matter
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
 
             } else if (comp.block instanceof CapacitorBlock) {
@@ -30,24 +29,20 @@ public class NetlistBuilder {
                 line = String.format("L%d %d %d %g", lCount++, comp.nodeA, comp.nodeB, comp.value);
 
             } else if (comp.block instanceof VoltageSourceBlock) {
-                // nodeA = front face (the direction the block faces) = positive terminal
-                // nodeB = back face = negative terminal (connected to ground)
-                // ngspice: V name <positive node> <negative node> value
+                // nodeA = front face (positive terminal), nodeB = back face (negative terminal)
+                // For AC: use "AC <amplitude>" — frequency is set by the .AC analysis card later
                 if ("AC".equalsIgnoreCase(comp.sourceType)) {
-                    line = String.format("V%d %d %d SINE(0 %g %g)",
-                            vCount++, comp.nodeA, comp.nodeB, comp.value, comp.frequency);
+                    line = String.format("V%d %d %d AC %g",
+                            vCount++, comp.nodeA, comp.nodeB, comp.value);
                 } else {
                     line = String.format("V%d %d %d DC %g",
                             vCount++, comp.nodeA, comp.nodeB, comp.value);
                 }
 
             } else if (comp.block instanceof CurrentSourceBlock) {
-                // ngspice: I name <positive node> <negative node> value
-                // current flows from negative to positive internally (conventional)
                 line = String.format("I%d %d %d DC %g", iCount++, comp.nodeA, comp.nodeB, comp.value);
 
             } else if (comp.block instanceof DiodeBlock) {
-                // Diode: nodeA = anode (front/facing), nodeB = cathode (back)
                 line = String.format("D%d %d %d DMOD", dCount++, comp.nodeA, comp.nodeB);
                 hasDiode = true;
 
