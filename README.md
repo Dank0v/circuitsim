@@ -1,5 +1,8 @@
 # CircuitSim — A Minecraft Circuit Simulation Mod
  
+![CircuitSim Preview](images/preview.png)
+
+
 > **This mod was built entirely with AI assistance.**
  
 CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build and simulate real electronic circuits inside the game. Place component blocks in the world, connect them with wires, and right-click the **Simulate Block** to run a full SPICE simulation powered by [ngspice](https://ngspice.sourceforge.io/).
@@ -26,10 +29,24 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
  
 ## Installation
  
-1. Install Minecraft Forge 47.3.0 for Minecraft 1.20.1.
-2. Install ngspice and make sure the `ngspice` command works in your terminal.
-3. Drop the compiled `.jar` into your `mods/` folder.
-4. Launch the game.
+1. Install **Java 17** and **Minecraft Forge 47.3.0** for Minecraft 1.20.1.
+2. Install [ngspice](https://ngspice.sourceforge.io/) and make sure `ngspice_con` (Windows) or `ngspice` (Linux/Mac) is accessible from your terminal.
+3. Clone this repository:
+   ```bash
+   git clone https://github.com/your-username/circuitsim.git
+   cd circuitsim
+   ```
+4. Build the mod using the Gradle wrapper:
+   ```bash
+   # Windows
+   gradlew.bat build
+ 
+   # Linux / Mac
+   ./gradlew build
+   ```
+5. Find the compiled `.jar` in `build/libs/` — it will be named something like `circuitsim-1.0.0.jar`.
+6. Drop that `.jar` into your Minecraft `mods/` folder.
+7. Launch the game.
 ---
  
 ## How to Use
@@ -49,6 +66,7 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
  
 - **Broken Current Probe** — the current probe is not working.
 - **Only .OP Simulation** — add .DC, .AC, .TRAN, in the future
+- **Better Component Value Editing** — add SI prefix
  
 ---
  
