@@ -47,7 +47,6 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
  
 ## Known Issues / TODO
  
-- **No Directional Blocks** — the blocks right now can't be rotated.
 - **Broken Current Probe** — the current probe is not working.
 - **Only .OP Simulation** — add .DC, .AC, .TRAN, in the future
  

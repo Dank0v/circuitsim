@@ -1,6 +1,8 @@
 {
-    "parent": "minecraft:block/cube_all",
+    "parent": "minecraft:block/orientable",
     "textures": {
-        "all": "circuitsim:block/voltage_source"
+        "top":   "circuitsim:block/voltage_source",
+        "side":  "circuitsim:block/voltage_source",
+        "front": "circuitsim:block/voltage_source_front"
     }
 }

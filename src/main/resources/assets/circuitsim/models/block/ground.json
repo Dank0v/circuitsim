@@ -1,6 +1,8 @@
 {
-    "parent": "minecraft:block/cube_all",
+    "parent": "minecraft:block/orientable",
     "textures": {
-        "all": "circuitsim:block/ground"
+        "top":   "circuitsim:block/ground",
+        "side":  "circuitsim:block/ground",
+        "front": "circuitsim:block/ground_front"
     }
 }

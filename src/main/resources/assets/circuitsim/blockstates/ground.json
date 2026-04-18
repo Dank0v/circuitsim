@@ -1,5 +1,8 @@
 {
     "variants": {
-        "": { "model": "circuitsim:block/ground" }
+        "facing=north": { "model": "circuitsim:block/ground" },
+        "facing=south": { "model": "circuitsim:block/ground", "y": 180 },
+        "facing=east":  { "model": "circuitsim:block/ground", "y": 90 },
+        "facing=west":  { "model": "circuitsim:block/ground", "y": 270 }
     }
 }
