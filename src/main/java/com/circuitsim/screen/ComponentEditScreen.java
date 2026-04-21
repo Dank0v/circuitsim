@@ -200,14 +200,126 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
     }
 
     // -------------------------------------------------------------------------
+    // SI suffix parsing and formatting
+    // -------------------------------------------------------------------------
+
+    /**
+     * Parses a string that may include an SI suffix into a double.
+     * Supported suffixes (case-sensitive where ambiguous):
+     *   f=1e-15, p=1e-12, n=1e-9, u/µ=1e-6, m=1e-3,
+     *   k/K=1e3, M/Meg/meg=1e6, G=1e9, T=1e12
+     * Plain numbers (with or without exponent notation) are also accepted.
+     */
+    public static double parseSI(String raw) throws NumberFormatException {
+        if (raw == null) throw new NumberFormatException("null input");
+        String s = raw.trim();
+        if (s.isEmpty()) throw new NumberFormatException("empty input");
+
+        // Try plain double first (handles "1e3", "0.5", etc.)
+        try {
+            return Double.parseDouble(s);
+        } catch (NumberFormatException ignored) {}
+
+        // Split at last alphabetic character(s)
+        // Regex: a numeric part (optionally including sign and decimal) followed by a suffix
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("^([+\\-]?[0-9]*\\.?[0-9]+(?:[eE][+\\-]?[0-9]+)?)(\\s*)([a-zA-Zµ]+)$")
+                .matcher(s);
+        if (!m.matches()) throw new NumberFormatException("Cannot parse: " + raw);
+
+        double base = Double.parseDouble(m.group(1));
+        String suffix = m.group(3);
+
+        double multiplier = switch (suffix) {
+            case "f"             -> 1e-15;
+            case "p"             -> 1e-12;
+            case "n"             -> 1e-9;
+            case "u", "µ"        -> 1e-6;
+            case "m"             -> 1e-3;
+            case "k", "K"        -> 1e3;
+            case "M", "Meg", "meg", "MEG" -> 1e6;
+            case "G"             -> 1e9;
+            case "T"             -> 1e12;
+            // Allow unit letters to be appended (e.g. "10kΩ", "4.7uF") — strip them
+            default -> {
+                // Try again after stripping trailing unit letters (Ω, F, H, V, A, R, etc.)
+                String stripped = suffix.replaceAll("[ΩFHVAROhm]+$", "");
+                if (stripped.isEmpty()) yield 1.0; // pure unit suffix, no multiplier
+                yield switch (stripped) {
+                    case "f"             -> 1e-15;
+                    case "p"             -> 1e-12;
+                    case "n"             -> 1e-9;
+                    case "u", "µ"        -> 1e-6;
+                    case "m"             -> 1e-3;
+                    case "k", "K"        -> 1e3;
+                    case "M", "Meg", "meg", "MEG" -> 1e6;
+                    case "G"             -> 1e9;
+                    case "T"             -> 1e12;
+                    default -> throw new NumberFormatException("Unknown suffix: " + suffix);
+                };
+            }
+        };
+
+        return base * multiplier;
+    }
+
+    /**
+     * Formats a raw double into a compact string with an SI suffix.
+     * Used to pre-populate the edit field.
+     * Examples: 1000.0 → "1k", 0.000047 → "47u", 5.0 → "5"
+     */
+    public static String formatValue(double val) {
+        if (val == 0.0) return "0";
+
+        double abs = Math.abs(val);
+
+        // Pick the best prefix tier
+        double[][] tiers = {
+                {1e12,  1e15, 1e12, -1},  // T
+                {1e9,   1e12, 1e9,  -1},  // G
+                {1e6,   1e9,  1e6,  -1},  // Meg
+                {1e3,   1e6,  1e3,  -1},  // k
+                {1e0,   1e3,  1e0,  -1},  // (none)
+                {1e-3,  1e0,  1e-3, -1},  // m
+                {1e-6,  1e-3, 1e-6, -1},  // u
+                {1e-9,  1e-6, 1e-9, -1},  // n
+                {1e-12, 1e-9, 1e-12,-1},  // p
+                {1e-15, 1e-12,1e-15,-1},  // f
+        };
+        String[] names = {"T", "G", "Meg", "k", "", "m", "u", "n", "p", "f"};
+
+        for (int i = 0; i < tiers.length; i++) {
+            if (abs >= tiers[i][0] && abs < tiers[i][1]) {
+                double scaled = val / tiers[i][2];
+                String number = trimTrailingZeros(String.format("%.6f", scaled));
+                return number + names[i];
+            }
+        }
+
+        // Fallback: use plain scientific notation string
+        return String.valueOf(val);
+    }
+
+    /** Strips trailing zeros after a decimal point (and the point itself if nothing follows). */
+    private static String trimTrailingZeros(String s) {
+        if (!s.contains(".")) return s;
+        s = s.replaceAll("0+$", "");
+        if (s.endsWith(".")) s = s.substring(0, s.length() - 1);
+        return s;
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
     private void sendUpdatePacket(net.minecraft.core.BlockPos pos) {
         double value = 0.0;
         if (valueField != null) {
-            try { value = Double.parseDouble(valueField.getValue()); }
-            catch (NumberFormatException ignored) {}
+            try {
+                value = parseSI(valueField.getValue());
+            } catch (NumberFormatException ignored) {
+                // Leave value as 0 if the field can't be parsed
+            }
         }
         String srcType = "DC";
         if (sourceTypeField != null) {
@@ -244,11 +356,6 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
             case "current_probe"  -> "Current Probe";
             default               -> "Component";
         };
-    }
-
-    private String formatValue(double val) {
-        if (val == (long) val) return String.valueOf((long) val);
-        return String.valueOf(val);
     }
 
     // -------------------------------------------------------------------------
