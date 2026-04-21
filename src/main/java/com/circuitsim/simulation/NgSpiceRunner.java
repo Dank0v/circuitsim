@@ -6,51 +6,36 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class NgSpiceRunner {
 
-    /**
-     * Prefer ngspice_con (Windows console build — no GUI window) over ngspice.
-     * Falls back to ngspice if ngspice_con is not found.
-     */
     private static final String[] CANDIDATES = { "ngspice_con", "ngspice" };
 
     public static class Result {
         public List<String> output = new ArrayList<>();
         public String error = null;
-        public Map<String, Double> nodeVoltages = new LinkedHashMap<>();
-        public Map<String, Double> branchCurrents = new LinkedHashMap<>();
+        // Keys are lowercase, e.g. "v(1)", "i(vm1)"
+        public Map<String, Double> values = new LinkedHashMap<>();
 
+        /** Returns the voltage at the given node number, or "N/A". */
         public String getNodeVoltage(int nodeIndex) {
-            if (nodeIndex == 0) return "0.000 V (Ground)";
-            String[] keys = {"N" + nodeIndex, "n" + nodeIndex, String.valueOf(nodeIndex)};
-            for (String key : keys) {
-                if (nodeVoltages.containsKey(key)) {
-                    return String.format("%.6f V", nodeVoltages.get(key));
-                }
-            }
-            for (Map.Entry<String, Double> entry : nodeVoltages.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase("n" + nodeIndex)) {
-                    return String.format("%.6f V", entry.getValue());
-                }
+            if (nodeIndex == 0) return "0.000000 V (Ground)";
+            String key = "v(" + nodeIndex + ")";
+            if (values.containsKey(key)) {
+                return String.format("%.6f V", values.get(key));
             }
             return "N/A";
         }
 
+        /**
+         * Returns the current through the named voltage source (e.g. "vm1"), or "N/A".
+         * ngspice prints the current as negative when it flows into the + terminal,
+         * so we negate it to give the conventional "flowing through the branch" value.
+         */
         public String getBranchCurrent(String sourceName) {
-            String key = sourceName.toLowerCase() + "#branch";
-            for (Map.Entry<String, Double> entry : branchCurrents.entrySet()) {
-                if (entry.getKey().toLowerCase().equals(key)
-                        || entry.getKey().toLowerCase().equals(sourceName.toLowerCase())) {
-                    return String.format("%.6f A", entry.getValue());
-                }
-            }
-            for (Map.Entry<String, Double> entry : branchCurrents.entrySet()) {
-                if (entry.getKey().toLowerCase().contains(sourceName.toLowerCase())) {
-                    return String.format("%.6f A", entry.getValue());
-                }
+            String key = "i(" + sourceName.toLowerCase() + ")";
+            if (values.containsKey(key)) {
+                return String.format("%.6f A", values.get(key));
             }
             return "N/A";
         }
@@ -72,7 +57,6 @@ public class NgSpiceRunner {
             return result;
         }
 
-        // Find the best available ngspice executable
         String executable = resolveExecutable();
         if (executable == null) {
             result.error = "ngspice was not found. Please install ngspice and ensure " +
@@ -80,17 +64,12 @@ public class NgSpiceRunner {
             return result;
         }
 
-        Path outputFile = tempDir.resolve("output.txt");
-
+        // We do NOT use -o here because .control/print output goes to stdout, not the -o file.
+        // Redirect stderr to stdout so we capture everything in one stream.
         Process process;
         try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    executable, "-b", "-o",
-                    outputFile.toAbsolutePath().toString(),
-                    netlistFile.toAbsolutePath().toString()
-            );
-            // Discard stderr — suppresses "Information during setup" on both builds
-            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            ProcessBuilder pb = new ProcessBuilder(executable, "-b", netlistFile.toAbsolutePath().toString());
+            pb.redirectErrorStream(true);   // stderr -> stdout
             pb.directory(tempDir.toFile());
             process = pb.start();
         } catch (IOException e) {
@@ -98,10 +77,9 @@ public class NgSpiceRunner {
             return result;
         }
 
-        // Drain stdout (ngspice_con writes some info there; we use the -o file instead)
-        String stdoutText;
+        String fullOutput;
         try {
-            stdoutText = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            fullOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             result.error = "Failed to read ngspice output: " + e.getMessage();
             return result;
@@ -121,23 +99,11 @@ public class NgSpiceRunner {
             return result;
         }
 
-        // Read the -o output file; fall back to stdout
-        String fileText = "";
-        if (Files.exists(outputFile)) {
-            try {
-                fileText = Files.readString(outputFile, StandardCharsets.UTF_8);
-            } catch (IOException ignored) {}
-        }
-        String fullOutput = fileText.isEmpty() ? stdoutText : fileText;
-
-        // Clean up temp files
         try {
             Files.deleteIfExists(netlistFile);
-            Files.deleteIfExists(outputFile);
             Files.deleteIfExists(tempDir);
         } catch (IOException ignored) {}
 
-        // Check for fatal errors
         String lower = fullOutput.toLowerCase();
         if (lower.contains("fatal") || lower.contains("no dc path")
                 || lower.contains("singular matrix")) {
@@ -147,8 +113,8 @@ public class NgSpiceRunner {
 
         parseOutput(fullOutput, result);
 
-        if (result.nodeVoltages.isEmpty() && result.branchCurrents.isEmpty()) {
-            result.output.add("Simulation completed (no output values parsed).");
+        if (result.values.isEmpty()) {
+            result.output.add("Simulation completed (no values parsed).");
             result.output.add("--- Raw ngspice output ---");
             for (String line : fullOutput.split("\n")) {
                 if (!line.trim().isEmpty()) result.output.add("  " + line.trim());
@@ -156,122 +122,62 @@ public class NgSpiceRunner {
             return result;
         }
 
-        if (!result.nodeVoltages.isEmpty()) {
-            result.output.add("Node Voltages:");
-            for (Map.Entry<String, Double> entry : result.nodeVoltages.entrySet()) {
-                result.output.add(String.format("  %s = %.6f V", entry.getKey(), entry.getValue()));
-            }
-        }
-        if (!result.branchCurrents.isEmpty()) {
-            result.output.add("Branch Currents:");
-            for (Map.Entry<String, Double> entry : result.branchCurrents.entrySet()) {
-                result.output.add(String.format("  %s = %.6f A", entry.getKey(), entry.getValue()));
+        for (Map.Entry<String, Double> entry : result.values.entrySet()) {
+            String key = entry.getKey();
+            double val = entry.getValue();
+            if (key.startsWith("v(")) {
+                result.output.add(String.format("  %s = %.6f V", key, val));
+            } else if (key.startsWith("i(")) {
+                result.output.add(String.format("  %s = %.6f A", key, val));
+            } else {
+                result.output.add(String.format("  %s = %g", key, val));
             }
         }
 
         return result;
     }
 
-    /**
-     * Try each candidate executable in order; return the first one that responds
-     * to a quick version check, or null if none are available.
-     */
     private static String resolveExecutable() {
         for (String candidate : CANDIDATES) {
             try {
                 Process p = new ProcessBuilder(candidate, "-v")
                         .redirectErrorStream(true)
                         .start();
-                // Drain output so the process doesn't hang
                 p.getInputStream().readAllBytes();
                 boolean finished = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-                if (!finished) {
-                    p.destroyForcibly();
-                    continue;
-                }
-                return candidate; // found one that works
-            } catch (IOException | InterruptedException ignored) {
-                // Not available, try next
-            }
+                if (!finished) { p.destroyForcibly(); continue; }
+                return candidate;
+            } catch (IOException | InterruptedException ignored) {}
         }
         return null;
     }
 
+    /**
+     * Parses lines of the form produced by ngspice .control print:
+     *
+     *   v(1) = 5.000000e+00
+     *   i(vm1) = -5.000000e-03
+     *
+     * Keys are stored lowercase.
+     */
     private static void parseOutput(String output, Result result) {
-        String[] lines = output.split("\n");
-
-        boolean inNodeSection    = false;
-        boolean inCurrentSection = false;
-
-        for (String rawLine : lines) {
+        for (String rawLine : output.split("\n")) {
             String line = rawLine.trim();
+            if (!line.contains("=")) continue;
 
-            if (line.toLowerCase().contains("node") && line.toLowerCase().contains("voltage")) {
-                inNodeSection    = true;
-                inCurrentSection = false;
-                continue;
-            }
-            if (line.toLowerCase().contains("voltage source") && line.toLowerCase().contains("current")) {
-                inCurrentSection = true;
-                inNodeSection    = false;
-                continue;
-            }
-            if (line.isEmpty()) {
-                inNodeSection    = false;
-                inCurrentSection = false;
-                continue;
-            }
+            String[] parts = line.split("=", 2);
+            if (parts.length != 2) continue;
 
-            if (inNodeSection || inCurrentSection) {
-                String[] parts = line.split("\\s+");
-                if (parts.length >= 2) {
-                    try {
-                        double value = Double.parseDouble(parts[parts.length - 1]);
-                        String name  = parts[0].toLowerCase();
-                        if (inNodeSection && !name.contains("#")) {
-                            result.nodeVoltages.put(name, value);
-                        } else if (name.contains("#branch")) {
-                            result.branchCurrents.put(name, value);
-                        }
-                    } catch (NumberFormatException ignored) {}
-                }
-            }
+            String key = parts[0].trim().toLowerCase();
+            String valStr = parts[1].trim();
 
-            // v(N) = value from .PRINT output
-            Pattern printPattern = Pattern.compile(
-                    "v\\(([^)]+)\\)\\s+([-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?)");
-            Matcher m = printPattern.matcher(line.toLowerCase());
-            if (m.find()) {
-                try {
-                    result.nodeVoltages.put("n" + m.group(1), Double.parseDouble(m.group(2)));
-                } catch (NumberFormatException ignored) {}
-            }
+            // Must look like a known ngspice print key: v(...) or i(...)
+            if (!key.startsWith("v(") && !key.startsWith("i(")) continue;
 
-            // i(VMx) = value from .PRINT output
-            Pattern currentPrintPattern = Pattern.compile(
-                    "i\\(([^)]+)\\)\\s+([-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?)");
-            Matcher cm = currentPrintPattern.matcher(line.toLowerCase());
-            if (cm.find()) {
-                try {
-                    result.branchCurrents.put(cm.group(1), Double.parseDouble(cm.group(2)));
-                } catch (NumberFormatException ignored) {}
-            }
-
-            // key = value format
-            if (line.contains("=")) {
-                String[] parts = line.split("=", 2);
-                if (parts.length == 2) {
-                    String key = parts[0].trim().toLowerCase();
-                    try {
-                        double d = Double.parseDouble(parts[1].trim());
-                        if (key.contains("#branch")) {
-                            result.branchCurrents.put(key, d);
-                        } else if (!key.isEmpty() && !key.contains(" ")) {
-                            result.nodeVoltages.put(key, d);
-                        }
-                    } catch (NumberFormatException ignored) {}
-                }
-            }
+            try {
+                double value = Double.parseDouble(valStr);
+                result.values.put(key, value);
+            } catch (NumberFormatException ignored) {}
         }
     }
 }

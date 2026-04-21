@@ -29,8 +29,6 @@ public class NetlistBuilder {
                 line = String.format("L%d %d %d %g", lCount++, comp.nodeA, comp.nodeB, comp.value);
 
             } else if (comp.block instanceof VoltageSourceBlock) {
-                // nodeA = front face (positive terminal), nodeB = back face (negative terminal)
-                // For AC: use "AC <amplitude>" — frequency is set by the .AC analysis card later
                 if ("AC".equalsIgnoreCase(comp.sourceType)) {
                     line = String.format("V%d %d %d AC %g",
                             vCount++, comp.nodeA, comp.nodeB, comp.value);
@@ -52,7 +50,7 @@ public class NetlistBuilder {
             sb.append(line).append("\n");
         }
 
-        // Current probes are 0V voltage sources in series
+        // Current probes are 0V voltage sources placed in series
         for (CurrentProbeInfo cp : currentProbes) {
             sb.append(String.format("VM%d %d %d DC 0\n", vmCount++, cp.nodeA, cp.nodeB));
         }
@@ -61,21 +59,26 @@ public class NetlistBuilder {
             sb.append(".MODEL DMOD D\n");
         }
 
-        sb.append(".OP\n");
+        sb.append(".op\n");
 
-        StringBuilder printLine = new StringBuilder(".PRINT OP");
+        // Use .control block — the reliable way to get output in ngspice batch mode.
+        // "run" executes the .op analysis; each "print" emits "name = value" lines
+        // that are trivial to parse unambiguously.
+        sb.append(".control\n");
+        sb.append("  run\n");
+
         for (ProbeInfo probe : probes) {
-            printLine.append(" V(").append(probe.node).append(")");
+            sb.append(String.format("  print v(%d)\n", probe.node));
         }
+
         int vmIdx = 1;
         for (CurrentProbeInfo cp : currentProbes) {
-            printLine.append(" I(VM").append(vmIdx++).append(")");
-        }
-        if (!probes.isEmpty() || !currentProbes.isEmpty()) {
-            sb.append(printLine).append("\n");
+            sb.append(String.format("  print i(VM%d)\n", vmIdx++));
         }
 
-        sb.append(".END\n");
+        sb.append(".endc\n");
+        sb.append(".end\n");
+
         return sb.toString();
     }
 
