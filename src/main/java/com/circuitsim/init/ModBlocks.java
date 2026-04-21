@@ -60,6 +60,10 @@ public class ModBlocks {
             () -> new SimulateBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_LIGHT_GREEN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> PARAMETRIC = BLOCKS.register("parametric",
+            () -> new ParametricBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_PINK).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static void register(IEventBus eventBus) {
         BLOCKS.register(eventBus);
     }

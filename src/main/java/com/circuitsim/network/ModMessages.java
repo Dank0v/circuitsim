@@ -34,15 +34,29 @@ public class ModMessages {
                 .decoder(SimulationResultPacket::decode)
                 .consumerMainThread(ModMessages::handleSimulationResult)
                 .add();
+
+        INSTANCE.messageBuilder(ParametricSimulatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(ParametricSimulatePacket::encode)
+                .decoder(ParametricSimulatePacket::decode)
+                .consumerMainThread(ModMessages::handleParametricSimulate)
+                .add();
     }
 
-    private static void handleComponentUpdate(ComponentUpdatePacket msg, Supplier<NetworkEvent.Context> ctx) {
+    private static void handleComponentUpdate(ComponentUpdatePacket msg,
+                                               Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }
 
-    private static void handleSimulationResult(SimulationResultPacket msg, Supplier<NetworkEvent.Context> ctx) {
+    private static void handleSimulationResult(SimulationResultPacket msg,
+                                                Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle());
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleParametricSimulate(ParametricSimulatePacket msg,
+                                                  Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }
 

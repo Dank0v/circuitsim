@@ -10,7 +10,7 @@
     "block.circuitsim.probe": "Probe",
     "block.circuitsim.current_probe": "Current Probe",
     "block.circuitsim.simulate": "Simulate Block",
-
+    "block.circuitsim.parametric": "Parametric Block",
     "gui.circuitsim.title": "Edit Component",
     "gui.circuitsim.value": "Value:",
     "gui.circuitsim.resistance": "Resistance (\u03A9):",
@@ -22,7 +22,10 @@
     "gui.circuitsim.frequency": "Frequency (Hz):",
     "gui.circuitsim.probe_label": "Probe Label:",
     "gui.circuitsim.done": "Done",
-
+    "gui.circuitsim.parametric_title": "Parametric Analysis",
+    "gui.circuitsim.parametric_sweep": "Sweep Values:",
+    "gui.circuitsim.parametric_hint": "list: 1k,2k,5k  or  range: 100:1k:100",
+    "gui.circuitsim.parametric_run": "Simulate",
     "chat.circuitsim.simulation_start": "Starting circuit simulation...",
     "chat.circuitsim.simulation_complete": "=== Simulation Complete ===",
     "chat.circuitsim.simulation_error": "Simulation error: %s",

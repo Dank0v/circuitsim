@@ -26,7 +26,8 @@ public class ModBlockEntities {
                             ModBlocks.GROUND.get(),
                             ModBlocks.PROBE.get(),
                             ModBlocks.CURRENT_PROBE.get(),
-                            ModBlocks.SIMULATE.get()
+                            ModBlocks.SIMULATE.get(),
+                            ModBlocks.PARAMETRIC.get()   // ← new
                     ).build(null)
             );
 

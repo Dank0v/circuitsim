@@ -1,0 +1,19 @@
+{
+    "variants": {
+        "facing=north": {
+            "model": "circuitsim:block/parametric"
+        },
+        "facing=south": {
+            "model": "circuitsim:block/parametric",
+            "y": 180
+        },
+        "facing=east": {
+            "model": "circuitsim:block/parametric",
+            "y": 90
+        },
+        "facing=west": {
+            "model": "circuitsim:block/parametric",
+            "y": 270
+        }
+    }
+}

@@ -1,0 +1,8 @@
+{
+    "parent": "minecraft:block/orientable",
+    "textures": {
+        "top": "circuitsim:block/parametric",
+        "side": "circuitsim:block/parametric",
+        "front": "circuitsim:block/parametric_front"
+    }
+}
