@@ -25,7 +25,6 @@ public class ComponentBlockEntity extends BlockEntity {
     }
 
     public String getComponentType() {
-        if (level == null) return "resistor";
         Block block = getBlockState().getBlock();
         if (block == ModBlocks.RESISTOR.get()) return "resistor";
         if (block == ModBlocks.CAPACITOR.get()) return "capacitor";
@@ -34,6 +33,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.CURRENT_SOURCE.get()) return "current_source";
         if (block == ModBlocks.DIODE.get()) return "diode";
         if (block == ModBlocks.PROBE.get()) return "probe";
+        if (block == ModBlocks.CURRENT_PROBE.get()) return "current_probe";
         if (block == ModBlocks.SIMULATE.get()) return "simulate";
         return "unknown";
     }
