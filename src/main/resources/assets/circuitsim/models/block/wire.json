@@ -1,6 +1,7 @@
 {
-    "parent": "minecraft:block/cube_all",
+    "parent": "minecraft:block/cube_column",
     "textures": {
-        "all": "circuitsim:block/wire"
+        "end": "circuitsim:block/wire",
+        "side": "circuitsim:block/wire_side"
     }
 }

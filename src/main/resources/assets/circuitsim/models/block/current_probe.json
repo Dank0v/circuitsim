@@ -1,8 +1,8 @@
 {
     "parent": "minecraft:block/orientable",
     "textures": {
-        "top":   "circuitsim:block/current_probe",
-        "side":  "circuitsim:block/current_probe",
+        "top": "circuitsim:block/current_probe",
+        "side": "circuitsim:block/current_probe_side",
         "front": "circuitsim:block/current_probe_front"
     }
 }

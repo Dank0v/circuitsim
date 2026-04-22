@@ -1,8 +1,8 @@
 {
     "parent": "minecraft:block/orientable",
     "textures": {
-        "top":   "circuitsim:block/inductor",
-        "side":  "circuitsim:block/inductor",
+        "top": "circuitsim:block/inductor",
+        "side": "circuitsim:block/inductor_side",
         "front": "circuitsim:block/inductor_front"
     }
 }
