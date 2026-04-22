@@ -4,12 +4,16 @@ import com.circuitsim.screen.ComponentEditScreen;
 import com.circuitsim.simulation.CircuitExtractor;
 import com.circuitsim.simulation.NetlistBuilder;
 import com.circuitsim.simulation.NgSpiceRunner;
+import com.circuitsim.simulation.ParametricResultCache;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
@@ -39,38 +43,34 @@ public class SimulateBlock extends Block {
         msg(player, "=== Circuit Simulation ===", ChatFormatting.GOLD);
 
         CircuitExtractor.ExtractionResult extraction = CircuitExtractor.extract(level, pos);
-
         if (!extraction.success) {
             msg(player, "Error: " + extraction.errorMessage, ChatFormatting.RED);
             return InteractionResult.CONSUME;
         }
 
-        // Accumulate all text for the book
-        List<String> bookLines = new ArrayList<>();
+        List<String>    bookLines           = new ArrayList<>();
+        List<Component> graphPageComponents = new ArrayList<>();
+
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
         bookLines.add("CircuitSim Results");
         bookLines.add(timestamp);
         bookLines.add("---");
 
         if (!extraction.parametricBlocks.isEmpty()) {
-            // ---- Parametric sweep mode ----
             for (CircuitExtractor.ParametricInfo param : extraction.parametricBlocks) {
-                runParametricSweep(player, level, extraction, param, bookLines);
+                runParametricSweep(player, level, extraction, param, bookLines, graphPageComponents);
             }
         } else {
-            // ---- Normal single simulation ----
             runNormalSimulation(player, extraction, bookLines);
         }
 
-        // Give the player a written book with all results
-        giveResultBook(player, "Sim " + timestamp, bookLines);
-
+        giveResultBook(player, "Sim " + timestamp, bookLines, graphPageComponents);
         return InteractionResult.CONSUME;
     }
 
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
     // Normal simulation
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
 
     private void runNormalSimulation(Player player,
                                       CircuitExtractor.ExtractionResult extraction,
@@ -84,7 +84,6 @@ public class SimulateBlock extends Block {
             return;
         }
 
-        // Print netlist to chat and book
         msg(player, "Netlist:", ChatFormatting.YELLOW);
         bookLines.add("=== Netlist ===");
         for (String line : netlist.split("\n")) {
@@ -108,44 +107,40 @@ public class SimulateBlock extends Block {
             bookLines.add(line.trim());
         }
 
-        // Voltage probes
         for (NetlistBuilder.ProbeInfo probe : extraction.probes) {
-            String voltage = result.getNodeVoltage(probe.node);
-            String line = "Probe [" + probe.label + "] Node " + probe.node + ": " + voltage;
+            String line = "Probe [" + probe.label + "] Node " + probe.node
+                    + ": " + result.getNodeVoltage(probe.node);
             msg(player, line, ChatFormatting.AQUA);
             bookLines.add(line);
         }
 
-        // Current probes
         int vmIdx = 1;
         for (NetlistBuilder.CurrentProbeInfo cp : extraction.currentProbes) {
-            String current = result.getBranchCurrent("vm" + vmIdx);
-            String line = "IProbe [" + cp.label + "]: " + current;
+            String line = "IProbe [" + cp.label + "]: " + result.getBranchCurrent("vm" + vmIdx);
             msg(player, line, ChatFormatting.LIGHT_PURPLE);
             bookLines.add(line);
             vmIdx++;
         }
     }
 
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
     // Parametric sweep
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
 
     private void runParametricSweep(Player player, Level level,
                                      CircuitExtractor.ExtractionResult extraction,
                                      CircuitExtractor.ParametricInfo param,
-                                     List<String> bookLines) {
+                                     List<String> bookLines,
+                                     List<Component> graphPageComponents) {
 
-        BlockPos targetPos = param.targetPos;
-        Block targetBlock  = level.getBlockState(targetPos).getBlock();
+        BlockPos targetPos   = param.targetPos;
+        Block    targetBlock = level.getBlockState(targetPos).getBlock();
 
         if (!isParametrizable(targetBlock)) {
-            msg(player, "Parametric block is not facing a supported component "
-                    + "(need Resistor, Capacitor, Inductor, Voltage/Current Source).", ChatFormatting.RED);
+            msg(player, "Parametric block is not facing a supported component.", ChatFormatting.RED);
             return;
         }
 
-        // Parse sweep values
         List<Double> sweepValues;
         try {
             sweepValues = parseSweepString(param.sweepString);
@@ -158,13 +153,12 @@ public class SimulateBlock extends Block {
             msg(player, "No sweep values — right-click the Parametric block to set them.", ChatFormatting.RED);
             return;
         }
-
         if (sweepValues.size() > 50) {
             msg(player, "Too many sweep values (" + sweepValues.size() + "); max is 50.", ChatFormatting.RED);
             return;
         }
 
-        // Build effective probe list (auto-generate if none placed)
+        // Build effective probes (auto-generate if none placed)
         List<NetlistBuilder.ProbeInfo> effectiveProbes;
         if (extraction.probes.isEmpty()) {
             Set<Integer> nodes = new LinkedHashSet<>();
@@ -179,148 +173,185 @@ public class SimulateBlock extends Block {
             effectiveProbes = extraction.probes;
         }
 
+        List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
+
+        // ── data collectors (only filled for successful sweep points) ─────────
+        List<Double>              validSweep   = new ArrayList<>();
+        Map<String, List<Double>> voltageData  = new LinkedHashMap<>();
+        Map<String, List<Double>> currentData  = new LinkedHashMap<>();
+        for (NetlistBuilder.ProbeInfo p : effectiveProbes) voltageData.put(p.label, new ArrayList<>());
+        for (NetlistBuilder.CurrentProbeInfo cp : cpList)  currentData.put(cp.label, new ArrayList<>());
+
+        // ── header + sample netlist ───────────────────────────────────────────
         String header = "=== Parametric: " + displayName(targetBlock)
                 + " sweep (" + sweepValues.size() + " pts) ===";
         msg(player, header, ChatFormatting.GOLD);
         bookLines.add(header);
 
-        // Print the netlist once using the first sweep value as a representative sample
-        List<NetlistBuilder.CircuitComponent> sampleSwept = extraction.components.stream()
-                .map(c -> c.pos.equals(targetPos)
-                        ? new NetlistBuilder.CircuitComponent(
-                                c.block, c.pos, c.nodeA, c.nodeB,
-                                sweepValues.get(0), c.sourceType, c.frequency)
-                        : c)
-                .collect(Collectors.toList());
-        String sampleNetlist = NetlistBuilder.buildNetlist(sampleSwept, effectiveProbes, extraction.currentProbes);
-        String sampleLabel = ComponentEditScreen.formatValue(sweepValues.get(0)) + unit(targetBlock);
+        double first       = sweepValues.get(0);
+        String sampleLabel = ComponentEditScreen.formatValue(first) + unit(targetBlock);
+        String sampleNl    = NetlistBuilder.buildNetlist(
+                swapValue(extraction.components, targetPos, first), effectiveProbes, cpList);
+
         msg(player, "Netlist (sample @ " + sampleLabel + "):", ChatFormatting.YELLOW);
         bookLines.add("=== Netlist (sample @ " + sampleLabel + ") ===");
-        for (String line : sampleNetlist.split("\n")) {
+        for (String line : sampleNl.split("\n")) {
             msg(player, "  " + line, ChatFormatting.WHITE);
             bookLines.add("  " + line);
         }
 
+        // ── sweep loop ────────────────────────────────────────────────────────
         for (double val : sweepValues) {
-            // Replace target component value for this run
-            final double sweepVal = val;
-            List<NetlistBuilder.CircuitComponent> swept = extraction.components.stream()
-                    .map(c -> c.pos.equals(targetPos)
-                            ? new NetlistBuilder.CircuitComponent(
-                                    c.block, c.pos, c.nodeA, c.nodeB,
-                                    sweepVal, c.sourceType, c.frequency)
-                            : c)
-                    .collect(Collectors.toList());
-
             String sectionHeader = "--- " + ComponentEditScreen.formatValue(val) + unit(targetBlock) + " ---";
             msg(player, sectionHeader, ChatFormatting.YELLOW);
             bookLines.add(sectionHeader);
 
-            String netlist = NetlistBuilder.buildNetlist(swept, effectiveProbes, extraction.currentProbes);
-            NgSpiceRunner.Result result = NgSpiceRunner.run(netlist);
+            NgSpiceRunner.Result result = NgSpiceRunner.run(
+                    NetlistBuilder.buildNetlist(swapValue(extraction.components, targetPos, val),
+                            effectiveProbes, cpList));
 
             if (result.error != null) {
-                String firstLine = result.error.lines()
-                        .filter(l -> !l.isBlank()).findFirst().orElse("unknown error");
+                String firstLine = result.error.lines().filter(l -> !l.isBlank())
+                        .findFirst().orElse("unknown error");
                 msg(player, "  Error: " + firstLine, ChatFormatting.RED);
                 bookLines.add("  Error: " + firstLine);
                 continue;
             }
-
             if (result.values.isEmpty()) {
                 msg(player, "  (no results — verify circuit has a Ground block)", ChatFormatting.GRAY);
                 bookLines.add("  (no results)");
                 continue;
             }
 
-            // Voltage probes
+            // Valid point — record sweep value and probe values
+            validSweep.add(val);
+
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                 String line = "  [" + probe.label + "]: " + result.getNodeVoltage(probe.node);
                 msg(player, line, ChatFormatting.AQUA);
                 bookLines.add(line);
+                Double v = result.values.get("v(" + probe.node + ")");
+                voltageData.get(probe.label).add(v != null ? v : 0.0);
             }
 
-            // Current probes
-            int vmIdx = 1;
-            for (NetlistBuilder.CurrentProbeInfo cp : extraction.currentProbes) {
-                String line = "  [" + cp.label + "]: " + result.getBranchCurrent("vm" + vmIdx);
+            for (int k = 0; k < cpList.size(); k++) {
+                String line = "  [" + cpList.get(k).label + "]: "
+                        + result.getBranchCurrent("vm" + (k + 1));
                 msg(player, line, ChatFormatting.LIGHT_PURPLE);
                 bookLines.add(line);
-                vmIdx++;
+                Double i = result.values.get("i(vm" + (k + 1) + ")");
+                currentData.get(cpList.get(k).label).add(i != null ? i : 0.0);
             }
+        }
+
+        if (validSweep.isEmpty()) return;
+
+        // ── cache + clickable links ────────────────────────────────────────────
+        int sessionId = ParametricResultCache.store(new ParametricResultCache.ResultSet(
+                displayName(targetBlock), unit(targetBlock), validSweep, voltageData, currentData));
+
+        // Collect all probe names in order
+        List<String> allNames = new ArrayList<>();
+        allNames.addAll(voltageData.keySet());
+        allNames.addAll(currentData.keySet());
+
+        msg(player, "--- Graphs - click a name to open ---", ChatFormatting.DARK_AQUA);
+
+        graphPageComponents.add(Component.literal("-- Graphs --\n").withStyle(ChatFormatting.GOLD));
+
+        for (int idx = 0; idx < allNames.size(); idx++) {
+            String  name    = allNames.get(idx);
+            boolean isVolt  = voltageData.containsKey(name);
+            String  cmd     = "/circuitsim graph " + sessionId + " " + idx;
+            String  label   = "  Plot " + name + (isVolt ? " (V)" : " (A)");
+
+            // Chat: underlined, coloured, clickable
+            player.displayClientMessage(
+                    Component.literal(label).withStyle(Style.EMPTY
+                            .withColor(isVolt ? ChatFormatting.AQUA : ChatFormatting.LIGHT_PURPLE)
+                            .withUnderlined(true)
+                            .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd))),
+                    false);
+
+            // Book graph page
+            graphPageComponents.add(
+                    Component.literal("Plot " + name + (isVolt ? " (V)" : " (A)") + "\n")
+                            .withStyle(Style.EMPTY
+                                    .withColor(isVolt ? ChatFormatting.AQUA : ChatFormatting.LIGHT_PURPLE)
+                                    .withUnderlined(true)
+                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd))));
         }
     }
 
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
     // Book creation
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Packs {@code lines} into a written book and adds it to the player's inventory.
-     * Each page holds up to {@code LINES_PER_PAGE} lines; the book is capped at 100 pages.
-     */
     private static final int LINES_PER_PAGE = 13;
     private static final int MAX_PAGES      = 100;
 
-    private static void giveResultBook(Player player, String title, List<String> lines) {
-        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
-        CompoundTag tag = book.getOrCreateTag();
+    private static void giveResultBook(Player player, String title,
+                                        List<String> lines,
+                                        List<Component> graphPageComponents) {
+        ItemStack   book = new ItemStack(Items.WRITTEN_BOOK);
+        CompoundTag tag  = book.getOrCreateTag();
         tag.putString("title", title);
         tag.putString("author", "CircuitSim");
         tag.putByte("resolved", (byte) 1);
 
-        ListTag pages = new ListTag();
-        List<String> pageBuffer = new ArrayList<>();
+        ListTag      pages      = new ListTag();
+        List<String> pageBuf    = new ArrayList<>();
 
         for (String line : lines) {
-            pageBuffer.add(line);
-            if (pageBuffer.size() >= LINES_PER_PAGE) {
-                pages.add(pageTag(pageBuffer));
-                pageBuffer.clear();
+            pageBuf.add(line);
+            if (pageBuf.size() >= LINES_PER_PAGE) {
+                pages.add(plainPage(pageBuf));
+                pageBuf.clear();
                 if (pages.size() >= MAX_PAGES) break;
             }
         }
-        if (!pageBuffer.isEmpty() && pages.size() < MAX_PAGES) {
-            pages.add(pageTag(pageBuffer));
+        if (!pageBuf.isEmpty() && pages.size() < MAX_PAGES) pages.add(plainPage(pageBuf));
+
+        // Clickable graph-links page (rich text)
+        if (!graphPageComponents.isEmpty() && pages.size() < MAX_PAGES) {
+            MutableComponent root = Component.empty();
+            for (Component c : graphPageComponents) root.append(c);
+            pages.add(StringTag.valueOf(Component.Serializer.toJson(root)));
         }
 
-        if (pages.isEmpty()) {
-            pages.add(pageTag(List.of("No results.")));
-        }
-
+        if (pages.isEmpty()) pages.add(plainPage(List.of("No results.")));
         tag.put("pages", pages);
 
-        // Add to inventory; if full, drop at feet
-        if (!player.getInventory().add(book)) {
-            player.drop(book, false);
-        }
-
-        player.displayClientMessage(
-                Component.literal("Results saved to a book in your inventory.")
-                        .withStyle(ChatFormatting.GRAY), false);
+        if (!player.getInventory().add(book)) player.drop(book, false);
+        msg(player, "Results saved to a book in your inventory.", ChatFormatting.GRAY);
     }
 
-    /** Converts a list of lines to a single JSON-text page tag. */
-    private static StringTag pageTag(List<String> lines) {
-        String text = String.join("\n", lines);
+    private static StringTag plainPage(List<String> lines) {
         return StringTag.valueOf(
-                net.minecraft.network.chat.Component.Serializer.toJson(
-                        Component.literal(text)));
+                Component.Serializer.toJson(Component.literal(String.join("\n", lines))));
     }
 
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
     // Helpers
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private static List<NetlistBuilder.CircuitComponent> swapValue(
+            List<NetlistBuilder.CircuitComponent> components, BlockPos targetPos, double newVal) {
+        return components.stream()
+                .map(c -> c.pos.equals(targetPos)
+                        ? new NetlistBuilder.CircuitComponent(
+                                c.block, c.pos, c.nodeA, c.nodeB, newVal, c.sourceType, c.frequency)
+                        : c)
+                .collect(Collectors.toList());
+    }
 
     private static void msg(Player player, String text, ChatFormatting fmt) {
         player.displayClientMessage(Component.literal(text).withStyle(fmt), false);
     }
 
     private static boolean isParametrizable(Block b) {
-        return b instanceof ResistorBlock
-                || b instanceof CapacitorBlock
-                || b instanceof InductorBlock
-                || b instanceof VoltageSourceBlock
+        return b instanceof ResistorBlock || b instanceof CapacitorBlock
+                || b instanceof InductorBlock || b instanceof VoltageSourceBlock
                 || b instanceof CurrentSourceBlock;
     }
 
@@ -342,50 +373,27 @@ public class SimulateBlock extends Block {
         return "";
     }
 
-    /**
-     * Parses a sweep string into an ordered list of doubles.
-     *
-     * <ul>
-     *   <li><b>List</b>: {@code 100,200,500,1k,2k}</li>
-     *   <li><b>Range</b>: {@code start:stop:step}</li>
-     * </ul>
-     */
     public static List<Double> parseSweepString(String raw) {
         String s = raw == null ? "" : raw.trim();
         if (s.isEmpty()) throw new IllegalArgumentException("empty sweep string");
 
         if (s.contains(":")) {
             String[] parts = s.split(":");
-            if (parts.length != 3)
-                throw new IllegalArgumentException("range must be start:stop:step");
-
-            double start   = ComponentEditScreen.parseSI(parts[0].trim());
-            double stop    = ComponentEditScreen.parseSI(parts[1].trim());
-            double step    = ComponentEditScreen.parseSI(parts[2].trim());
+            if (parts.length != 3) throw new IllegalArgumentException("range must be start:stop:step");
+            double start = ComponentEditScreen.parseSI(parts[0].trim());
+            double stop  = ComponentEditScreen.parseSI(parts[1].trim());
+            double step  = ComponentEditScreen.parseSI(parts[2].trim());
             if (step == 0) throw new IllegalArgumentException("step cannot be zero");
-
             List<Double> vals = new ArrayList<>();
-            double epsilon = 1e-10 * Math.abs(step);
-            if (step > 0) {
-                for (double v = start; v <= stop + epsilon && vals.size() < 50; v += step)
-                    vals.add(v);
-            } else {
-                for (double v = start; v >= stop - epsilon && vals.size() < 50; v += step)
-                    vals.add(v);
-            }
+            double eps = 1e-10 * Math.abs(step);
+            if (step > 0) { for (double v = start; v <= stop + eps && vals.size() < 50; v += step) vals.add(v); }
+            else          { for (double v = start; v >= stop - eps && vals.size() < 50; v += step) vals.add(v); }
             return vals;
         }
 
-        // Comma-separated list
-        return Arrays.stream(s.split(","))
-                .map(String::trim)
-                .filter(t -> !t.isEmpty())
-                .map(t -> {
-                    try { return ComponentEditScreen.parseSI(t); }
-                    catch (NumberFormatException e) {
-                        throw new IllegalArgumentException("cannot parse '" + t + "'");
-                    }
-                })
+        return Arrays.stream(s.split(",")).map(String::trim).filter(t -> !t.isEmpty())
+                .map(t -> { try { return ComponentEditScreen.parseSI(t); }
+                            catch (NumberFormatException e) { throw new IllegalArgumentException("cannot parse '" + t + "'"); }})
                 .collect(Collectors.toList());
     }
 }
