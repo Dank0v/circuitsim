@@ -3,8 +3,8 @@ package com.circuitsim.screen;
 import com.circuitsim.block.*;
 import com.circuitsim.blockentity.ComponentBlockEntity;
 import com.circuitsim.client.ClientSetup;
+import com.circuitsim.network.ComponentUpdatePacket;
 import com.circuitsim.network.ModMessages;
-import com.circuitsim.network.ParametricSimulatePacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -21,7 +21,7 @@ import net.minecraft.world.level.block.state.BlockState;
 public class ParametricEditScreen extends AbstractContainerScreen<ParametricEditMenu> {
 
     private EditBox paramField;
-    private Button simulateButton;
+    private Button doneButton;
     private Button cancelButton;
 
     private String targetComponentName = "Unknown";
@@ -57,7 +57,7 @@ public class ParametricEditScreen extends AbstractContainerScreen<ParametricEdit
             targetComponentName = getComponentDisplayName(targetState.getBlock());
         }
 
-        // Pre-populate with stored param string (kept in ComponentBlockEntity.label)
+        // Pre-populate with stored sweep string (kept in ComponentBlockEntity.label)
         String stored = "";
         BlockEntity be = Minecraft.getInstance().level.getBlockEntity(pos);
         if (be instanceof ComponentBlockEntity cbe) {
@@ -83,16 +83,32 @@ public class ParametricEditScreen extends AbstractContainerScreen<ParametricEdit
 
         int btnY = panelY + this.imageHeight - 26;
 
-        simulateButton = Button.builder(Component.literal("▶ Simulate"), button -> {
-            ModMessages.sendToServer(new ParametricSimulatePacket(pos, paramField.getValue()));
+        // Done — saves sweep string and closes
+        doneButton = Button.builder(Component.literal("Done"), button -> {
+            saveSweepString();
             Minecraft.getInstance().setScreen(null);
         }).bounds(panelX + 20, btnY, 110, 20).build();
-        addRenderableWidget(simulateButton);
+        addRenderableWidget(doneButton);
 
         cancelButton = Button.builder(Component.literal("Cancel"), button ->
                 Minecraft.getInstance().setScreen(null)
         ).bounds(panelX + 150, btnY, 110, 20).build();
         addRenderableWidget(cancelButton);
+    }
+
+    /** Sends the sweep string to the server via the standard component-update packet. */
+    private void saveSweepString() {
+        BlockEntity be = Minecraft.getInstance().level.getBlockEntity(pos);
+        double currentValue = 0.0;
+        String currentSourceType = "DC";
+        double currentFreq = 0.0;
+        if (be instanceof ComponentBlockEntity cbe) {
+            currentValue      = cbe.getValue();
+            currentSourceType = cbe.getSourceType();
+            currentFreq       = cbe.getFrequency();
+        }
+        ModMessages.sendToServer(new ComponentUpdatePacket(
+                pos, currentValue, currentSourceType, currentFreq, paramField.getValue()));
     }
 
     // ---- rendering -------------------------------------------------------

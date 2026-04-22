@@ -55,7 +55,8 @@ public class CircuitExtractor {
         if (visited.size() <= 1) {
             return new ExtractionResult(false, "No connected circuit found!",
                     Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptyList(), Collections.emptyMap());
+                    Collections.emptyList(), Collections.emptyMap(),
+                    Collections.emptyList());
         }
 
         for (BlockPos pos : visited) {
@@ -102,13 +103,24 @@ public class CircuitExtractor {
         List<NetlistBuilder.CircuitComponent> components = new ArrayList<>();
         List<NetlistBuilder.ProbeInfo> probes = new ArrayList<>();
         List<NetlistBuilder.CurrentProbeInfo> currentProbes = new ArrayList<>();
+        List<ParametricInfo> parametricBlocks = new ArrayList<>();
         Map<Integer, String> probeLabels = new HashMap<>();
 
         for (BlockPos pos : visited) {
             Block block = level.getBlockState(pos).getBlock();
             BlockState state = level.getBlockState(pos);
 
-            if (block instanceof ProbeBlock) {
+            if (block instanceof ParametricBlock) {
+                // Collect parametric info but don't add to netlist
+                Direction facing = state.getValue(BaseComponentBlock.FACING);
+                BlockPos targetPos = pos.relative(facing);
+                String sweepString = "";
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    sweepString = be.getLabel();
+                }
+                parametricBlocks.add(new ParametricInfo(pos, targetPos, sweepString));
+
+            } else if (block instanceof ProbeBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 BlockPos probeTarget = pos.relative(facing);
                 int node = resolveNode(probeTarget, visited, nodeMap, nextNode);
@@ -123,7 +135,6 @@ public class CircuitExtractor {
                 probeLabels.put(node, label);
 
             } else if (block instanceof CurrentProbeBlock) {
-                // Current probe sits in series — front and back faces are its two terminals
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 BlockPos frontPos = pos.relative(facing);
                 BlockPos backPos = pos.relative(facing.getOpposite());
@@ -165,7 +176,7 @@ public class CircuitExtractor {
             }
         }
 
-        return new ExtractionResult(true, "", components, probes, currentProbes, probeLabels);
+        return new ExtractionResult(true, "", components, probes, currentProbes, probeLabels, parametricBlocks);
     }
 
     private int resolveNode(BlockPos pos, Set<BlockPos> visited,
@@ -192,7 +203,25 @@ public class CircuitExtractor {
                 || block instanceof GroundBlock
                 || block instanceof ProbeBlock
                 || block instanceof CurrentProbeBlock
-                || block instanceof SimulateBlock;
+                || block instanceof SimulateBlock
+                || block instanceof ParametricBlock;   // ← added
+    }
+
+    // -------------------------------------------------------------------------
+    // Inner classes
+    // -------------------------------------------------------------------------
+
+    /** Holds the position, target component position, and sweep string for a ParametricBlock. */
+    public static class ParametricInfo {
+        public final BlockPos pos;
+        public final BlockPos targetPos;
+        public final String sweepString;
+
+        public ParametricInfo(BlockPos pos, BlockPos targetPos, String sweepString) {
+            this.pos = pos;
+            this.targetPos = targetPos;
+            this.sweepString = sweepString;
+        }
     }
 
     public static class ExtractionResult {
@@ -202,18 +231,21 @@ public class CircuitExtractor {
         public final List<NetlistBuilder.ProbeInfo> probes;
         public final List<NetlistBuilder.CurrentProbeInfo> currentProbes;
         public final Map<Integer, String> probeLabels;
+        public final List<ParametricInfo> parametricBlocks;   // ← added
 
         public ExtractionResult(boolean success, String errorMessage,
                                 List<NetlistBuilder.CircuitComponent> components,
                                 List<NetlistBuilder.ProbeInfo> probes,
                                 List<NetlistBuilder.CurrentProbeInfo> currentProbes,
-                                Map<Integer, String> probeLabels) {
+                                Map<Integer, String> probeLabels,
+                                List<ParametricInfo> parametricBlocks) {
             this.success = success;
             this.errorMessage = errorMessage;
             this.components = components;
             this.probes = probes;
             this.currentProbes = currentProbes;
             this.probeLabels = probeLabels;
+            this.parametricBlocks = parametricBlocks;
         }
     }
 }
