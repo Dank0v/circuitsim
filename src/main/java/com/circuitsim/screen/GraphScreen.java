@@ -161,7 +161,7 @@ public class GraphScreen extends Screen {
 
         // ── X-axis label ──────────────────────────────────────────────────────
         g.drawCenteredString(font,
-                sweepComponentName + " (" + sweepUnit + ")" + (isLogFrequency ? " — log scale" : ""),
+                sweepComponentName + " (" + sweepUnit + ")" + (isLogFrequency ? " - log scale" : ""),
                 panelX + (GL + GR) / 2, panelY + GB + 14, C_UNIT);
 
         // ── data points ───────────────────────────────────────────────────────
@@ -195,7 +195,7 @@ public class GraphScreen extends Screen {
                     : ComponentEditScreen.formatValue(rawXH) + sweepUnit;
             String yStr = ComponentEditScreen.formatValue(probeValues.get(hoverIdx))
                     + (isVoltage ? " V" : " A");
-            String tip  = xStr + " → " + yStr;
+            String tip  = xStr + " at " + yStr;
             int tw = font.width(tip) + 6, th = 12;
             int tx = clamp(px[hoverIdx] + 6, gx, gx + gw - tw);
             int ty = clamp(py[hoverIdx] - 16, gy, gy + gh - th);
