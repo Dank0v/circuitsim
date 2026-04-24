@@ -10,43 +10,48 @@ import java.util.List;
 
 public class GraphDataPacket {
 
-    private final String probeLabel;
-    private final String sweepComponentName;
-    private final String sweepUnit;
-    private final List<Double> sweepValues;
-    private final List<Double> probeValues;
-    private final boolean isVoltage;
+    private final String        probeLabel;
+    private final String        sweepComponentName;
+    private final String        sweepUnit;
+    private final List<Double>  sweepValues;
+    private final List<Double>  probeValues;
+    private final boolean       isVoltage;
+    private final boolean       isLogFrequency;
 
     public GraphDataPacket(String probeLabel, String sweepComponentName, String sweepUnit,
-                           List<Double> sweepValues, List<Double> probeValues, boolean isVoltage) {
-        this.probeLabel          = probeLabel;
-        this.sweepComponentName  = sweepComponentName;
-        this.sweepUnit           = sweepUnit;
-        this.sweepValues         = sweepValues;
-        this.probeValues         = probeValues;
-        this.isVoltage           = isVoltage;
+                           List<Double> sweepValues, List<Double> probeValues,
+                           boolean isVoltage, boolean isLogFrequency) {
+        this.probeLabel         = probeLabel;
+        this.sweepComponentName = sweepComponentName;
+        this.sweepUnit          = sweepUnit;
+        this.sweepValues        = sweepValues;
+        this.probeValues        = probeValues;
+        this.isVoltage          = isVoltage;
+        this.isLogFrequency     = isLogFrequency;
     }
 
     public GraphDataPacket(FriendlyByteBuf buf) {
         this.probeLabel         = buf.readUtf(256);
         this.sweepComponentName = buf.readUtf(64);
         this.sweepUnit          = buf.readUtf(16);
-        int count = buf.readInt();
-        this.sweepValues = new ArrayList<>(count);
+        int count               = buf.readInt();
+        this.sweepValues        = new ArrayList<>(count);
         for (int i = 0; i < count; i++) sweepValues.add(buf.readDouble());
-        this.probeValues = new ArrayList<>(count);
+        this.probeValues        = new ArrayList<>(count);
         for (int i = 0; i < count; i++) probeValues.add(buf.readDouble());
-        this.isVoltage = buf.readBoolean();
+        this.isVoltage          = buf.readBoolean();
+        this.isLogFrequency     = buf.readBoolean();
     }
 
     public void encode(FriendlyByteBuf buf) {
-        buf.writeUtf(probeLabel, 256);
+        buf.writeUtf(probeLabel,         256);
         buf.writeUtf(sweepComponentName, 64);
-        buf.writeUtf(sweepUnit, 16);
+        buf.writeUtf(sweepUnit,          16);
         buf.writeInt(sweepValues.size());
         for (double v : sweepValues) buf.writeDouble(v);
         for (double v : probeValues) buf.writeDouble(v);
         buf.writeBoolean(isVoltage);
+        buf.writeBoolean(isLogFrequency);
     }
 
     public static GraphDataPacket decode(FriendlyByteBuf buf) {
@@ -57,7 +62,7 @@ public class GraphDataPacket {
         ctx.enqueueWork(() ->
                 Minecraft.getInstance().setScreen(
                         new GraphScreen(probeLabel, sweepComponentName, sweepUnit,
-                                sweepValues, probeValues, isVoltage))
+                                sweepValues, probeValues, isVoltage, isLogFrequency))
         );
         ctx.setPacketHandled(true);
     }

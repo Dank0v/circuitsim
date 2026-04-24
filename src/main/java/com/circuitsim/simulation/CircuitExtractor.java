@@ -111,7 +111,6 @@ public class CircuitExtractor {
             BlockState state = level.getBlockState(pos);
 
             if (block instanceof ParametricBlock) {
-                // Collect parametric info but don't add to netlist
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 BlockPos targetPos = pos.relative(facing);
                 String sweepString = "";
@@ -204,14 +203,13 @@ public class CircuitExtractor {
                 || block instanceof ProbeBlock
                 || block instanceof CurrentProbeBlock
                 || block instanceof SimulateBlock
-                || block instanceof ParametricBlock;   // ← added
+                || block instanceof ParametricBlock;
     }
 
     // -------------------------------------------------------------------------
     // Inner classes
     // -------------------------------------------------------------------------
 
-    /** Holds the position, target component position, and sweep string for a ParametricBlock. */
     public static class ParametricInfo {
         public final BlockPos pos;
         public final BlockPos targetPos;
@@ -231,7 +229,7 @@ public class CircuitExtractor {
         public final List<NetlistBuilder.ProbeInfo> probes;
         public final List<NetlistBuilder.CurrentProbeInfo> currentProbes;
         public final Map<Integer, String> probeLabels;
-        public final List<ParametricInfo> parametricBlocks;   // ← added
+        public final List<ParametricInfo> parametricBlocks;
 
         public ExtractionResult(boolean success, String errorMessage,
                                 List<NetlistBuilder.CircuitComponent> components,

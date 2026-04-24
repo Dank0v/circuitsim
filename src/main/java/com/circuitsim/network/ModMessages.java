@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "1";
+    private static final String PROTOCOL_VERSION = "2";   // bumped for new packet
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -36,6 +36,12 @@ public class ModMessages {
                 .encoder(ParametricSimulatePacket::encode)
                 .decoder(ParametricSimulatePacket::decode)
                 .consumerMainThread(ModMessages::handleParametricSimulate)
+                .add();
+
+        INSTANCE.messageBuilder(SimulatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SimulatePacket::encode)
+                .decoder(SimulatePacket::decode)
+                .consumerMainThread(ModMessages::handleSimulate)
                 .add();
 
         // ── client-bound ──────────────────────────────────────────────────────
@@ -66,6 +72,12 @@ public class ModMessages {
         ctx.get().setPacketHandled(true);
     }
 
+    private static void handleSimulate(SimulatePacket msg,
+                                        Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
     private static void handleSimulationResult(SimulationResultPacket msg,
                                                 Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle());
@@ -74,7 +86,7 @@ public class ModMessages {
 
     private static void handleGraphData(GraphDataPacket msg,
                                          Supplier<NetworkEvent.Context> ctx) {
-        msg.handle(ctx.get());   // handle() already calls enqueueWork internally
+        msg.handle(ctx.get());
     }
 
     // ── send helpers ──────────────────────────────────────────────────────────

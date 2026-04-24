@@ -4,29 +4,35 @@ import java.util.*;
 
 /**
  * Server-side store for parametric sweep results.
- * Keyed by an auto-incrementing session ID that is embedded in the
- * clickable chat links so the graph command can look up the data.
+ * Keyed by an auto-incrementing session ID embedded in clickable chat links.
  * Capped at 10 sessions to avoid unbounded memory growth.
  */
 public class ParametricResultCache {
 
     public static class ResultSet {
-        public final String sweepComponentName;
-        public final String sweepUnit;
-        public final List<Double> sweepValues;
+        public final String              sweepComponentName;
+        public final String              sweepUnit;
+        public final List<Double>        sweepValues;
         /** probeName → one value per (valid) sweep point, in order */
         public final Map<String, List<Double>> probeVoltages;
         public final Map<String, List<Double>> probeCurrents;
+        /**
+         * When true the sweep axis is a frequency axis and GraphScreen
+         * should use a logarithmic X scale.
+         */
+        public final boolean isLogFrequency;
 
         public ResultSet(String sweepComponentName, String sweepUnit,
                          List<Double> sweepValues,
                          Map<String, List<Double>> probeVoltages,
-                         Map<String, List<Double>> probeCurrents) {
+                         Map<String, List<Double>> probeCurrents,
+                         boolean isLogFrequency) {
             this.sweepComponentName = sweepComponentName;
             this.sweepUnit          = sweepUnit;
             this.sweepValues        = Collections.unmodifiableList(new ArrayList<>(sweepValues));
             this.probeVoltages      = Collections.unmodifiableMap(new LinkedHashMap<>(probeVoltages));
             this.probeCurrents      = Collections.unmodifiableMap(new LinkedHashMap<>(probeCurrents));
+            this.isLogFrequency     = isLogFrequency;
         }
 
         /** Ordered list of all probe names (voltage first, then current). */

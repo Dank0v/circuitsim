@@ -29,11 +29,8 @@ public class ModCommands {
                                 int probeIndex = IntegerArgumentType.getInteger(ctx, "probeIndex");
 
                                 ServerPlayer player;
-                                try {
-                                    player = ctx.getSource().getPlayerOrException();
-                                } catch (Exception e) {
-                                    return 0;
-                                }
+                                try { player = ctx.getSource().getPlayerOrException(); }
+                                catch (Exception e) { return 0; }
 
                                 ParametricResultCache.ResultSet rs =
                                         ParametricResultCache.get(sessionId);
@@ -65,7 +62,8 @@ public class ModCommands {
                                         rs.sweepUnit,
                                         rs.sweepValues,
                                         probeValues,
-                                        isVoltage));
+                                        isVoltage,
+                                        rs.isLogFrequency));
                                 return 1;
                             })
                         )

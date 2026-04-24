@@ -12,45 +12,49 @@ public class NgSpiceRunner {
     private static final String[] CANDIDATES = { "ngspice_con", "ngspice" };
 
     public static class Result {
-        public List<String> output = new ArrayList<>();
-        public String error = null;
-        // Keys are lowercase, e.g. "v(1)", "i(vm1)"
+        public List<String>  output  = new ArrayList<>();
+        public String        error   = null;
+
+        /** .OP results — keys like "v(1)", "i(vm1)" */
         public Map<String, Double> values = new LinkedHashMap<>();
 
-        /** Returns the voltage at the given node number, or "N/A". */
+        /**
+         * .AC results — outer key is frequency (Hz), inner map is quantity key → value.
+         * Quantity keys follow the pattern produced by buildAcNetlist:
+         *   "v(N)_mag", "v(N)_db", "v(N)_phase"
+         *   "i(vmK)_mag", "i(vmK)_phase"
+         */
+        public Map<Double, Map<String, Double>> acData = new LinkedHashMap<>();
+
         public String getNodeVoltage(int nodeIndex) {
             if (nodeIndex == 0) return "0.000000 V (Ground)";
             String key = "v(" + nodeIndex + ")";
-            if (values.containsKey(key)) {
+            if (values.containsKey(key))
                 return String.format("%.6f V", values.get(key));
-            }
             return "N/A";
         }
 
-        /**
-         * Returns the current through the named voltage source (e.g. "vm1"), or "N/A".
-         * ngspice prints the current as negative when it flows into the + terminal,
-         * so we negate it to give the conventional "flowing through the branch" value.
-         */
         public String getBranchCurrent(String sourceName) {
             String key = "i(" + sourceName.toLowerCase() + ")";
-            if (values.containsKey(key)) {
+            if (values.containsKey(key))
                 return String.format("%.6f A", values.get(key));
-            }
             return "N/A";
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Main entry point
+    // -------------------------------------------------------------------------
+
     public static Result run(String netlist) {
         Result result = new Result();
 
-        Path tempDir;
-        Path netlistFile;
+        Path tempDir, netlistFile;
         try {
-            tempDir = Files.createTempDirectory("circuitsim");
+            tempDir     = Files.createTempDirectory("circuitsim");
             netlistFile = tempDir.resolve("circuit.cir");
-            try (BufferedWriter writer = Files.newBufferedWriter(netlistFile, StandardCharsets.UTF_8)) {
-                writer.write(netlist);
+            try (BufferedWriter w = Files.newBufferedWriter(netlistFile, StandardCharsets.UTF_8)) {
+                w.write(netlist);
             }
         } catch (IOException e) {
             result.error = "Failed to create temporary netlist file: " + e.getMessage();
@@ -64,12 +68,11 @@ public class NgSpiceRunner {
             return result;
         }
 
-        // We do NOT use -o here because .control/print output goes to stdout, not the -o file.
-        // Redirect stderr to stdout so we capture everything in one stream.
         Process process;
         try {
-            ProcessBuilder pb = new ProcessBuilder(executable, "-b", netlistFile.toAbsolutePath().toString());
-            pb.redirectErrorStream(true);   // stderr -> stdout
+            ProcessBuilder pb = new ProcessBuilder(executable, "-b",
+                    netlistFile.toAbsolutePath().toString());
+            pb.redirectErrorStream(true);
             pb.directory(tempDir.toFile());
             process = pb.start();
         } catch (IOException e) {
@@ -99,10 +102,8 @@ public class NgSpiceRunner {
             return result;
         }
 
-        try {
-            Files.deleteIfExists(netlistFile);
-            Files.deleteIfExists(tempDir);
-        } catch (IOException ignored) {}
+        try { Files.deleteIfExists(netlistFile); Files.deleteIfExists(tempDir); }
+        catch (IOException ignored) {}
 
         String lower = fullOutput.toLowerCase();
         if (lower.contains("fatal") || lower.contains("no dc path")
@@ -111,9 +112,14 @@ public class NgSpiceRunner {
             return result;
         }
 
-        parseOutput(fullOutput, result);
+        boolean isAc = netlist.toLowerCase().contains(".ac ");
+        if (isAc) {
+            parseAcOutput(fullOutput, result);
+        } else {
+            parseOpOutput(fullOutput, result);
+        }
 
-        if (result.values.isEmpty()) {
+        if (!isAc && result.values.isEmpty()) {
             result.output.add("Simulation completed (no values parsed).");
             result.output.add("--- Raw ngspice output ---");
             for (String line : fullOutput.split("\n")) {
@@ -122,62 +128,214 @@ public class NgSpiceRunner {
             return result;
         }
 
-        for (Map.Entry<String, Double> entry : result.values.entrySet()) {
-            String key = entry.getKey();
-            double val = entry.getValue();
-            if (key.startsWith("v(")) {
-                result.output.add(String.format("  %s = %.6f V", key, val));
-            } else if (key.startsWith("i(")) {
-                result.output.add(String.format("  %s = %.6f A", key, val));
-            } else {
-                result.output.add(String.format("  %s = %g", key, val));
+        if (!isAc) {
+            for (Map.Entry<String, Double> e : result.values.entrySet()) {
+                String k = e.getKey();
+                double v = e.getValue();
+                if (k.startsWith("v("))      result.output.add(String.format("  %s = %.6f V", k, v));
+                else if (k.startsWith("i(")) result.output.add(String.format("  %s = %.6f A", k, v));
+                else                          result.output.add(String.format("  %s = %g",    k, v));
             }
         }
 
         return result;
     }
 
-    private static String resolveExecutable() {
-        for (String candidate : CANDIDATES) {
+    // -------------------------------------------------------------------------
+    // .OP output parser  (unchanged logic)
+    // -------------------------------------------------------------------------
+
+    private static void parseOpOutput(String output, Result result) {
+        for (String rawLine : output.split("\n")) {
+            String line = rawLine.trim();
+            if (!line.contains("=")) continue;
+            String[] parts = line.split("=", 2);
+            if (parts.length != 2) continue;
+            String key    = parts[0].trim().toLowerCase();
+            String valStr = parts[1].trim();
+            if (!key.startsWith("v(") && !key.startsWith("i(")) continue;
+            try { result.values.put(key, Double.parseDouble(valStr)); }
+            catch (NumberFormatException ignored) {}
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // .AC output parser
+    // -------------------------------------------------------------------------
+
+    /**
+     * Parses .AC output from ngspice batch mode.
+     *
+     * ngspice prints complex values with spaces: ( 4.9997e+00 , 2.86e-04 )
+     * We normalise each row first to collapse those into "4.9997e+00,2.86e-04",
+     * then split on whitespace to get clean column tokens.
+     *
+     * Typical table layout:
+     *   Index   frequency       v(1)                    v(2)
+     *   -------------------------------------------------------
+     *   0       1.000000e+01    ( 4.9997e+00, 2.86e-04) ...
+     */
+    private static void parseAcOutput(String output, Result result) {
+        String[] lines = output.split("\n");
+
+        for (int i = 0; i < lines.length; i++) {
+            String trimmed = lines[i].trim();
+            if (!trimmed.toLowerCase().startsWith("index")) continue;
+
+            String[] headerToks = trimmed.split("\\s+");
+            if (headerToks.length < 3) continue;
+
+            // Skip optional separator line
+            int dataStart = i + 1;
+            if (dataStart < lines.length && lines[dataStart].trim().startsWith("-")) {
+                dataStart++;
+            }
+
+            for (int j = dataStart; j < lines.length; j++) {
+                String raw = lines[j].trim();
+                if (raw.isEmpty() || raw.startsWith("-") || raw.startsWith("=")) break;
+
+                // Normalise complex notation: "( re , im )" -> "re,im"
+                String row = normaliseComplexRow(raw);
+
+                String[] tok = row.split("\\s+");
+                if (tok.length < 3) continue;
+
+                try { Integer.parseInt(tok[0]); } catch (NumberFormatException e) { break; }
+
+                double freq;
+                try { freq = Double.parseDouble(tok[1]); }
+                catch (NumberFormatException e) { continue; }
+
+                Map<String, Double> rowMap =
+                        result.acData.computeIfAbsent(freq, k -> new LinkedHashMap<>());
+
+                for (int col = 2; col < tok.length && col < headerToks.length; col++) {
+                    String hdr = headerToks[col].toLowerCase();   // e.g. "v(1)", "i(vm1)"
+                    double mag = parseComplexMag(tok[col]);
+                    if (Double.isNaN(mag)) continue;
+                    if (hdr.startsWith("v(") || hdr.startsWith("i(")) {
+                        rowMap.put(hdr + "_mag", mag);
+                    }
+                }
+            }
+        }
+
+        // ── Fallback: "key = ( re , im )" or "key = value" lines ─────────────
+        if (result.acData.isEmpty()) {
+            for (String rawLine : lines) {
+                String line = rawLine.trim();
+                if (!line.contains("=")) continue;
+                String[] parts = line.split("=", 2);
+                if (parts.length != 2) continue;
+                String key = parts[0].trim().toLowerCase();
+                if (!key.startsWith("v(") && !key.startsWith("i(")) continue;
+                String valStr = normaliseComplexRow(parts[1].trim());
+                double mag = parseComplexMag(valStr.split("\\s+")[0]);
+                if (!Double.isNaN(mag)) {
+                    result.acData.computeIfAbsent(0.0, k -> new LinkedHashMap<>())
+                            .put(key + "_mag", mag);
+                }
+            }
+        }
+
+        if (!result.acData.isEmpty()) {
+            result.output.add("AC analysis: " + result.acData.size() + " frequency points");
+        } else {
+            result.output.add("AC analysis complete (no data parsed). First 25 lines of ngspice output:");
+            int shown = 0;
+            for (String l : lines) {
+                if (!l.trim().isEmpty()) {
+                    result.output.add("  " + l.trim());
+                    if (++shown >= 25) break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Collapses ngspice's spaced complex notation into compact tokens.
+     * "( 4.9997e+00 , 2.86e-04 )" -> "4.9997e+00,2.86e-04"
+     * Also handles already-compact "4.9997e+00,2.86e-04" unchanged.
+     */
+    private static String normaliseComplexRow(String row) {
+        // Remove opening paren and whitespace after it, closing paren, spaces around comma
+        return row
+                .replaceAll("\\(\\s*", "")   // "( " -> ""
+                .replaceAll("\\s*\\)", "")    // " )" -> ""
+                .replaceAll("\\s*,\\s*", ","); // " , " -> ","
+    }
+
+    /**
+     * Parses a (possibly complex) value token and returns its magnitude.
+     * "4.9997e+00,2.86e-04" -> sqrt(re^2 + im^2)
+     * "4.9997e+00"          -> abs(value)
+     * Returns NaN on parse failure.
+     */
+    private static double parseComplexMag(String token) {
+        token = token.trim();
+        int comma = token.lastIndexOf(',');
+        if (comma >= 0) {
             try {
-                Process p = new ProcessBuilder(candidate, "-v")
-                        .redirectErrorStream(true)
-                        .start();
-                p.getInputStream().readAllBytes();
-                boolean finished = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-                if (!finished) { p.destroyForcibly(); continue; }
-                return candidate;
-            } catch (IOException | InterruptedException ignored) {}
+                double re = Double.parseDouble(token.substring(0, comma));
+                double im = Double.parseDouble(token.substring(comma + 1));
+                return Math.sqrt(re * re + im * im);
+            } catch (NumberFormatException e) {
+                return Double.NaN;
+            }
+        }
+        try { return Math.abs(Double.parseDouble(token)); }
+        catch (NumberFormatException e) { return Double.NaN; }
+    }
+
+    /**
+     * Maps an ngspice AC print column header to our internal key convention.
+     *
+     * <p>ngspice column/key conventions:</p>
+     * <ul>
+     *   <li>{@code vm(N)}    → {@code v(N)_mag}</li>
+     *   <li>{@code vdb(N)}   → {@code v(N)_db}</li>
+     *   <li>{@code vp(N)}    → {@code v(N)_phase}</li>
+     *   <li>{@code im(vmK)}  → {@code i(vmK)_mag}</li>
+     *   <li>{@code ip(vmK)}  → {@code i(vmK)_phase}</li>
+     * </ul>
+     * Returns {@code null} for unrecognised headers.
+     */
+    private static String mapAcHeader(String hdr) {
+        hdr = hdr.toLowerCase();
+        if (hdr.startsWith("vm(") && hdr.endsWith(")")) {
+            return "v(" + hdr.substring(3, hdr.length() - 1) + ")_mag";
+        }
+        if (hdr.startsWith("vdb(") && hdr.endsWith(")")) {
+            return "v(" + hdr.substring(4, hdr.length() - 1) + ")_db";
+        }
+        if (hdr.startsWith("vp(") && hdr.endsWith(")")) {
+            return "v(" + hdr.substring(3, hdr.length() - 1) + ")_phase";
+        }
+        if (hdr.startsWith("im(") && hdr.endsWith(")")) {
+            return "i(" + hdr.substring(3, hdr.length() - 1) + ")_mag";
+        }
+        if (hdr.startsWith("ip(") && hdr.endsWith(")")) {
+            return "i(" + hdr.substring(3, hdr.length() - 1) + ")_phase";
         }
         return null;
     }
 
-    /**
-     * Parses lines of the form produced by ngspice .control print:
-     *
-     *   v(1) = 5.000000e+00
-     *   i(vm1) = -5.000000e-03
-     *
-     * Keys are stored lowercase.
-     */
-    private static void parseOutput(String output, Result result) {
-        for (String rawLine : output.split("\n")) {
-            String line = rawLine.trim();
-            if (!line.contains("=")) continue;
+    // -------------------------------------------------------------------------
+    // Executable resolution
+    // -------------------------------------------------------------------------
 
-            String[] parts = line.split("=", 2);
-            if (parts.length != 2) continue;
-
-            String key = parts[0].trim().toLowerCase();
-            String valStr = parts[1].trim();
-
-            // Must look like a known ngspice print key: v(...) or i(...)
-            if (!key.startsWith("v(") && !key.startsWith("i(")) continue;
-
+    private static String resolveExecutable() {
+        for (String candidate : CANDIDATES) {
             try {
-                double value = Double.parseDouble(valStr);
-                result.values.put(key, value);
-            } catch (NumberFormatException ignored) {}
+                Process p = new ProcessBuilder(candidate, "-v")
+                        .redirectErrorStream(true).start();
+                p.getInputStream().readAllBytes();
+                boolean done = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+                if (!done) { p.destroyForcibly(); continue; }
+                return candidate;
+            } catch (IOException | InterruptedException ignored) {}
         }
+        return null;
     }
 }
