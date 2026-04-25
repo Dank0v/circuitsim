@@ -24,8 +24,9 @@ public class GraphScreen extends Screen {
     private final boolean      isLogFrequency;
 
     // ── layout ───────────────────────────────────────────────────────────────
-    private static final int PANEL_W = 360, PANEL_H = 230;
-    private static final int GL = 52, GR = 345, GT = 30, GB = 190;
+    private static final int PANEL_W = 520, PANEL_H = 340;
+    // Graph plot area: left, right, top, bottom edges relative to panel origin
+    private static final int GL = 58, GR = 508, GT = 32, GB = 290;
 
     // ── colours ───────────────────────────────────────────────────────────────
     private static final int C_BG       = 0xFF1A1A2E;
@@ -64,7 +65,7 @@ public class GraphScreen extends Screen {
         panelX = (this.width  - PANEL_W) / 2;
         panelY = (this.height - PANEL_H) / 2;
         addRenderableWidget(Button.builder(Component.literal("Close"), b -> onClose())
-                .bounds(panelX + PANEL_W - 66, panelY + PANEL_H - 22, 58, 16).build());
+                .bounds(panelX + PANEL_W - 70, panelY + PANEL_H - 26, 62, 20).build());
     }
 
     @Override
@@ -119,7 +120,6 @@ public class GraphScreen extends Screen {
         double yPad = (yMax - yMin) * 0.10;
         yMin -= yPad; yMax += yPad;
 
-        // Log-space X range
         double xMin, xMax;
         if (isLogFrequency) {
             xMin = Math.log10(Math.max(xMinRaw, 1e-30));
@@ -130,7 +130,6 @@ public class GraphScreen extends Screen {
         }
         if (xMax == xMin) { xMin -= 1; xMax += 1; }
 
-        // For linear X we add a small pad; for log the decade ticks handle it naturally
         if (!isLogFrequency) {
             double xPad = (xMax - xMin) * 0.05;
             xMin -= xPad; xMax += xPad;
@@ -139,8 +138,8 @@ public class GraphScreen extends Screen {
         // ── plot background ────────────────────────────────────────────────────
         g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
 
-        // ── Y-axis ticks (4 intervals → 5 lines) ─────────────────────────────
-        final int Y_TICKS = 4;
+        // ── Y-axis ticks (6 intervals → 7 lines for the larger area) ──────────
+        final int Y_TICKS = 6;
         for (int i = 0; i <= Y_TICKS; i++) {
             double t  = (double) i / Y_TICKS;
             int    py = gy + (int)((1.0 - t) * gh);
@@ -164,7 +163,7 @@ public class GraphScreen extends Screen {
         // ── X-axis label ──────────────────────────────────────────────────────
         g.drawCenteredString(font,
                 sweepComponentName + " (" + sweepUnit + ")" + (isLogFrequency ? " - log scale" : ""),
-                panelX + (GL + GR) / 2, panelY + GB + 14, C_UNIT);
+                panelX + (GL + GR) / 2, panelY + GB + 10, C_UNIT);
 
         // ── data points ───────────────────────────────────────────────────────
         int n = sweepValues.size();
@@ -184,9 +183,12 @@ public class GraphScreen extends Screen {
 
         for (int i = 1; i < n; i++) drawLine(g, px[i-1], py[i-1], px[i], py[i], C_LINE);
 
-        for (int i = 0; i < n; i++) {
-            g.fill(px[i] - 2, py[i] - 2, px[i] + 3, py[i] + 3, C_DOT_OUT);
-            g.fill(px[i] - 1, py[i] - 1, px[i] + 2, py[i] + 2, C_DOT_IN);
+        // Only draw dots when there are few enough points that they are visible
+        if (n <= 200) {
+            for (int i = 0; i < n; i++) {
+                g.fill(px[i] - 2, py[i] - 2, px[i] + 3, py[i] + 3, C_DOT_OUT);
+                g.fill(px[i] - 1, py[i] - 1, px[i] + 2, py[i] + 2, C_DOT_IN);
+            }
         }
 
         // ── hover tooltip ─────────────────────────────────────────────────────
@@ -212,37 +214,27 @@ public class GraphScreen extends Screen {
 
     // ── tick helpers ──────────────────────────────────────────────────────────
 
-    /**
-     * Draws X tick marks and grid lines for a linear (non-log) axis.
-     * Uses 4 intervals (5 lines) and formats labels with at most 2 decimal places.
-     */
     private void drawLinearXTicks(GuiGraphics g,
                                    int gx, int gy, int gw, int gh,
                                    double xMin, double xMax) {
-        final int X_TICKS = 4;
+        final int X_TICKS = 6;
         for (int i = 0; i <= X_TICKS; i++) {
             double t     = (double) i / X_TICKS;
             double xReal = xMin + (xMax - xMin) * t;
             int    px    = gx + (int)(t * gw);
             g.fill(px, gy, px + 1, gy + gh, C_GRID);
             String xLbl  = fmtAxis(xReal);
-            g.drawString(font, xLbl, px - font.width(xLbl) / 2, panelY + GB + 3, C_LABEL);
+            g.drawString(font, xLbl, px - font.width(xLbl) / 2, panelY + GB + 1, C_LABEL);
         }
     }
 
-    /**
-     * Draws X tick marks and grid lines for a logarithmic frequency axis.
-     * Only decade values (1 Hz, 10 Hz, 100 Hz, …) receive a tick and label.
-     * {@code xMin} and {@code xMax} are already in log10 space.
-     */
     private void drawLogXTicks(GuiGraphics g,
                                 int gx, int gy, int gw, int gh,
                                 double xMin, double xMax) {
         int decLo = (int) Math.floor(xMin);
         int decHi = (int) Math.ceil(xMax);
 
-        // Collect decade positions that fall inside the plot area
-        List<int[]> ticks = new ArrayList<>(); // {px, decade}
+        List<int[]> ticks = new ArrayList<>();
         for (int d = decLo; d <= decHi; d++) {
             double xf = (d - xMin) / (xMax - xMin);
             if (xf < 0 || xf > 1) continue;
@@ -250,20 +242,18 @@ public class GraphScreen extends Screen {
             ticks.add(new int[]{px, d});
         }
 
-        // Draw grid lines and labels; suppress labels that are too close together
         int lastLabelEnd = Integer.MIN_VALUE;
         for (int[] tick : ticks) {
             int px = tick[0];
             int d  = tick[1];
             g.fill(px, gy, px + 1, gy + gh, C_GRID);
 
-            // Label: show as integer power of 10 (1, 10, 100, …) or with SI suffix
             double freq  = Math.pow(10, d);
             String xLbl  = fmtFreqDecade(freq);
             int    lx    = px - font.width(xLbl) / 2;
 
-            if (lx > lastLabelEnd) { // only draw if it doesn't overlap the previous label
-                g.drawString(font, xLbl, lx, panelY + GB + 3, C_LABEL);
+            if (lx > lastLabelEnd) {
+                g.drawString(font, xLbl, lx, panelY + GB + 1, C_LABEL);
                 lastLabelEnd = lx + font.width(xLbl) + 2;
             }
         }
@@ -271,26 +261,21 @@ public class GraphScreen extends Screen {
 
     // ── formatting helpers ────────────────────────────────────────────────────
 
-    /**
-     * Formats a value for an axis label: uses SI suffixes and at most 2 decimal
-     * places (e.g. 1234.5 → "1.23k", 0.0056 → "5.6m", 100 → "100").
-     */
     private static String fmtAxis(double val) {
         if (val == 0.0) return "0";
 
         double abs = Math.abs(val);
 
-        // Tier: {lower, upper, divisor, suffix}
         double[][] tiers = {
-                {1e12,  1e15,  1e12,  0},
-                {1e9,   1e12,  1e9,   0},
-                {1e6,   1e9,   1e6,   0},
-                {1e3,   1e6,   1e3,   0},
-                {1e0,   1e3,   1e0,   0},
-                {1e-3,  1e0,   1e-3,  0},
-                {1e-6,  1e-3,  1e-6,  0},
-                {1e-9,  1e-6,  1e-9,  0},
-                {1e-12, 1e-9,  1e-12, 0},
+                {1e12,  1e15,  1e12},
+                {1e9,   1e12,  1e9},
+                {1e6,   1e9,   1e6},
+                {1e3,   1e6,   1e3},
+                {1e0,   1e3,   1e0},
+                {1e-3,  1e0,   1e-3},
+                {1e-6,  1e-3,  1e-6},
+                {1e-9,  1e-6,  1e-9},
+                {1e-12, 1e-9,  1e-12},
         };
         String[] names = {"T", "G", "M", "k", "", "m", "u", "n", "p"};
 
@@ -303,17 +288,12 @@ public class GraphScreen extends Screen {
         return trimZeros(String.format("%.2f", val));
     }
 
-    /**
-     * Formats a decade frequency value for the log X axis.
-     * Shows whole numbers where possible: 1, 10, 100, 1k, 10k, 1M …
-     */
     private static String fmtFreqDecade(double freq) {
         if (freq >= 1e6)  return trimZeros(String.format("%.2f", freq / 1e6))  + "M";
         if (freq >= 1e3)  return trimZeros(String.format("%.2f", freq / 1e3))  + "k";
         return trimZeros(String.format("%.2f", freq));
     }
 
-    /** Removes trailing zeros after the decimal point (and the point itself if empty). */
     private static String trimZeros(String s) {
         if (!s.contains(".")) return s;
         s = s.replaceAll("0+$", "");

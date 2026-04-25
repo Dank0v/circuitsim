@@ -159,12 +159,14 @@ public class NgSpiceRunner {
     }
 
     // -------------------------------------------------------------------------
-    // .AC parser
+    // .AC parser  — handles multiple ngspice output chunks
     // -------------------------------------------------------------------------
 
     private static void parseAcOutput(String output, Result result) {
         String[] lines = output.split("\n");
 
+        // ngspice splits large tables into chunks, each starting with an "index" header.
+        // We must iterate over ALL chunks, not just the first one.
         for (int i = 0; i < lines.length; i++) {
             String trimmed = lines[i].trim();
             if (!trimmed.toLowerCase().startsWith("index")) continue;
@@ -172,6 +174,7 @@ public class NgSpiceRunner {
             String[] headerToks = trimmed.split("\\s+");
             if (headerToks.length < 3) continue;
 
+            // Skip the optional dashed separator line
             int dataStart = i + 1;
             if (dataStart < lines.length && lines[dataStart].trim().startsWith("-")) {
                 dataStart++;
@@ -179,12 +182,14 @@ public class NgSpiceRunner {
 
             for (int j = dataStart; j < lines.length; j++) {
                 String raw = lines[j].trim();
+                // An empty line or separator marks the end of this chunk (not the whole output)
                 if (raw.isEmpty() || raw.startsWith("-") || raw.startsWith("=")) break;
 
                 String row = normaliseComplexRow(raw);
                 String[] tok = row.split("\\s+");
                 if (tok.length < 3) continue;
 
+                // Stop if the first token is not an integer row index
                 try { Integer.parseInt(tok[0]); } catch (NumberFormatException e) { break; }
 
                 double freq;
@@ -203,8 +208,10 @@ public class NgSpiceRunner {
                     }
                 }
             }
+            // Do NOT break here — continue scanning for the next chunk header
         }
 
+        // Fallback: "v(1) = value" lines (single-point AC)
         if (result.acData.isEmpty()) {
             for (String rawLine : lines) {
                 String line = rawLine.trim();
@@ -237,20 +244,25 @@ public class NgSpiceRunner {
     }
 
     // -------------------------------------------------------------------------
-    // .TRAN parser
+    // .TRAN parser  — handles multiple ngspice output chunks
     // -------------------------------------------------------------------------
 
     private static void parseTranOutput(String output, Result result) {
         String[] lines = output.split("\n");
 
+        // ngspice splits large transient tables into chunks (typically ~50 rows each),
+        // every chunk beginning with its own "index  time  v(N)..." header row.
+        // We must scan ALL chunks, not just stop after the first one.
         for (int i = 0; i < lines.length; i++) {
             String trimmed = lines[i].trim();
             if (!trimmed.toLowerCase().startsWith("index")) continue;
 
             String[] headerToks = trimmed.split("\\s+");
             if (headerToks.length < 3) continue;
+            // Only handle tran tables (second column must be "time")
             if (!headerToks[1].equalsIgnoreCase("time")) continue;
 
+            // Skip optional dashed separator
             int dataStart = i + 1;
             if (dataStart < lines.length && lines[dataStart].trim().startsWith("-")) {
                 dataStart++;
@@ -258,11 +270,13 @@ public class NgSpiceRunner {
 
             for (int j = dataStart; j < lines.length; j++) {
                 String raw = lines[j].trim();
+                // Empty line or separator = end of this chunk, NOT end of all data
                 if (raw.isEmpty() || raw.startsWith("-") || raw.startsWith("=")) break;
 
                 String[] tok = raw.split("\\s+");
                 if (tok.length < 3) continue;
 
+                // Stop if the first token is not a row index integer
                 try { Integer.parseInt(tok[0]); } catch (NumberFormatException e) { break; }
 
                 double time;
@@ -282,7 +296,7 @@ public class NgSpiceRunner {
                     } catch (NumberFormatException ignored) {}
                 }
             }
-            break;
+            // Do NOT break here — continue scanning for the next chunk header
         }
 
         // Fallback: "v(1) = value" lines
