@@ -197,7 +197,7 @@ public class GraphScreen extends Screen {
                     : ComponentEditScreen.formatValue(rawXH) + sweepUnit;
             String yStr = ComponentEditScreen.formatValue(probeValues.get(hoverIdx))
                     + (isVoltage ? " V" : " A");
-            String tip  = xStr + " at " + yStr;
+            String tip  = yStr + " at " + xStr;
             int tw = font.width(tip) + 6, th = 12;
             int tx = clamp(px[hoverIdx] + 6, gx, gx + gw - tw);
             int ty = clamp(py[hoverIdx] - 16, gy, gy + gh - th);
@@ -292,7 +292,7 @@ public class GraphScreen extends Screen {
                 {1e-9,  1e-6,  1e-9,  0},
                 {1e-12, 1e-9,  1e-12, 0},
         };
-        String[] names = {"T", "G", "M", "k", "", "m", "µ", "n", "p"};
+        String[] names = {"T", "G", "M", "k", "", "m", "u", "n", "p"};
 
         for (int i = 0; i < tiers.length; i++) {
             if (abs >= tiers[i][0] && abs < tiers[i][1]) {
