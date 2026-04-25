@@ -26,28 +26,29 @@ public class ComponentBlockEntity extends BlockEntity {
 
     public String getComponentType() {
         Block block = getBlockState().getBlock();
-        if (block == ModBlocks.RESISTOR.get()) return "resistor";
-        if (block == ModBlocks.CAPACITOR.get()) return "capacitor";
-        if (block == ModBlocks.INDUCTOR.get()) return "inductor";
-        if (block == ModBlocks.VOLTAGE_SOURCE.get()) return "voltage_source";
-        if (block == ModBlocks.CURRENT_SOURCE.get()) return "current_source";
-        if (block == ModBlocks.DIODE.get()) return "diode";
-        if (block == ModBlocks.PROBE.get()) return "probe";
-        if (block == ModBlocks.CURRENT_PROBE.get()) return "current_probe";
-        if (block == ModBlocks.SIMULATE.get()) return "simulate";
+        if (block == ModBlocks.RESISTOR.get())           return "resistor";
+        if (block == ModBlocks.CAPACITOR.get())          return "capacitor";
+        if (block == ModBlocks.INDUCTOR.get())           return "inductor";
+        if (block == ModBlocks.VOLTAGE_SOURCE.get())     return "voltage_source";
+        if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) return "voltage_source_sin";
+        if (block == ModBlocks.CURRENT_SOURCE.get())     return "current_source";
+        if (block == ModBlocks.DIODE.get())              return "diode";
+        if (block == ModBlocks.PROBE.get())              return "probe";
+        if (block == ModBlocks.CURRENT_PROBE.get())      return "current_probe";
+        if (block == ModBlocks.SIMULATE.get())           return "simulate";
         return "unknown";
     }
 
-    public double getValue() { return value; }
-    public void setValue(double value) { this.value = value; setChanged(); }
-    public String getSourceType() { return sourceType; }
-    public void setSourceType(String sourceType) { this.sourceType = sourceType; setChanged(); }
-    public double getFrequency() { return frequency; }
-    public void setFrequency(double frequency) { this.frequency = frequency; setChanged(); }
-    public String getLabel() { return label; }
-    public void setLabel(String label) { this.label = label; setChanged(); }
-    public String getProbeLabel() { return label; }
-    public void setProbeLabel(String label) { this.label = label; setChanged(); }
+    public double getValue()             { return value; }
+    public void setValue(double value)   { this.value = value; setChanged(); }
+    public String getSourceType()        { return sourceType; }
+    public void setSourceType(String st) { this.sourceType = st; setChanged(); }
+    public double getFrequency()         { return frequency; }
+    public void setFrequency(double f)   { this.frequency = f; setChanged(); }
+    public String getLabel()             { return label; }
+    public void setLabel(String label)   { this.label = label; setChanged(); }
+    public String getProbeLabel()        { return label; }
+    public void setProbeLabel(String l)  { this.label = l; setChanged(); }
 
     @Override
     protected void saveAdditional(CompoundTag tag) {
@@ -61,10 +62,10 @@ public class ComponentBlockEntity extends BlockEntity {
     @Override
     public void load(CompoundTag tag) {
         super.load(tag);
-        if (tag.contains("value")) value = tag.getDouble("value");
+        if (tag.contains("value"))      value      = tag.getDouble("value");
         if (tag.contains("sourceType")) sourceType = tag.getString("sourceType");
-        if (tag.contains("frequency")) frequency = tag.getDouble("frequency");
-        if (tag.contains("label")) label = tag.getString("label");
+        if (tag.contains("frequency"))  frequency  = tag.getDouble("frequency");
+        if (tag.contains("label"))      label      = tag.getString("label");
     }
 
     @Override

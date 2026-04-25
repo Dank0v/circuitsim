@@ -32,6 +32,10 @@ public class ModBlocks {
             () -> new VoltageSourceBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_YELLOW).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> VOLTAGE_SOURCE_SIN = BLOCKS.register("voltage_source_sin",
+            () -> new VoltageSourceSinBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_CYAN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static final RegistryObject<Block> CURRENT_SOURCE = BLOCKS.register("current_source",
             () -> new CurrentSourceBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_PURPLE).strength(2.0f).pushReaction(PushReaction.BLOCK)));

@@ -20,6 +20,7 @@ public class ModBlockEntities {
                             ModBlocks.CAPACITOR.get(),
                             ModBlocks.INDUCTOR.get(),
                             ModBlocks.VOLTAGE_SOURCE.get(),
+                            ModBlocks.VOLTAGE_SOURCE_SIN.get(),
                             ModBlocks.CURRENT_SOURCE.get(),
                             ModBlocks.DIODE.get(),
                             ModBlocks.WIRE.get(),
@@ -27,7 +28,7 @@ public class ModBlockEntities {
                             ModBlocks.PROBE.get(),
                             ModBlocks.CURRENT_PROBE.get(),
                             ModBlocks.SIMULATE.get(),
-                            ModBlocks.PARAMETRIC.get()   // ← new
+                            ModBlocks.PARAMETRIC.get()
                     ).build(null)
             );
 

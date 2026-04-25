@@ -1,0 +1,19 @@
+{
+    "variants": {
+        "facing=north": {
+            "model": "circuitsim:block/voltage_source_sin"
+        },
+        "facing=south": {
+            "model": "circuitsim:block/voltage_source_sin",
+            "y": 180
+        },
+        "facing=east": {
+            "model": "circuitsim:block/voltage_source_sin",
+            "y": 90
+        },
+        "facing=west": {
+            "model": "circuitsim:block/voltage_source_sin",
+            "y": 270
+        }
+    }
+}

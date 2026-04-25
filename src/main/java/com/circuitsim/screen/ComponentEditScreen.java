@@ -18,6 +18,7 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
     private EditBox valueField;
     private EditBox sourceTypeField;
     private EditBox labelField;
+    private EditBox frequencyField;
     private Button doneButton;
     private Button cancelButton;
     private String componentType;
@@ -25,20 +26,13 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
     private boolean showValue;
     private boolean showSourceType;
     private boolean showLabel;
+    private boolean showFrequency;
 
-    /**
-     * Row layout (per field):
-     *   [label text  ~10px]
-     *   [4px gap          ]
-     *   [EditBox     18px ]
-     *   [8px bottom pad   ]
-     *   = 40px per row
-     */
     private static final int LABEL_H  = 10;
     private static final int GAP      = 4;
     private static final int BOX_H    = 18;
     private static final int ROW_PAD  = 8;
-    private static final int ROW_H    = LABEL_H + GAP + BOX_H + ROW_PAD; // 40
+    private static final int ROW_H    = LABEL_H + GAP + BOX_H + ROW_PAD;
 
     private static final int TITLE_COLOR  = 0xFFFFD700;
     private static final int LABEL_COLOR  = 0xFFFFFFFF;
@@ -62,11 +56,13 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         double currentValue      = 0.0;
         String currentSourceType = "DC";
         String currentLabel      = "";
+        double currentFrequency  = 1000.0;
 
         if (be instanceof ComponentBlockEntity cbe) {
             currentValue      = cbe.getValue();
             currentSourceType = cbe.getSourceType();
             currentLabel      = cbe.getLabel();
+            currentFrequency  = cbe.getFrequency();
             componentType     = cbe.getComponentType();
         } else {
             componentType = "resistor";
@@ -75,18 +71,20 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         boolean isProbe        = "probe".equals(componentType);
         boolean isCurrentProbe = "current_probe".equals(componentType);
         boolean isVoltSrc      = "voltage_source".equals(componentType);
+        boolean isSinSrc       = "voltage_source_sin".equals(componentType);
         boolean isDiode        = "diode".equals(componentType);
 
         showValue      = !isProbe && !isCurrentProbe && !isDiode;
         showSourceType = isVoltSrc;
+        showFrequency  = isSinSrc;
         showLabel      = isProbe || isCurrentProbe;
 
         int rowCount = 0;
         if (showValue)      rowCount++;
         if (showSourceType) rowCount++;
+        if (showFrequency)  rowCount++;
         if (showLabel)      rowCount++;
 
-        // top(10) + title(10) + underline-gap(10) + rows + buttons-area(36)
         this.imageHeight = 10 + 10 + 10 + (rowCount * ROW_H) + 36;
 
         int panelX = (this.width  - this.imageWidth)  / 2;
@@ -95,7 +93,6 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         int fieldX = panelX + 10;
         int fieldW = this.imageWidth - 20;
 
-        // cursorY points at the TOP of the current row (where the label text will go)
         int cursorY = panelY + 30;
 
         if (showValue) {
@@ -104,6 +101,11 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         }
         if (showSourceType) {
             sourceTypeField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW, currentSourceType, 8);
+            cursorY += ROW_H;
+        }
+        if (showFrequency) {
+            frequencyField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW,
+                    formatValue(currentFrequency), 32);
             cursorY += ROW_H;
         }
         if (showLabel) {
@@ -122,8 +124,9 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         ).bounds(panelX + 150, buttonY, 90, 20).build();
         addRenderableWidget(cancelButton);
 
-        if      (showValue && valueField != null) this.setInitialFocus(valueField);
-        else if (showLabel && labelField != null) this.setInitialFocus(labelField);
+        if      (showValue && valueField != null)         this.setInitialFocus(valueField);
+        else if (showFrequency && frequencyField != null) this.setInitialFocus(frequencyField);
+        else if (showLabel && labelField != null)         this.setInitialFocus(labelField);
     }
 
     private EditBox makeBox(int x, int y, int w, String initial, int maxLen) {
@@ -136,10 +139,6 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         return box;
     }
 
-    // -------------------------------------------------------------------------
-    // Rendering
-    // -------------------------------------------------------------------------
-
     @Override
     protected void renderBg(GuiGraphics g, float partialTick, int mouseX, int mouseY) {
         int x = (this.width  - this.imageWidth)  / 2;
@@ -147,23 +146,17 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
 
         g.fill(x, y, x + imageWidth, y + imageHeight, BG_COLOR);
 
-        // Border (2px)
         g.fill(x,                  y,                   x + imageWidth, y + 2,              BORDER_COLOR);
         g.fill(x,                  y + imageHeight - 2, x + imageWidth, y + imageHeight,    BORDER_COLOR);
         g.fill(x,                  y,                   x + 2,          y + imageHeight,    BORDER_COLOR);
         g.fill(x + imageWidth - 2, y,                   x + imageWidth, y + imageHeight,    BORDER_COLOR);
 
-        // Separator below title
         g.fill(x + 2, y + 23, x + imageWidth - 2, y + 24, 0xFF444444);
     }
 
-    /**
-     * Override to suppress the default "Inventory" and container title labels
-     * that AbstractContainerScreen renders automatically.
-     */
     @Override
     protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
-        // Intentionally empty — we draw our own labels in render()
+        // Intentionally empty
     }
 
     @Override
@@ -174,12 +167,10 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         int panelX = (this.width  - this.imageWidth)  / 2;
         int panelY = (this.height - this.imageHeight) / 2;
 
-        // Title
         g.drawCenteredString(Minecraft.getInstance().font,
                 "Edit " + getComponentDisplayName(componentType),
                 this.width / 2, panelY + 7, TITLE_COLOR);
 
-        // Labels — must mirror init() cursorY logic exactly
         int cursorY = panelY + 30;
         int labelX  = panelX + 12;
 
@@ -193,68 +184,57 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
                     "Source Type (DC / AC):", labelX, cursorY, LABEL_COLOR);
             cursorY += ROW_H;
         }
+        if (showFrequency) {
+            g.drawString(Minecraft.getInstance().font,
+                    "Frequency (Hz):", labelX, cursorY, LABEL_COLOR);
+            cursorY += ROW_H;
+        }
         if (showLabel) {
             g.drawString(Minecraft.getInstance().font,
                     "Probe Label:", labelX, cursorY, LABEL_COLOR);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // SI suffix parsing and formatting
-    // -------------------------------------------------------------------------
-
-    /**
-     * Parses a string that may include an SI suffix into a double.
-     * Supported suffixes (case-sensitive where ambiguous):
-     *   f=1e-15, p=1e-12, n=1e-9, u/µ=1e-6, m=1e-3,
-     *   k/K=1e3, M/Meg/meg=1e6, G=1e9, T=1e12
-     * Plain numbers (with or without exponent notation) are also accepted.
-     */
     public static double parseSI(String raw) throws NumberFormatException {
         if (raw == null) throw new NumberFormatException("null input");
         String s = raw.trim();
         if (s.isEmpty()) throw new NumberFormatException("empty input");
 
-        // Try plain double first (handles "1e3", "0.5", etc.)
         try {
             return Double.parseDouble(s);
         } catch (NumberFormatException ignored) {}
 
-        // Split at last alphabetic character(s)
-        // Regex: a numeric part (optionally including sign and decimal) followed by a suffix
         java.util.regex.Matcher m = java.util.regex.Pattern
                 .compile("^([+\\-]?[0-9]*\\.?[0-9]+(?:[eE][+\\-]?[0-9]+)?)(\\s*)([a-zA-Zµ]+)$")
                 .matcher(s);
         if (!m.matches()) throw new NumberFormatException("Cannot parse: " + raw);
 
-        double base = Double.parseDouble(m.group(1));
+        double base   = Double.parseDouble(m.group(1));
         String suffix = m.group(3);
 
         double multiplier = switch (suffix) {
-            case "f"             -> 1e-15;
-            case "p"             -> 1e-12;
-            case "n"             -> 1e-9;
-            case "u", "µ"        -> 1e-6;
-            case "m"             -> 1e-3;
-            case "k", "K"        -> 1e3;
-            case "M", "Meg", "meg", "MEG" -> 1e6;
-            case "G"             -> 1e9;
-            case "T"             -> 1e12;
-            // Allow unit letters to be appended (e.g. "10kΩ", "4.7uF") — strip them
+            case "f"                          -> 1e-15;
+            case "p"                          -> 1e-12;
+            case "n"                          -> 1e-9;
+            case "u", "µ"                     -> 1e-6;
+            case "m"                          -> 1e-3;
+            case "k", "K"                     -> 1e3;
+            case "M", "Meg", "meg", "MEG"     -> 1e6;
+            case "G"                          -> 1e9;
+            case "T"                          -> 1e12;
             default -> {
-                // Try again after stripping trailing unit letters (Ω, F, H, V, A, R, etc.)
                 String stripped = suffix.replaceAll("[ΩFHVAROhm]+$", "");
-                if (stripped.isEmpty()) yield 1.0; // pure unit suffix, no multiplier
+                if (stripped.isEmpty()) yield 1.0;
                 yield switch (stripped) {
-                    case "f"             -> 1e-15;
-                    case "p"             -> 1e-12;
-                    case "n"             -> 1e-9;
-                    case "u", "µ"        -> 1e-6;
-                    case "m"             -> 1e-3;
-                    case "k", "K"        -> 1e3;
+                    case "f"                      -> 1e-15;
+                    case "p"                      -> 1e-12;
+                    case "n"                      -> 1e-9;
+                    case "u", "µ"                 -> 1e-6;
+                    case "m"                      -> 1e-3;
+                    case "k", "K"                 -> 1e3;
                     case "M", "Meg", "meg", "MEG" -> 1e6;
-                    case "G"             -> 1e9;
-                    case "T"             -> 1e12;
+                    case "G"                      -> 1e9;
+                    case "T"                      -> 1e12;
                     default -> throw new NumberFormatException("Unknown suffix: " + suffix);
                 };
             }
@@ -263,28 +243,22 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         return base * multiplier;
     }
 
-    /**
-     * Formats a raw double into a compact string with an SI suffix.
-     * Used to pre-populate the edit field.
-     * Examples: 1000.0 → "1k", 0.000047 → "47u", 5.0 → "5"
-     */
     public static String formatValue(double val) {
         if (val == 0.0) return "0";
 
         double abs = Math.abs(val);
 
-        // Pick the best prefix tier
         double[][] tiers = {
-                {1e12,  1e15, 1e12, -1},  // T
-                {1e9,   1e12, 1e9,  -1},  // G
-                {1e6,   1e9,  1e6,  -1},  // Meg
-                {1e3,   1e6,  1e3,  -1},  // k
-                {1e0,   1e3,  1e0,  -1},  // (none)
-                {1e-3,  1e0,  1e-3, -1},  // m
-                {1e-6,  1e-3, 1e-6, -1},  // u
-                {1e-9,  1e-6, 1e-9, -1},  // n
-                {1e-12, 1e-9, 1e-12,-1},  // p
-                {1e-15, 1e-12,1e-15,-1},  // f
+                {1e12,  1e15,  1e12,  -1},
+                {1e9,   1e12,  1e9,   -1},
+                {1e6,   1e9,   1e6,   -1},
+                {1e3,   1e6,   1e3,   -1},
+                {1e0,   1e3,   1e0,   -1},
+                {1e-3,  1e0,   1e-3,  -1},
+                {1e-6,  1e-3,  1e-6,  -1},
+                {1e-9,  1e-6,  1e-9,  -1},
+                {1e-12, 1e-9,  1e-12, -1},
+                {1e-15, 1e-12, 1e-15, -1},
         };
         String[] names = {"T", "G", "Meg", "k", "", "m", "u", "n", "p", "f"};
 
@@ -296,11 +270,9 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
             }
         }
 
-        // Fallback: use plain scientific notation string
         return String.valueOf(val);
     }
 
-    /** Strips trailing zeros after a decimal point (and the point itself if nothing follows). */
     private static String trimTrailingZeros(String s) {
         if (!s.contains(".")) return s;
         s = s.replaceAll("0+$", "");
@@ -308,59 +280,54 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         return s;
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
     private void sendUpdatePacket(net.minecraft.core.BlockPos pos) {
         double value = 0.0;
         if (valueField != null) {
-            try {
-                value = parseSI(valueField.getValue());
-            } catch (NumberFormatException ignored) {
-                // Leave value as 0 if the field can't be parsed
-            }
+            try { value = parseSI(valueField.getValue()); }
+            catch (NumberFormatException ignored) {}
         }
         String srcType = "DC";
         if (sourceTypeField != null) {
             srcType = "AC".equalsIgnoreCase(sourceTypeField.getValue()) ? "AC" : "DC";
         }
+        double freq = 0.0;
+        if (frequencyField != null) {
+            try { freq = parseSI(frequencyField.getValue()); }
+            catch (NumberFormatException ignored) {}
+        }
         String lbl = "";
         if (labelField != null) {
             lbl = labelField.getValue();
         }
-        // frequency is no longer user-configurable; pass 0 to preserve packet compatibility
-        ModMessages.sendToServer(new ComponentUpdatePacket(pos, value, srcType, 0.0, lbl));
+        ModMessages.sendToServer(new ComponentUpdatePacket(pos, value, srcType, freq, lbl));
     }
 
     private String getValueLabel(String type) {
         return switch (type) {
-            case "resistor"       -> "Resistance (\u03A9)";
-            case "capacitor"      -> "Capacitance (F)";
-            case "inductor"       -> "Inductance (H)";
-            case "voltage_source" -> "Voltage (V)";
-            case "current_source" -> "Current (A)";
-            default               -> "Value";
+            case "resistor"           -> "Resistance (\u03A9)";
+            case "capacitor"          -> "Capacitance (F)";
+            case "inductor"           -> "Inductance (H)";
+            case "voltage_source"     -> "Voltage (V)";
+            case "voltage_source_sin" -> "Amplitude (V)";
+            case "current_source"     -> "Current (A)";
+            default                   -> "Value";
         };
     }
 
     private String getComponentDisplayName(String type) {
         return switch (type) {
-            case "resistor"       -> "Resistor";
-            case "capacitor"      -> "Capacitor";
-            case "inductor"       -> "Inductor";
-            case "voltage_source" -> "Voltage Source";
-            case "current_source" -> "Current Source";
-            case "diode"          -> "Diode";
-            case "probe"          -> "Voltage Probe";
-            case "current_probe"  -> "Current Probe";
-            default               -> "Component";
+            case "resistor"           -> "Resistor";
+            case "capacitor"          -> "Capacitor";
+            case "inductor"           -> "Inductor";
+            case "voltage_source"     -> "Voltage Source";
+            case "voltage_source_sin" -> "SIN Voltage Source";
+            case "current_source"     -> "Current Source";
+            case "diode"              -> "Diode";
+            case "probe"              -> "Voltage Probe";
+            case "current_probe"      -> "Current Probe";
+            default                   -> "Component";
         };
     }
-
-    // -------------------------------------------------------------------------
-    // Input passthrough
-    // -------------------------------------------------------------------------
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {

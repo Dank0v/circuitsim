@@ -14,18 +14,19 @@ public class ModItems {
     public static final DeferredRegister<Item> ITEMS =
             DeferredRegister.create(ForgeRegistries.ITEMS, CircuitSimMod.MODID);
 
-    public static final RegistryObject<Item> RESISTOR      = blockItem(ModBlocks.RESISTOR);
-    public static final RegistryObject<Item> CAPACITOR     = blockItem(ModBlocks.CAPACITOR);
-    public static final RegistryObject<Item> INDUCTOR      = blockItem(ModBlocks.INDUCTOR);
-    public static final RegistryObject<Item> VOLTAGE_SOURCE = blockItem(ModBlocks.VOLTAGE_SOURCE);
-    public static final RegistryObject<Item> CURRENT_SOURCE = blockItem(ModBlocks.CURRENT_SOURCE);
-    public static final RegistryObject<Item> DIODE         = blockItem(ModBlocks.DIODE);
-    public static final RegistryObject<Item> WIRE          = blockItem(ModBlocks.WIRE);
-    public static final RegistryObject<Item> GROUND        = blockItem(ModBlocks.GROUND);
-    public static final RegistryObject<Item> PROBE         = blockItem(ModBlocks.PROBE);
-    public static final RegistryObject<Item> CURRENT_PROBE = blockItem(ModBlocks.CURRENT_PROBE);
-    public static final RegistryObject<Item> SIMULATE      = blockItem(ModBlocks.SIMULATE);
-    public static final RegistryObject<Item> PARAMETRIC    = blockItem(ModBlocks.PARAMETRIC);
+    public static final RegistryObject<Item> RESISTOR           = blockItem(ModBlocks.RESISTOR);
+    public static final RegistryObject<Item> CAPACITOR          = blockItem(ModBlocks.CAPACITOR);
+    public static final RegistryObject<Item> INDUCTOR           = blockItem(ModBlocks.INDUCTOR);
+    public static final RegistryObject<Item> VOLTAGE_SOURCE     = blockItem(ModBlocks.VOLTAGE_SOURCE);
+    public static final RegistryObject<Item> VOLTAGE_SOURCE_SIN = blockItem(ModBlocks.VOLTAGE_SOURCE_SIN);
+    public static final RegistryObject<Item> CURRENT_SOURCE     = blockItem(ModBlocks.CURRENT_SOURCE);
+    public static final RegistryObject<Item> DIODE              = blockItem(ModBlocks.DIODE);
+    public static final RegistryObject<Item> WIRE               = blockItem(ModBlocks.WIRE);
+    public static final RegistryObject<Item> GROUND             = blockItem(ModBlocks.GROUND);
+    public static final RegistryObject<Item> PROBE              = blockItem(ModBlocks.PROBE);
+    public static final RegistryObject<Item> CURRENT_PROBE      = blockItem(ModBlocks.CURRENT_PROBE);
+    public static final RegistryObject<Item> SIMULATE           = blockItem(ModBlocks.SIMULATE);
+    public static final RegistryObject<Item> PARAMETRIC         = blockItem(ModBlocks.PARAMETRIC);
 
     private static RegistryObject<Item> blockItem(RegistryObject<Block> block) {
         return ITEMS.register(block.getId().getPath(),

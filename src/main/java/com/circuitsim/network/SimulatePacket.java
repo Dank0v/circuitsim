@@ -29,19 +29,13 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * Client → Server.
- * Carries the block position of the SimulateBlock plus the chosen analysis
- * parameters.  Replaces the implicit right-click handler that lived entirely
- * inside {@link com.circuitsim.block.SimulateBlock}.
- */
 public class SimulatePacket {
 
     private final BlockPos pos;
-    private final String   analysis;   // "OP" or "AC"
-    private final double   fStart;
-    private final double   fStop;
-    private final int      ptsPerDec;
+    private final String   analysis;   // "OP", "AC", or "TRAN"
+    private final double   fStart;     // AC: fStart  |  TRAN: tstep
+    private final double   fStop;      // AC: fStop   |  TRAN: tstop
+    private final int      ptsPerDec;  // AC: pts/dec |  TRAN: unused (0)
 
     public SimulatePacket(BlockPos pos, String analysis,
                           double fStart, double fStop, int ptsPerDec) {
@@ -72,10 +66,6 @@ public class SimulatePacket {
         return new SimulatePacket(buf);
     }
 
-    // -------------------------------------------------------------------------
-    // Server-side handler
-    // -------------------------------------------------------------------------
-
     public void handle(NetworkEvent.Context ctx) {
         ServerPlayer player = ctx.getSender();
         if (player == null) return;
@@ -105,10 +95,10 @@ public class SimulatePacket {
                         bookLines, graphPageComponents);
             }
         } else {
-            if ("AC".equals(analysis)) {
-                runAcSimulation(player, extraction, bookLines, graphPageComponents);
-            } else {
-                runOpSimulation(player, extraction, bookLines);
+            switch (analysis) {
+                case "AC"   -> runAcSimulation  (player, extraction, bookLines, graphPageComponents);
+                case "TRAN" -> runTranSimulation (player, extraction, bookLines, graphPageComponents);
+                default     -> runOpSimulation   (player, extraction, bookLines);
             }
         }
 
@@ -124,7 +114,6 @@ public class SimulatePacket {
                                   List<String> bookLines) {
         String netlist = NetlistBuilder.buildNetlist(
                 extraction.components, extraction.probes, extraction.currentProbes);
-
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist);
@@ -163,13 +152,11 @@ public class SimulatePacket {
                                   List<String> bookLines,
                                   List<Component> graphPageComponents) {
 
-        // auto-probes if none placed
         List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
 
         String netlist = NetlistBuilder.buildAcNetlist(
                 extraction.components, effectiveProbes, extraction.currentProbes,
                 fStart, fStop, ptsPerDec);
-
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist);
@@ -179,7 +166,6 @@ public class SimulatePacket {
             return;
         }
 
-        // AC results come back as frequency-keyed multi-value maps
         if (result.acData.isEmpty()) {
             msg(player, "No AC results returned. Raw output:", ChatFormatting.RED);
             for (String l : result.output) msg(player, l, ChatFormatting.GRAY);
@@ -192,10 +178,9 @@ public class SimulatePacket {
         msg(player, "--- AC Results (" + freqAxis.size() + " freq points) ---", ChatFormatting.GREEN);
         bookLines.add("=== AC Results ===");
 
-        // Print a sample at a few representative frequencies in chat
         int stride = Math.max(1, freqAxis.size() / 5);
         for (int i = 0; i < freqAxis.size(); i += stride) {
-            double f   = freqAxis.get(i);
+            double f    = freqAxis.get(i);
             String fLbl = ComponentEditScreen.formatValue(f) + "Hz";
             msg(player, "  f=" + fLbl, ChatFormatting.YELLOW);
             bookLines.add("  f=" + fLbl);
@@ -210,7 +195,6 @@ public class SimulatePacket {
             }
         }
 
-        // Build per-probe data series and cache for graph
         Map<String, List<Double>> voltageData = new LinkedHashMap<>();
         Map<String, List<Double>> currentData = new LinkedHashMap<>();
 
@@ -218,7 +202,6 @@ public class SimulatePacket {
             List<Double> mags = new ArrayList<>();
             for (double f : freqAxis) {
                 Map<String, Double> vals = result.acData.get(f);
-                // mapAcHeader("vm(N)") -> "v(N)_mag"
                 Double v = vals != null ? vals.get("v(" + probe.node + ")_mag") : null;
                 mags.add(v != null ? v : 0.0);
             }
@@ -227,7 +210,7 @@ public class SimulatePacket {
         for (int k = 0; k < extraction.currentProbes.size(); k++) {
             NetlistBuilder.CurrentProbeInfo cp = extraction.currentProbes.get(k);
             List<Double> mags = new ArrayList<>();
-            String currentKey = "i(vm" + (k + 1) + ")_mag";  // mapAcHeader("im(VMK)") -> "i(vmK)_mag"
+            String currentKey = "i(vm" + (k + 1) + ")_mag";
             for (double f : freqAxis) {
                 Map<String, Double> vals = result.acData.get(f);
                 Double v = vals != null ? vals.get(currentKey) : null;
@@ -238,12 +221,96 @@ public class SimulatePacket {
 
         int sessionId = ParametricResultCache.store(new ParametricResultCache.ResultSet(
                 "Frequency", "Hz", freqAxis, voltageData, currentData, true));
-
         emitGraphLinks(player, sessionId, voltageData, currentData, graphPageComponents);
     }
 
     // -------------------------------------------------------------------------
-    // Parametric sweep  (both OP and AC)
+    // .TRAN
+    // -------------------------------------------------------------------------
+
+    private void runTranSimulation(ServerPlayer player,
+                                    CircuitExtractor.ExtractionResult extraction,
+                                    List<String> bookLines,
+                                    List<Component> graphPageComponents) {
+
+        List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
+
+        double tstep = fStart;
+        double tstop = fStop;
+
+        String netlist = NetlistBuilder.buildTranNetlist(
+                extraction.components, effectiveProbes, extraction.currentProbes,
+                tstep, tstop);
+        printNetlist(player, netlist, bookLines);
+
+        NgSpiceRunner.Result result = NgSpiceRunner.run(netlist);
+        if (result.error != null) {
+            msg(player, "Simulation Error: " + result.error, ChatFormatting.RED);
+            bookLines.add("Error: " + result.error);
+            return;
+        }
+
+        if (result.tranData.isEmpty()) {
+            msg(player, "No TRAN results returned. Raw output:", ChatFormatting.RED);
+            for (String l : result.output) msg(player, l, ChatFormatting.GRAY);
+            return;
+        }
+
+        List<Double> timeAxis = new ArrayList<>(result.tranData.keySet());
+        Collections.sort(timeAxis);
+
+        msg(player, "--- TRAN Results (" + timeAxis.size() + " time points) ---",
+                ChatFormatting.GREEN);
+        bookLines.add("=== TRAN Results ===");
+
+        int stride = Math.max(1, timeAxis.size() / 5);
+        for (int i = 0; i < timeAxis.size(); i += stride) {
+            double t    = timeAxis.get(i);
+            String tLbl = ComponentEditScreen.formatValue(t) + "s";
+            msg(player, "  t=" + tLbl, ChatFormatting.YELLOW);
+            bookLines.add("  t=" + tLbl);
+            Map<String, Double> vals = result.tranData.get(t);
+            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                String key  = "v(" + probe.node + ")";
+                Double v    = vals != null ? vals.get(key) : null;
+                String line = "    [" + probe.label + "]: "
+                        + (v != null ? ComponentEditScreen.formatValue(v) + " V" : "N/A");
+                msg(player, line, ChatFormatting.AQUA);
+                bookLines.add(line);
+            }
+        }
+
+        Map<String, List<Double>> voltageData = new LinkedHashMap<>();
+        Map<String, List<Double>> currentData = new LinkedHashMap<>();
+
+        for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+            List<Double> vals = new ArrayList<>();
+            for (double t : timeAxis) {
+                Map<String, Double> row = result.tranData.get(t);
+                Double v = row != null ? row.get("v(" + probe.node + ")") : null;
+                vals.add(v != null ? v : 0.0);
+            }
+            voltageData.put(probe.label, vals);
+        }
+        for (int k = 0; k < extraction.currentProbes.size(); k++) {
+            NetlistBuilder.CurrentProbeInfo cp = extraction.currentProbes.get(k);
+            String iKey = "i(vm" + (k + 1) + ")";
+            List<Double> vals = new ArrayList<>();
+            for (double t : timeAxis) {
+                Map<String, Double> row = result.tranData.get(t);
+                Double v = row != null ? row.get(iKey) : null;
+                vals.add(v != null ? v : 0.0);
+            }
+            currentData.put(cp.label, vals);
+        }
+
+        int sessionId = ParametricResultCache.store(new ParametricResultCache.ResultSet(
+                "Time", "s", timeAxis, voltageData, currentData, false));
+        emitGraphLinks(player, sessionId, voltageData, currentData, graphPageComponents);
+    }
+
+    // -------------------------------------------------------------------------
+    // Parametric dispatcher
     // -------------------------------------------------------------------------
 
     private void runParametricSweep(ServerPlayer player, Level level,
@@ -275,26 +342,25 @@ public class SimulatePacket {
             return;
         }
 
-        List<NetlistBuilder.ProbeInfo>       effectiveProbes = effectiveProbes(extraction);
-        List<NetlistBuilder.CurrentProbeInfo> cpList          = extraction.currentProbes;
+        List<NetlistBuilder.ProbeInfo>        effectiveProbes = effectiveProbes(extraction);
+        List<NetlistBuilder.CurrentProbeInfo>  cpList          = extraction.currentProbes;
 
         String header = "=== Parametric: " + displayName(targetBlock)
                 + " sweep (" + sweepValues.size() + " pts, " + analysis + ") ===";
         msg(player, header, ChatFormatting.GOLD);
         bookLines.add(header);
 
-        if ("AC".equals(analysis)) {
-            runParametricAcSweep(player, extraction, targetPos, targetBlock,
-                    sweepValues, effectiveProbes, cpList,
-                    bookLines, graphPageComponents);
-        } else {
-            runParametricOpSweep(player, extraction, targetPos, targetBlock,
-                    sweepValues, effectiveProbes, cpList,
-                    bookLines, graphPageComponents);
+        switch (analysis) {
+            case "AC"   -> runParametricAcSweep  (player, extraction, targetPos, targetBlock,
+                               sweepValues, effectiveProbes, cpList, bookLines, graphPageComponents);
+            case "TRAN" -> runParametricTranSweep(player, extraction, targetPos, targetBlock,
+                               sweepValues, effectiveProbes, cpList, bookLines, graphPageComponents);
+            default     -> runParametricOpSweep  (player, extraction, targetPos, targetBlock,
+                               sweepValues, effectiveProbes, cpList, bookLines, graphPageComponents);
         }
     }
 
-    // --- Parametric .OP sweep (unchanged logic, just moved here) ---
+    // --- Parametric .OP ---
 
     private void runParametricOpSweep(ServerPlayer player,
                                        CircuitExtractor.ExtractionResult extraction,
@@ -305,11 +371,11 @@ public class SimulatePacket {
                                        List<String> bookLines,
                                        List<Component> graphPageComponents) {
 
-        List<Double>              validSweep  = new ArrayList<>();
-        Map<String, List<Double>> voltData    = new LinkedHashMap<>();
-        Map<String, List<Double>> currData    = new LinkedHashMap<>();
-        for (NetlistBuilder.ProbeInfo p      : effectiveProbes) voltData.put(p.label, new ArrayList<>());
-        for (NetlistBuilder.CurrentProbeInfo c : cpList)       currData.put(c.label, new ArrayList<>());
+        List<Double>              validSweep = new ArrayList<>();
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        for (NetlistBuilder.ProbeInfo p        : effectiveProbes) voltData.put(p.label, new ArrayList<>());
+        for (NetlistBuilder.CurrentProbeInfo c : cpList)          currData.put(c.label, new ArrayList<>());
 
         for (double val : sweepValues) {
             String secHdr = "--- " + ComponentEditScreen.formatValue(val) + unit(targetBlock) + " ---";
@@ -351,13 +417,12 @@ public class SimulatePacket {
         }
 
         if (validSweep.isEmpty()) return;
-
         int sessionId = ParametricResultCache.store(new ParametricResultCache.ResultSet(
                 displayName(targetBlock), unit(targetBlock), validSweep, voltData, currData, false));
         emitGraphLinks(player, sessionId, voltData, currData, graphPageComponents);
     }
 
-    // --- Parametric .AC sweep ---
+    // --- Parametric .AC ---
 
     private void runParametricAcSweep(ServerPlayer player,
                                        CircuitExtractor.ExtractionResult extraction,
@@ -368,13 +433,9 @@ public class SimulatePacket {
                                        List<String> bookLines,
                                        List<Component> graphPageComponents) {
 
-        // For parametric AC we produce one series per (probe, sweepValue) combination.
-        // The X-axis is frequency; each sweep step gets its own named series.
-        // We re-use validSweepFreqs from the first successful run as the shared frequency axis.
-
-        List<Double>              freqAxis   = null;
-        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
-        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        List<Double>              freqAxis = null;
+        Map<String, List<Double>> voltData = new LinkedHashMap<>();
+        Map<String, List<Double>> currData = new LinkedHashMap<>();
 
         for (double val : sweepValues) {
             String secHdr = "--- " + ComponentEditScreen.formatValue(val) + unit(targetBlock) + " (AC) ---";
@@ -386,10 +447,8 @@ public class SimulatePacket {
                     effectiveProbes, cpList, fStart, fStop, ptsPerDec);
 
             NgSpiceRunner.Result result = NgSpiceRunner.run(netlist);
-
             if (result.error != null) {
-                String first = result.error.lines().filter(l -> !l.isBlank())
-                        .findFirst().orElse("unknown error");
+                String first = result.error.lines().filter(l -> !l.isBlank()).findFirst().orElse("unknown error");
                 msg(player, "  Error: " + first, ChatFormatting.RED);
                 bookLines.add("  Error: " + first);
                 continue;
@@ -405,11 +464,10 @@ public class SimulatePacket {
             if (freqAxis == null) freqAxis = sortedFreqs;
 
             String stepSuffix = "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock);
-
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                 String seriesName = probe.label + stepSuffix;
-                List<Double> mags = new ArrayList<>();
                 String vKey = "v(" + probe.node + ")_mag";
+                List<Double> mags = new ArrayList<>();
                 for (double f : sortedFreqs) {
                     Map<String, Double> vals = result.acData.get(f);
                     Double m = vals != null ? vals.get(vKey) : null;
@@ -431,18 +489,90 @@ public class SimulatePacket {
         }
 
         if (freqAxis == null || freqAxis.isEmpty()) return;
-
-        // Brief summary in chat/book
-        msg(player, "AC sweep complete. " + voltData.size() + " voltage series, "
-                + currData.size() + " current series.", ChatFormatting.GREEN);
-
+        msg(player, "AC sweep complete. " + voltData.size() + " voltage series.", ChatFormatting.GREEN);
         int sessionId = ParametricResultCache.store(new ParametricResultCache.ResultSet(
                 "Frequency", "Hz", freqAxis, voltData, currData, true));
         emitGraphLinks(player, sessionId, voltData, currData, graphPageComponents);
     }
 
+    // --- Parametric .TRAN ---
+
+    private void runParametricTranSweep(ServerPlayer player,
+                                         CircuitExtractor.ExtractionResult extraction,
+                                         BlockPos targetPos, Block targetBlock,
+                                         List<Double> sweepValues,
+                                         List<NetlistBuilder.ProbeInfo> effectiveProbes,
+                                         List<NetlistBuilder.CurrentProbeInfo> cpList,
+                                         List<String> bookLines,
+                                         List<Component> graphPageComponents) {
+
+        double tstep = fStart;
+        double tstop  = fStop;
+
+        List<Double>              timeAxis = null;
+        Map<String, List<Double>> voltData = new LinkedHashMap<>();
+        Map<String, List<Double>> currData = new LinkedHashMap<>();
+
+        for (double val : sweepValues) {
+            String secHdr = "--- " + ComponentEditScreen.formatValue(val) + unit(targetBlock) + " (TRAN) ---";
+            msg(player, secHdr, ChatFormatting.YELLOW);
+            bookLines.add(secHdr);
+
+            String netlist = NetlistBuilder.buildTranNetlist(
+                    swapValue(extraction.components, targetPos, val),
+                    effectiveProbes, cpList, tstep, tstop);
+
+            NgSpiceRunner.Result result = NgSpiceRunner.run(netlist);
+            if (result.error != null) {
+                String first = result.error.lines().filter(l -> !l.isBlank()).findFirst().orElse("unknown error");
+                msg(player, "  Error: " + first, ChatFormatting.RED);
+                bookLines.add("  Error: " + first);
+                continue;
+            }
+            if (result.tranData.isEmpty()) {
+                msg(player, "  (no TRAN results)", ChatFormatting.GRAY);
+                bookLines.add("  (no TRAN results)");
+                continue;
+            }
+
+            List<Double> sortedTimes = new ArrayList<>(result.tranData.keySet());
+            Collections.sort(sortedTimes);
+            if (timeAxis == null) timeAxis = sortedTimes;
+
+            String stepSuffix = "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock);
+            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                String seriesName = probe.label + stepSuffix;
+                String vKey = "v(" + probe.node + ")";
+                List<Double> vals = new ArrayList<>();
+                for (double t : sortedTimes) {
+                    Map<String, Double> row = result.tranData.get(t);
+                    Double v = row != null ? row.get(vKey) : null;
+                    vals.add(v != null ? v : 0.0);
+                }
+                voltData.put(seriesName, vals);
+            }
+            for (int k = 0; k < cpList.size(); k++) {
+                String seriesName = cpList.get(k).label + stepSuffix;
+                String iKey = "i(vm" + (k + 1) + ")";
+                List<Double> vals = new ArrayList<>();
+                for (double t : sortedTimes) {
+                    Map<String, Double> row = result.tranData.get(t);
+                    Double v = row != null ? row.get(iKey) : null;
+                    vals.add(v != null ? v : 0.0);
+                }
+                currData.put(seriesName, vals);
+            }
+        }
+
+        if (timeAxis == null || timeAxis.isEmpty()) return;
+        msg(player, "TRAN sweep complete. " + voltData.size() + " voltage series.", ChatFormatting.GREEN);
+        int sessionId = ParametricResultCache.store(new ParametricResultCache.ResultSet(
+                "Time", "s", timeAxis, voltData, currData, false));
+        emitGraphLinks(player, sessionId, voltData, currData, graphPageComponents);
+    }
+
     // -------------------------------------------------------------------------
-    // Helpers shared by all paths
+    // Shared helpers
     // -------------------------------------------------------------------------
 
     private void printNetlist(ServerPlayer player, String netlist, List<String> bookLines) {
@@ -500,10 +630,6 @@ public class SimulatePacket {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Book creation
-    // -------------------------------------------------------------------------
-
     private static final int LINES_PER_PAGE = 13;
     private static final int MAX_PAGES      = 100;
 
@@ -548,10 +674,6 @@ public class SimulatePacket {
                 Component.Serializer.toJson(Component.literal(String.join("\n", lines))));
     }
 
-    // -------------------------------------------------------------------------
-    // Small utilities
-    // -------------------------------------------------------------------------
-
     private static List<NetlistBuilder.CircuitComponent> swapValue(
             List<NetlistBuilder.CircuitComponent> components, BlockPos targetPos, double newVal) {
         return components.stream()
@@ -567,26 +689,29 @@ public class SimulatePacket {
     }
 
     private static boolean isParametrizable(Block b) {
-        return b instanceof ResistorBlock || b instanceof CapacitorBlock
+        return b instanceof ResistorBlock     || b instanceof CapacitorBlock
                 || b instanceof InductorBlock || b instanceof VoltageSourceBlock
+                || b instanceof VoltageSourceSinBlock
                 || b instanceof CurrentSourceBlock;
     }
 
     private static String displayName(Block b) {
-        if (b instanceof ResistorBlock)      return "Resistor";
-        if (b instanceof CapacitorBlock)     return "Capacitor";
-        if (b instanceof InductorBlock)      return "Inductor";
-        if (b instanceof VoltageSourceBlock) return "Voltage Source";
-        if (b instanceof CurrentSourceBlock) return "Current Source";
+        if (b instanceof ResistorBlock)         return "Resistor";
+        if (b instanceof CapacitorBlock)        return "Capacitor";
+        if (b instanceof InductorBlock)         return "Inductor";
+        if (b instanceof VoltageSourceBlock)    return "Voltage Source";
+        if (b instanceof VoltageSourceSinBlock) return "SIN Voltage Source";
+        if (b instanceof CurrentSourceBlock)    return "Current Source";
         return "Component";
     }
 
     private static String unit(Block b) {
-        if (b instanceof ResistorBlock)      return "\u03A9";
-        if (b instanceof CapacitorBlock)     return "F";
-        if (b instanceof InductorBlock)      return "H";
-        if (b instanceof VoltageSourceBlock) return "V";
-        if (b instanceof CurrentSourceBlock) return "A";
+        if (b instanceof ResistorBlock)         return "\u03A9";
+        if (b instanceof CapacitorBlock)        return "F";
+        if (b instanceof InductorBlock)         return "H";
+        if (b instanceof VoltageSourceBlock)    return "V";
+        if (b instanceof VoltageSourceSinBlock) return "V";
+        if (b instanceof CurrentSourceBlock)    return "A";
         return "";
     }
 

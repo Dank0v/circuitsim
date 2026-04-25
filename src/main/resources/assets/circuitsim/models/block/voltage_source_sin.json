@@ -1,0 +1,8 @@
+{
+    "parent": "minecraft:block/orientable",
+    "textures": {
+        "top": "circuitsim:block/voltage_source_sin",
+        "side": "circuitsim:block/voltage_source_sin_side",
+        "front": "circuitsim:block/voltage_source_sin_front"
+    }
+}

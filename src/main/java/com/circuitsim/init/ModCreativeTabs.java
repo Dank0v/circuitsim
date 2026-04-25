@@ -24,6 +24,7 @@ public class ModCreativeTabs {
                                 output.accept(ModItems.CAPACITOR.get());
                                 output.accept(ModItems.INDUCTOR.get());
                                 output.accept(ModItems.VOLTAGE_SOURCE.get());
+                                output.accept(ModItems.VOLTAGE_SOURCE_SIN.get());
                                 output.accept(ModItems.CURRENT_SOURCE.get());
                                 output.accept(ModItems.DIODE.get());
                                 output.accept(ModItems.WIRE.get());
@@ -31,7 +32,7 @@ public class ModCreativeTabs {
                                 output.accept(ModItems.PROBE.get());
                                 output.accept(ModItems.CURRENT_PROBE.get());
                                 output.accept(ModItems.SIMULATE.get());
-                                output.accept(ModItems.PARAMETRIC.get());  // ← new
+                                output.accept(ModItems.PARAMETRIC.get());
                             })
                             .build()
             );
