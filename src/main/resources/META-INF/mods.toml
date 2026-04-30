@@ -4,9 +4,13 @@ license="GPL-3.0"
 
 [[mods]]
 modId="circuitsim"
-version="1.0.0"
+version="${file.jarVersion}"
 displayName="Circuit Simulator"
-authors="circuitium"
+# --- ADDED THE LINE BELOW ---
+logoFile="icon.png"
+# ----------------------------
+displayURL="https://github.com/Dank0v/circuitsim"
+authors="Dankov"
 description='''
 A Minecraft mod that integrates ngspice circuit simulation.
 Place blocks to represent electronic components, connect them with wires,
