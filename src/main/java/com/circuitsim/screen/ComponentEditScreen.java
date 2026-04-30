@@ -16,12 +16,13 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMenu> {
 
     private EditBox valueField;
-    private EditBox sourceTypeField;
+    private String  sourceType = "DC";          // replaces sourceTypeField
+    private Button  sourceTypeToggle;
     private EditBox labelField;
     private EditBox frequencyField;
-    private Button doneButton;
-    private Button cancelButton;
-    private String componentType;
+    private Button  doneButton;
+    private Button  cancelButton;
+    private String  componentType;
 
     private boolean showValue;
     private boolean showSourceType;
@@ -39,6 +40,10 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
     private static final int FIELD_COLOR  = 0xFFFFFFFF;
     private static final int BG_COLOR     = 0xFF1E1E1E;
     private static final int BORDER_COLOR = 0xFF4A90D9;
+
+    // Toggle button colours
+    private static final int TOGGLE_DC_COLOR = 0xFF2255AA;   // blue-ish for DC
+    private static final int TOGGLE_AC_COLOR = 0xFF228844;   // green-ish for AC
 
     public ComponentEditScreen(ComponentEditMenu menu, Inventory inv, Component title) {
         super(menu, inv, title);
@@ -67,6 +72,9 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         } else {
             componentType = "resistor";
         }
+
+        // Initialise toggle state from the stored value
+        sourceType = "AC".equalsIgnoreCase(currentSourceType) ? "AC" : "DC";
 
         boolean isProbe        = "probe".equals(componentType);
         boolean isCurrentProbe = "current_probe".equals(componentType);
@@ -99,15 +107,27 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
             valueField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW, formatValue(currentValue), 32);
             cursorY += ROW_H;
         }
+
         if (showSourceType) {
-            sourceTypeField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW, currentSourceType, 8);
+            // Toggle button occupies the same vertical slot as an EditBox would
+            int btnY = cursorY + LABEL_H + GAP;
+            sourceTypeToggle = Button.builder(
+                    Component.literal(sourceType),
+                    btn -> {
+                        sourceType = "DC".equals(sourceType) ? "AC" : "DC";
+                        btn.setMessage(Component.literal(sourceType));
+                    }
+            ).bounds(fieldX, btnY, fieldW, BOX_H).build();
+            addRenderableWidget(sourceTypeToggle);
             cursorY += ROW_H;
         }
+
         if (showFrequency) {
             frequencyField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW,
                     formatValue(currentFrequency), 32);
             cursorY += ROW_H;
         }
+
         if (showLabel) {
             labelField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW, currentLabel, 64);
         }
@@ -152,6 +172,16 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         g.fill(x + imageWidth - 2, y,                   x + imageWidth, y + imageHeight,    BORDER_COLOR);
 
         g.fill(x + 2, y + 23, x + imageWidth - 2, y + 24, 0xFF444444);
+
+        // Tint the toggle button to reflect DC vs AC
+        if (showSourceType && sourceTypeToggle != null) {
+            int color = "AC".equals(sourceType) ? TOGGLE_AC_COLOR : TOGGLE_DC_COLOR;
+            g.fill(sourceTypeToggle.getX(),
+                   sourceTypeToggle.getY(),
+                   sourceTypeToggle.getX() + sourceTypeToggle.getWidth(),
+                   sourceTypeToggle.getY() + sourceTypeToggle.getHeight(),
+                   color);
+        }
     }
 
     @Override
@@ -181,7 +211,7 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         }
         if (showSourceType) {
             g.drawString(Minecraft.getInstance().font,
-                    "Source Type (DC / AC):", labelX, cursorY, LABEL_COLOR);
+                    "Source Type:", labelX, cursorY, LABEL_COLOR);
             cursorY += ROW_H;
         }
         if (showFrequency) {
@@ -286,10 +316,7 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
             try { value = parseSI(valueField.getValue()); }
             catch (NumberFormatException ignored) {}
         }
-        String srcType = "DC";
-        if (sourceTypeField != null) {
-            srcType = "AC".equalsIgnoreCase(sourceTypeField.getValue()) ? "AC" : "DC";
-        }
+        // sourceType is now tracked directly in the field, not from an EditBox
         double freq = 0.0;
         if (frequencyField != null) {
             try { freq = parseSI(frequencyField.getValue()); }
@@ -299,7 +326,7 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         if (labelField != null) {
             lbl = labelField.getValue();
         }
-        ModMessages.sendToServer(new ComponentUpdatePacket(pos, value, srcType, freq, lbl));
+        ModMessages.sendToServer(new ComponentUpdatePacket(pos, value, sourceType, freq, lbl));
     }
 
     private String getValueLabel(String type) {
