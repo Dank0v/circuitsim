@@ -31,11 +31,7 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
 ### Method 1: Just take it
 1. Install **Java 17** and **Minecraft Forge 47.3.0** for Minecraft 1.20.1.
 2. Install [ngspice](https://ngspice.sourceforge.io/) and make sure `ngspice_con` (Windows) or `ngspice` (Linux/Mac) is accessible from your terminal.
-3. Clone this repository:
-   ```bash
-   git clone https://github.com/Dank0v/circuitsim.git
-   cd circuitsim
-   ```
+3. Grab the [Latest Release](../../releases/latest)
 4. Transfer the mod from `mod/circuitsim-x.x.x` into your Minecraft `mods/` folder 
 
 
