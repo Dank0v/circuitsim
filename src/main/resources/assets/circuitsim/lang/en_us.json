@@ -12,6 +12,7 @@
     "block.circuitsim.current_probe": "Current Probe",
     "block.circuitsim.simulate": "Simulate Block",
     "block.circuitsim.parametric": "Parametric Block",
+    "block.circuitsim.ic_resistor": "IC Resistor",
     "gui.circuitsim.title": "Edit Component",
     "gui.circuitsim.value": "Value:",
     "gui.circuitsim.resistance": "Resistance (\u03A9):",

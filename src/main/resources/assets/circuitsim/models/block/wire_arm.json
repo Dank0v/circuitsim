@@ -1,0 +1,18 @@
+{
+    "parent": "minecraft:block/block",
+    "textures": {
+        "all":      "circuitsim:block/wire",
+        "particle": "circuitsim:block/wire"
+    },
+    "elements": [{
+        "from": [5, 0, 0],
+        "to":   [11, 2, 5],
+        "faces": {
+            "down":  { "uv": [5, 0, 11, 5], "texture": "#all", "cullface": "down" },
+            "up":    { "uv": [5, 0, 11, 5], "texture": "#all" },
+            "north": { "uv": [5, 14, 11, 16], "texture": "#all", "cullface": "north" },
+            "east":  { "uv": [0, 14, 5, 16],  "texture": "#all" },
+            "west":  { "uv": [0, 14, 5, 16],  "texture": "#all" }
+        }
+    }]
+}

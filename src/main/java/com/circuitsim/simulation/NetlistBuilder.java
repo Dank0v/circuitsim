@@ -14,9 +14,12 @@ public class NetlistBuilder {
 
     public static String buildNetlist(List<CircuitComponent> components,
                                        List<ProbeInfo>        probes,
-                                       List<CurrentProbeInfo> currentProbes) {
+                                       List<CurrentProbeInfo> currentProbes,
+                                       String                 pdkName,
+                                       String                 pdkLibPath) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim Netlist\n");
+        appendPdkLib(sb, pdkName, pdkLibPath);
 
         int rCount = 1, cCount = 1, lCount = 1, vCount = 1, iCount = 1,
             dCount = 1, vmCount = 1;
@@ -24,7 +27,9 @@ public class NetlistBuilder {
 
         for (CircuitComponent comp : components) {
             String line;
-            if (comp.block instanceof ResistorBlock) {
+            if (comp.block instanceof IcResistorBlock) {
+                line = formatIcResistor(rCount++, comp, pdkName);
+            } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %d %d %g", cCount++, comp.nodeA, comp.nodeB, comp.value);
@@ -37,7 +42,6 @@ public class NetlistBuilder {
                     line = String.format("V%d %d %d DC %g", vCount++, comp.nodeA, comp.nodeB, comp.value);
                 }
             } else if (comp.block instanceof VoltageSourceSinBlock) {
-                // For .OP the SIN source contributes only its DC offset (0 V)
                 line = String.format("V%d %d %d DC 0", vCount++, comp.nodeA, comp.nodeB);
             } else if (comp.block instanceof CurrentSourceBlock) {
                 line = String.format("I%d %d %d DC %g", iCount++, comp.nodeA, comp.nodeB, comp.value);
@@ -58,6 +62,7 @@ public class NetlistBuilder {
 
         sb.append(".op\n");
         sb.append(".control\n");
+
         sb.append("  run\n");
 
         for (ProbeInfo probe : probes) {
@@ -74,7 +79,13 @@ public class NetlistBuilder {
     }
 
     public static String buildNetlist(List<CircuitComponent> components, List<ProbeInfo> probes) {
-        return buildNetlist(components, probes, List.of());
+        return buildNetlist(components, probes, List.of(), "none", "");
+    }
+
+    public static String buildNetlist(List<CircuitComponent> components,
+                                       List<ProbeInfo> probes,
+                                       List<CurrentProbeInfo> currentProbes) {
+        return buildNetlist(components, probes, currentProbes, "none", "");
     }
 
     // -------------------------------------------------------------------------
@@ -84,9 +95,11 @@ public class NetlistBuilder {
     public static String buildAcNetlist(List<CircuitComponent> components,
                                          List<ProbeInfo>        probes,
                                          List<CurrentProbeInfo> currentProbes,
-                                         double fStart, double fStop, int ptsPerDec) {
+                                         double fStart, double fStop, int ptsPerDec,
+                                         String pdkName, String pdkLibPath) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim AC Netlist\n");
+        appendPdkLib(sb, pdkName, pdkLibPath);
 
         int rCount = 1, cCount = 1, lCount = 1, vCount = 1, iCount = 1,
             dCount = 1, vmCount = 1;
@@ -95,7 +108,9 @@ public class NetlistBuilder {
 
         for (CircuitComponent comp : components) {
             String line;
-            if (comp.block instanceof ResistorBlock) {
+            if (comp.block instanceof IcResistorBlock) {
+                line = formatIcResistor(rCount++, comp, pdkName);
+            } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %d %d %g", cCount++, comp.nodeA, comp.nodeB, comp.value);
@@ -111,7 +126,6 @@ public class NetlistBuilder {
                             vCount++, comp.nodeA, comp.nodeB, comp.value);
                 }
             } else if (comp.block instanceof VoltageSourceSinBlock) {
-                // The SIN source drives AC analysis with its stored amplitude
                 line = String.format("V%d %d %d DC 0 AC %g",
                         vCount++, comp.nodeA, comp.nodeB, comp.value);
                 hasAcSource = true;
@@ -151,6 +165,7 @@ public class NetlistBuilder {
         sb.append(String.format(".ac dec %d %g %g\n", ptsPerDec, fStart, fStop));
 
         sb.append(".control\n");
+
         sb.append("  run\n");
 
         if (!probes.isEmpty() || !currentProbes.isEmpty()) {
@@ -170,6 +185,13 @@ public class NetlistBuilder {
         return sb.toString();
     }
 
+    public static String buildAcNetlist(List<CircuitComponent> components,
+                                         List<ProbeInfo>        probes,
+                                         List<CurrentProbeInfo> currentProbes,
+                                         double fStart, double fStop, int ptsPerDec) {
+        return buildAcNetlist(components, probes, currentProbes, fStart, fStop, ptsPerDec, "none", "");
+    }
+
     // -------------------------------------------------------------------------
     // .TRAN
     // -------------------------------------------------------------------------
@@ -177,9 +199,11 @@ public class NetlistBuilder {
     public static String buildTranNetlist(List<CircuitComponent> components,
                                            List<ProbeInfo>        probes,
                                            List<CurrentProbeInfo> currentProbes,
-                                           double tstep, double tstop) {
+                                           double tstep, double tstop,
+                                           String pdkName, String pdkLibPath) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim TRAN Netlist\n");
+        appendPdkLib(sb, pdkName, pdkLibPath);
 
         int rCount = 1, cCount = 1, lCount = 1, vCount = 1, iCount = 1,
             dCount = 1, vmCount = 1;
@@ -187,7 +211,9 @@ public class NetlistBuilder {
 
         for (CircuitComponent comp : components) {
             String line;
-            if (comp.block instanceof ResistorBlock) {
+            if (comp.block instanceof IcResistorBlock) {
+                line = formatIcResistor(rCount++, comp, pdkName);
+            } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %d %d %g", cCount++, comp.nodeA, comp.nodeB, comp.value);
@@ -219,6 +245,7 @@ public class NetlistBuilder {
         sb.append(String.format(".tran %g %g\n", tstep, tstop));
 
         sb.append(".control\n");
+
         sb.append("  run\n");
 
         if (!probes.isEmpty() || !currentProbes.isEmpty()) {
@@ -238,6 +265,61 @@ public class NetlistBuilder {
         return sb.toString();
     }
 
+    public static String buildTranNetlist(List<CircuitComponent> components,
+                                           List<ProbeInfo>        probes,
+                                           List<CurrentProbeInfo> currentProbes,
+                                           double tstep, double tstop) {
+        return buildTranNetlist(components, probes, currentProbes, tstep, tstop, "none", "");
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private static void appendPdkLib(StringBuilder sb, String pdkName, String pdkLibPath) {
+        if (!"none".equals(pdkName) && pdkLibPath != null && !pdkLibPath.isBlank()) {
+            sb.append(".lib ").append(pdkLibPath).append("\n");
+        }
+    }
+
+
+    /**
+     * Formats a sky130A resistor instance line.
+     * Resistance formula (W and L in µm): R = (378.3 + 317.17 * L) / W / mult
+     */
+    private static String pdkModelPrefix(String pdkName) {
+        return switch (pdkName == null ? "none" : pdkName) {
+            case "sky130A" -> "sky130_fd_pr__";
+            default        -> "";
+        };
+    }
+
+    /**
+     * Formats a 3-pin IC resistor subcircuit line.
+     * The model prefix is determined by the active PDK (e.g. sky130_fd_pr__ for sky130A).
+     * Resistance formula for display (W, L in µm): R = (378.3 + 317.17*L) / W / mult
+     */
+    private static String formatIcResistor(int idx, CircuitComponent comp, String pdkName) {
+        String prefix = pdkModelPrefix(pdkName);
+        String name   = comp.modelName.isBlank() ? "res_high_po" : comp.modelName;
+        String model  = prefix + name;
+        double w    = comp.wParam    > 0 ? comp.wParam    : 1.0;
+        double l    = comp.lParam    > 0 ? comp.lParam    : 1.0;
+        double mult = comp.multParam > 0 ? comp.multParam : 1.0;
+        // 3-pin subcircuit: p+ p- bulk
+        int bulk = comp.nodeC >= 0 ? comp.nodeC : 0;
+        return String.format("XR%d %d %d %d %s W=%g L=%g mult=%g",
+                idx, comp.nodeA, comp.nodeB, bulk, model, w, l, mult);
+    }
+
+    /** Computes the expected resistance in Ohms using the sky130 formula (W, L in µm). */
+    public static double computeSky130Resistance(double w, double l, double mult) {
+        double wEff    = w    > 0 ? w    : 1.0;
+        double lEff    = l    > 0 ? l    : 1.0;
+        double multEff = mult > 0 ? mult : 1.0;
+        return (378.3 + 317.17 * lEff) / wEff / multEff;
+    }
+
     // -------------------------------------------------------------------------
     // Inner classes
     // -------------------------------------------------------------------------
@@ -247,19 +329,43 @@ public class NetlistBuilder {
         public final BlockPos pos;
         public final int      nodeA;
         public final int      nodeB;
+        public final int      nodeC;   // third pin (sky130 bulk), -1 means unused
         public final double   value;
         public final String   sourceType;
         public final double   frequency;
+        // sky130 resistor params
+        public final String   modelName;
+        public final double   wParam;
+        public final double   lParam;
+        public final double   multParam;
 
         public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB,
                                 double value, String sourceType, double frequency) {
+            this(block, pos, nodeA, nodeB, -1, value, sourceType, frequency, "", 1.0, 1.0, 1.0);
+        }
+
+        public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB,
+                                double value, String sourceType, double frequency,
+                                String modelName, double wParam, double lParam, double multParam) {
+            this(block, pos, nodeA, nodeB, -1, value, sourceType, frequency,
+                    modelName, wParam, lParam, multParam);
+        }
+
+        public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB, int nodeC,
+                                double value, String sourceType, double frequency,
+                                String modelName, double wParam, double lParam, double multParam) {
             this.block      = block;
             this.pos        = pos;
             this.nodeA      = nodeA;
             this.nodeB      = nodeB;
+            this.nodeC      = nodeC;
             this.value      = value;
             this.sourceType = sourceType;
             this.frequency  = frequency;
+            this.modelName  = modelName;
+            this.wParam     = wParam;
+            this.lParam     = lParam;
+            this.multParam  = multParam;
         }
     }
 

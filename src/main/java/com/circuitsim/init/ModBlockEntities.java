@@ -28,7 +28,8 @@ public class ModBlockEntities {
                             ModBlocks.PROBE.get(),
                             ModBlocks.CURRENT_PROBE.get(),
                             ModBlocks.SIMULATE.get(),
-                            ModBlocks.PARAMETRIC.get()
+                            ModBlocks.PARAMETRIC.get(),
+                            ModBlocks.IC_RESISTOR.get()
                     ).build(null)
             );
 

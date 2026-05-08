@@ -8,30 +8,48 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraftforge.network.NetworkEvent;
 
-import java.util.function.Supplier;
-
 public class ComponentUpdatePacket {
 
     private final BlockPos pos;
-    private final double value;
-    private final String sourceType;
-    private final double frequency;
-    private final String label;
+    private final double   value;
+    private final String   sourceType;
+    private final double   frequency;
+    private final String   label;
+    // sky130 resistor fields
+    private final String   modelName;
+    private final double   wParam;
+    private final double   lParam;
+    private final double   multParam;
 
-    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType, double frequency, String label) {
-        this.pos = pos;
-        this.value = value;
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label) {
+        this(pos, value, sourceType, frequency, label, "", 1.0, 1.0, 1.0);
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam) {
+        this.pos        = pos;
+        this.value      = value;
         this.sourceType = sourceType;
-        this.frequency = frequency;
-        this.label = label;
+        this.frequency  = frequency;
+        this.label      = label;
+        this.modelName  = modelName;
+        this.wParam     = wParam;
+        this.lParam     = lParam;
+        this.multParam  = multParam;
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
-        this.pos = buf.readBlockPos();
-        this.value = buf.readDouble();
+        this.pos        = buf.readBlockPos();
+        this.value      = buf.readDouble();
         this.sourceType = buf.readUtf(64);
-        this.frequency = buf.readDouble();
-        this.label = buf.readUtf(256);
+        this.frequency  = buf.readDouble();
+        this.label      = buf.readUtf(256);
+        this.modelName  = buf.readUtf(128);
+        this.wParam     = buf.readDouble();
+        this.lParam     = buf.readDouble();
+        this.multParam  = buf.readDouble();
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -40,6 +58,10 @@ public class ComponentUpdatePacket {
         buf.writeUtf(sourceType, 64);
         buf.writeDouble(frequency);
         buf.writeUtf(label, 256);
+        buf.writeUtf(modelName, 128);
+        buf.writeDouble(wParam);
+        buf.writeDouble(lParam);
+        buf.writeDouble(multParam);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -57,6 +79,10 @@ public class ComponentUpdatePacket {
             cbe.setSourceType(sourceType);
             cbe.setFrequency(frequency);
             cbe.setLabel(label);
+            cbe.setModelName(modelName);
+            cbe.setWParam(wParam);
+            cbe.setLParam(lParam);
+            cbe.setMultParam(multParam);
             cbe.setChanged();
             cbe.syncToClient();
         }

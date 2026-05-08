@@ -3,6 +3,7 @@ package com.circuitsim.client.renderer;
 import com.circuitsim.blockentity.ComponentBlockEntity;
 import com.circuitsim.init.ModBlocks;
 import com.circuitsim.screen.ComponentEditScreen;
+import com.circuitsim.simulation.NetlistBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -150,6 +151,16 @@ public class ComponentBlockEntityRenderer
                 ? "Param: ?"
                 : "Param: " + sweep;
         }
+        if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) {
+            return val == 0.0
+                ? "?V"
+                : ComponentEditScreen.formatValue(val) + "V";
+        }
+        if (block == ModBlocks.IC_RESISTOR.get()) {
+            double r = NetlistBuilder.computeSky130Resistance(
+                    be.getWParam(), be.getLParam(), be.getMultParam());
+            return ComponentEditScreen.formatValue(r) + "\u03A9";
+        }
         // Wire, Ground, Simulate — no label needed
         return null;
     }
@@ -163,6 +174,14 @@ public class ComponentBlockEntityRenderer
         ) {
             String st = be.getSourceType();
             return (st == null || st.isEmpty()) ? "DC" : st;
+        }
+        if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) {
+            double freq = be.getFrequency();
+            return ComponentEditScreen.formatValue(freq) + "Hz";
+        }
+        if (block == ModBlocks.IC_RESISTOR.get()) {
+            String model = be.getModelName();
+            return (model == null || model.isEmpty()) ? "res_high_po" : model;
         }
         return null;
     }

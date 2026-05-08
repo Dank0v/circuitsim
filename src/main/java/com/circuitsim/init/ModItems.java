@@ -27,6 +27,7 @@ public class ModItems {
     public static final RegistryObject<Item> CURRENT_PROBE      = blockItem(ModBlocks.CURRENT_PROBE);
     public static final RegistryObject<Item> SIMULATE           = blockItem(ModBlocks.SIMULATE);
     public static final RegistryObject<Item> PARAMETRIC         = blockItem(ModBlocks.PARAMETRIC);
+    public static final RegistryObject<Item> IC_RESISTOR         = blockItem(ModBlocks.IC_RESISTOR);
 
     private static RegistryObject<Item> blockItem(RegistryObject<Block> block) {
         return ITEMS.register(block.getId().getPath(),

@@ -1,7 +1,7 @@
 {
     "parent": "minecraft:block/cube",
     "textures": {
-        "up":       "circuitsim:block/wire_top_cross",
+        "up":       "circuitsim:block/wire_top_straight",
         "down":     "circuitsim:block/wire",
         "north":    "circuitsim:block/wire_side",
         "south":    "circuitsim:block/wire_side",

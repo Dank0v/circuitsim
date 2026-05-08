@@ -13,41 +13,53 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
-public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMenu> {
+public class ComponentEditScreen
+    extends AbstractContainerScreen<ComponentEditMenu>
+{
 
     private EditBox valueField;
-    private String  sourceType = "DC";          // replaces sourceTypeField
-    private Button  sourceTypeToggle;
+    private String sourceType = "DC";
+    private Button sourceTypeToggle;
     private EditBox labelField;
     private EditBox frequencyField;
-    private Button  doneButton;
-    private Button  cancelButton;
-    private String  componentType;
+    private Button doneButton;
+    private Button cancelButton;
+    private String componentType;
+
+    // sky130 resistor fields
+    private EditBox modelNameField;
+    private EditBox wField;
+    private EditBox lField;
+    private EditBox multField;
 
     private boolean showValue;
     private boolean showSourceType;
     private boolean showLabel;
     private boolean showFrequency;
+    private boolean showSky130;
 
-    private static final int LABEL_H  = 10;
-    private static final int GAP      = 4;
-    private static final int BOX_H    = 18;
-    private static final int ROW_PAD  = 8;
-    private static final int ROW_H    = LABEL_H + GAP + BOX_H + ROW_PAD;
+    private static final int LABEL_H = 10;
+    private static final int GAP = 4;
+    private static final int BOX_H = 18;
+    private static final int ROW_PAD = 8;
+    private static final int ROW_H = LABEL_H + GAP + BOX_H + ROW_PAD;
 
-    private static final int TITLE_COLOR  = 0xFFFFD700;
-    private static final int LABEL_COLOR  = 0xFFFFFFFF;
-    private static final int FIELD_COLOR  = 0xFFFFFFFF;
-    private static final int BG_COLOR     = 0xFF1E1E1E;
+    private static final int TITLE_COLOR = 0xFFFFD700;
+    private static final int LABEL_COLOR = 0xFFFFFFFF;
+    private static final int FIELD_COLOR = 0xFFFFFFFF;
+    private static final int BG_COLOR = 0xFF1E1E1E;
     private static final int BORDER_COLOR = 0xFF4A90D9;
 
-    // Toggle button colours
-    private static final int TOGGLE_DC_COLOR = 0xFF2255AA;   // blue-ish for DC
-    private static final int TOGGLE_AC_COLOR = 0xFF228844;   // green-ish for AC
+    private static final int TOGGLE_DC_COLOR = 0xFF2255AA;
+    private static final int TOGGLE_AC_COLOR = 0xFF228844;
 
-    public ComponentEditScreen(ComponentEditMenu menu, Inventory inv, Component title) {
+    public ComponentEditScreen(
+        ComponentEditMenu menu,
+        Inventory inv,
+        Component title
+    ) {
         super(menu, inv, title);
-        this.imageWidth  = 260;
+        this.imageWidth = 260;
         this.imageHeight = 200;
     }
 
@@ -58,44 +70,54 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         net.minecraft.core.BlockPos pos = ClientSetup.getLastInteractedPos();
         BlockEntity be = Minecraft.getInstance().level.getBlockEntity(pos);
 
-        double currentValue      = 0.0;
+        double currentValue = 0.0;
         String currentSourceType = "DC";
-        String currentLabel      = "";
-        double currentFrequency  = 1000.0;
+        String currentLabel = "";
+        double currentFrequency = 1000.0;
+        String currentModelName = "";
+        double currentW = 1.0;
+        double currentL = 1.0;
+        double currentMult = 1.0;
 
         if (be instanceof ComponentBlockEntity cbe) {
-            currentValue      = cbe.getValue();
+            currentValue = cbe.getValue();
             currentSourceType = cbe.getSourceType();
-            currentLabel      = cbe.getLabel();
-            currentFrequency  = cbe.getFrequency();
-            componentType     = cbe.getComponentType();
+            currentLabel = cbe.getLabel();
+            currentFrequency = cbe.getFrequency();
+            componentType = cbe.getComponentType();
+            currentModelName = cbe.getModelName();
+            currentW = cbe.getWParam();
+            currentL = cbe.getLParam();
+            currentMult = cbe.getMultParam();
         } else {
             componentType = "resistor";
         }
 
-        // Initialise toggle state from the stored value
         sourceType = "AC".equalsIgnoreCase(currentSourceType) ? "AC" : "DC";
 
-        boolean isProbe        = "probe".equals(componentType);
+        boolean isProbe = "probe".equals(componentType);
         boolean isCurrentProbe = "current_probe".equals(componentType);
-        boolean isVoltSrc      = "voltage_source".equals(componentType);
-        boolean isSinSrc       = "voltage_source_sin".equals(componentType);
-        boolean isDiode        = "diode".equals(componentType);
+        boolean isVoltSrc = "voltage_source".equals(componentType);
+        boolean isSinSrc = "voltage_source_sin".equals(componentType);
+        boolean isDiode = "diode".equals(componentType);
+        boolean isSky130 = "ic_resistor".equals(componentType);
 
-        showValue      = !isProbe && !isCurrentProbe && !isDiode;
+        showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130;
         showSourceType = isVoltSrc;
-        showFrequency  = isSinSrc;
-        showLabel      = isProbe || isCurrentProbe;
+        showFrequency = isSinSrc;
+        showLabel = isProbe || isCurrentProbe;
+        showSky130 = isSky130;
 
         int rowCount = 0;
-        if (showValue)      rowCount++;
+        if (showValue) rowCount++;
         if (showSourceType) rowCount++;
-        if (showFrequency)  rowCount++;
-        if (showLabel)      rowCount++;
+        if (showFrequency) rowCount++;
+        if (showLabel) rowCount++;
+        if (showSky130) rowCount += 4; // model, W, L, mult
 
         this.imageHeight = 10 + 10 + 10 + (rowCount * ROW_H) + 36;
 
-        int panelX = (this.width  - this.imageWidth)  / 2;
+        int panelX = (this.width - this.imageWidth) / 2;
         int panelY = (this.height - this.imageHeight) / 2;
 
         int fieldX = panelX + 10;
@@ -104,53 +126,125 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         int cursorY = panelY + 30;
 
         if (showValue) {
-            valueField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW, formatValue(currentValue), 32);
+            valueField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                formatValue(currentValue),
+                32
+            );
             cursorY += ROW_H;
         }
 
         if (showSourceType) {
-            // Toggle button occupies the same vertical slot as an EditBox would
             int btnY = cursorY + LABEL_H + GAP;
             sourceTypeToggle = Button.builder(
-                    Component.literal(sourceType),
-                    btn -> {
-                        sourceType = "DC".equals(sourceType) ? "AC" : "DC";
-                        btn.setMessage(Component.literal(sourceType));
-                    }
-            ).bounds(fieldX, btnY, fieldW, BOX_H).build();
+                Component.literal(sourceType),
+                btn -> {
+                    sourceType = "DC".equals(sourceType) ? "AC" : "DC";
+                    btn.setMessage(Component.literal(sourceType));
+                }
+            )
+                .bounds(fieldX, btnY, fieldW, BOX_H)
+                .build();
             addRenderableWidget(sourceTypeToggle);
             cursorY += ROW_H;
         }
 
         if (showFrequency) {
-            frequencyField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW,
-                    formatValue(currentFrequency), 32);
+            frequencyField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                formatValue(currentFrequency),
+                32
+            );
             cursorY += ROW_H;
         }
 
         if (showLabel) {
-            labelField = makeBox(fieldX, cursorY + LABEL_H + GAP, fieldW, currentLabel, 64);
+            labelField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                currentLabel,
+                64
+            );
+            cursorY += ROW_H;
+        }
+
+        if (showSky130) {
+            modelNameField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                currentModelName.isEmpty() ? "res_high_po" : currentModelName,
+                64
+            );
+            cursorY += ROW_H;
+            wField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                String.valueOf(currentW),
+                32
+            );
+            cursorY += ROW_H;
+            lField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                String.valueOf(currentL),
+                32
+            );
+            cursorY += ROW_H;
+            multField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                String.valueOf(currentMult),
+                32
+            );
+            cursorY += ROW_H;
         }
 
         int buttonY = panelY + this.imageHeight - 28;
         doneButton = Button.builder(Component.literal("Done"), button -> {
             sendUpdatePacket(pos);
             Minecraft.getInstance().setScreen(null);
-        }).bounds(panelX + 20, buttonY, 90, 20).build();
+        })
+            .bounds(panelX + 20, buttonY, 90, 20)
+            .build();
         addRenderableWidget(doneButton);
 
         cancelButton = Button.builder(Component.literal("Cancel"), button ->
-                Minecraft.getInstance().setScreen(null)
-        ).bounds(panelX + 150, buttonY, 90, 20).build();
+            Minecraft.getInstance().setScreen(null)
+        )
+            .bounds(panelX + 150, buttonY, 90, 20)
+            .build();
         addRenderableWidget(cancelButton);
 
-        if      (showValue && valueField != null)         this.setInitialFocus(valueField);
-        else if (showFrequency && frequencyField != null) this.setInitialFocus(frequencyField);
-        else if (showLabel && labelField != null)         this.setInitialFocus(labelField);
+        if (showValue && valueField != null) this.setInitialFocus(valueField);
+        else if (showSky130 && modelNameField != null) this.setInitialFocus(
+            modelNameField
+        );
+        else if (showFrequency && frequencyField != null) this.setInitialFocus(
+            frequencyField
+        );
+        else if (showLabel && labelField != null) this.setInitialFocus(
+            labelField
+        );
     }
 
     private EditBox makeBox(int x, int y, int w, String initial, int maxLen) {
-        EditBox box = new EditBox(Minecraft.getInstance().font, x, y, w, BOX_H, Component.empty());
+        EditBox box = new EditBox(
+            Minecraft.getInstance().font,
+            x,
+            y,
+            w,
+            BOX_H,
+            Component.empty()
+        );
         box.setValue(initial);
         box.setMaxLength(maxLen);
         box.setBordered(true);
@@ -160,27 +254,47 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
     }
 
     @Override
-    protected void renderBg(GuiGraphics g, float partialTick, int mouseX, int mouseY) {
-        int x = (this.width  - this.imageWidth)  / 2;
+    protected void renderBg(
+        GuiGraphics g,
+        float partialTick,
+        int mouseX,
+        int mouseY
+    ) {
+        int x = (this.width - this.imageWidth) / 2;
         int y = (this.height - this.imageHeight) / 2;
 
         g.fill(x, y, x + imageWidth, y + imageHeight, BG_COLOR);
 
-        g.fill(x,                  y,                   x + imageWidth, y + 2,              BORDER_COLOR);
-        g.fill(x,                  y + imageHeight - 2, x + imageWidth, y + imageHeight,    BORDER_COLOR);
-        g.fill(x,                  y,                   x + 2,          y + imageHeight,    BORDER_COLOR);
-        g.fill(x + imageWidth - 2, y,                   x + imageWidth, y + imageHeight,    BORDER_COLOR);
+        g.fill(x, y, x + imageWidth, y + 2, BORDER_COLOR);
+        g.fill(
+            x,
+            y + imageHeight - 2,
+            x + imageWidth,
+            y + imageHeight,
+            BORDER_COLOR
+        );
+        g.fill(x, y, x + 2, y + imageHeight, BORDER_COLOR);
+        g.fill(
+            x + imageWidth - 2,
+            y,
+            x + imageWidth,
+            y + imageHeight,
+            BORDER_COLOR
+        );
 
         g.fill(x + 2, y + 23, x + imageWidth - 2, y + 24, 0xFF444444);
 
-        // Tint the toggle button to reflect DC vs AC
         if (showSourceType && sourceTypeToggle != null) {
-            int color = "AC".equals(sourceType) ? TOGGLE_AC_COLOR : TOGGLE_DC_COLOR;
-            g.fill(sourceTypeToggle.getX(),
-                   sourceTypeToggle.getY(),
-                   sourceTypeToggle.getX() + sourceTypeToggle.getWidth(),
-                   sourceTypeToggle.getY() + sourceTypeToggle.getHeight(),
-                   color);
+            int color = "AC".equals(sourceType)
+                ? TOGGLE_AC_COLOR
+                : TOGGLE_DC_COLOR;
+            g.fill(
+                sourceTypeToggle.getX(),
+                sourceTypeToggle.getY(),
+                sourceTypeToggle.getX() + sourceTypeToggle.getWidth(),
+                sourceTypeToggle.getY() + sourceTypeToggle.getHeight(),
+                color
+            );
         }
     }
 
@@ -190,38 +304,101 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
     }
 
     @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+    public void render(
+        GuiGraphics g,
+        int mouseX,
+        int mouseY,
+        float partialTick
+    ) {
         this.renderBackground(g);
         super.render(g, mouseX, mouseY, partialTick);
 
-        int panelX = (this.width  - this.imageWidth)  / 2;
+        int panelX = (this.width - this.imageWidth) / 2;
         int panelY = (this.height - this.imageHeight) / 2;
 
-        g.drawCenteredString(Minecraft.getInstance().font,
-                "Edit " + getComponentDisplayName(componentType),
-                this.width / 2, panelY + 7, TITLE_COLOR);
+        g.drawCenteredString(
+            Minecraft.getInstance().font,
+            "Edit " + getComponentDisplayName(componentType),
+            this.width / 2,
+            panelY + 7,
+            TITLE_COLOR
+        );
 
         int cursorY = panelY + 30;
-        int labelX  = panelX + 12;
+        int labelX = panelX + 12;
 
         if (showValue) {
-            g.drawString(Minecraft.getInstance().font,
-                    getValueLabel(componentType) + ":", labelX, cursorY, LABEL_COLOR);
+            g.drawString(
+                Minecraft.getInstance().font,
+                getValueLabel(componentType) + ":",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
             cursorY += ROW_H;
         }
         if (showSourceType) {
-            g.drawString(Minecraft.getInstance().font,
-                    "Source Type:", labelX, cursorY, LABEL_COLOR);
+            g.drawString(
+                Minecraft.getInstance().font,
+                "Source Type:",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
             cursorY += ROW_H;
         }
         if (showFrequency) {
-            g.drawString(Minecraft.getInstance().font,
-                    "Frequency (Hz):", labelX, cursorY, LABEL_COLOR);
+            g.drawString(
+                Minecraft.getInstance().font,
+                "Frequency (Hz):",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
             cursorY += ROW_H;
         }
         if (showLabel) {
-            g.drawString(Minecraft.getInstance().font,
-                    "Probe Label:", labelX, cursorY, LABEL_COLOR);
+            g.drawString(
+                Minecraft.getInstance().font,
+                "Probe Label:",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+        }
+        if (showSky130) {
+            g.drawString(
+                Minecraft.getInstance().font,
+                "Model:",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+            g.drawString(
+                Minecraft.getInstance().font,
+                "W (um):",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+            g.drawString(
+                Minecraft.getInstance().font,
+                "L (um):",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+            g.drawString(
+                Minecraft.getInstance().font,
+                "mult:",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
         }
     }
 
@@ -234,38 +411,42 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
             return Double.parseDouble(s);
         } catch (NumberFormatException ignored) {}
 
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("^([+\\-]?[0-9]*\\.?[0-9]+(?:[eE][+\\-]?[0-9]+)?)(\\s*)([a-zA-Zµ]+)$")
-                .matcher(s);
-        if (!m.matches()) throw new NumberFormatException("Cannot parse: " + raw);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+            "^([+\\-]?[0-9]*\\.?[0-9]+(?:[eE][+\\-]?[0-9]+)?)(\\s*)([a-zA-Zµ]+)$"
+        ).matcher(s);
+        if (!m.matches()) throw new NumberFormatException(
+            "Cannot parse: " + raw
+        );
 
-        double base   = Double.parseDouble(m.group(1));
+        double base = Double.parseDouble(m.group(1));
         String suffix = m.group(3);
 
         double multiplier = switch (suffix) {
-            case "f"                          -> 1e-15;
-            case "p"                          -> 1e-12;
-            case "n"                          -> 1e-9;
-            case "u", "µ"                     -> 1e-6;
-            case "m"                          -> 1e-3;
-            case "k", "K"                     -> 1e3;
-            case "M", "Meg", "meg", "MEG"     -> 1e6;
-            case "G"                          -> 1e9;
-            case "T"                          -> 1e12;
+            case "f" -> 1e-15;
+            case "p" -> 1e-12;
+            case "n" -> 1e-9;
+            case "u", "µ" -> 1e-6;
+            case "m" -> 1e-3;
+            case "k", "K" -> 1e3;
+            case "M", "Meg", "meg", "MEG" -> 1e6;
+            case "G" -> 1e9;
+            case "T" -> 1e12;
             default -> {
                 String stripped = suffix.replaceAll("[ΩFHVAROhm]+$", "");
                 if (stripped.isEmpty()) yield 1.0;
                 yield switch (stripped) {
-                    case "f"                      -> 1e-15;
-                    case "p"                      -> 1e-12;
-                    case "n"                      -> 1e-9;
-                    case "u", "µ"                 -> 1e-6;
-                    case "m"                      -> 1e-3;
-                    case "k", "K"                 -> 1e3;
+                    case "f" -> 1e-15;
+                    case "p" -> 1e-12;
+                    case "n" -> 1e-9;
+                    case "u", "µ" -> 1e-6;
+                    case "m" -> 1e-3;
+                    case "k", "K" -> 1e3;
                     case "M", "Meg", "meg", "MEG" -> 1e6;
-                    case "G"                      -> 1e9;
-                    case "T"                      -> 1e12;
-                    default -> throw new NumberFormatException("Unknown suffix: " + suffix);
+                    case "G" -> 1e9;
+                    case "T" -> 1e12;
+                    default -> throw new NumberFormatException(
+                        "Unknown suffix: " + suffix
+                    );
                 };
             }
         };
@@ -279,23 +460,25 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
         double abs = Math.abs(val);
 
         double[][] tiers = {
-                {1e12,  1e15,  1e12,  -1},
-                {1e9,   1e12,  1e9,   -1},
-                {1e6,   1e9,   1e6,   -1},
-                {1e3,   1e6,   1e3,   -1},
-                {1e0,   1e3,   1e0,   -1},
-                {1e-3,  1e0,   1e-3,  -1},
-                {1e-6,  1e-3,  1e-6,  -1},
-                {1e-9,  1e-6,  1e-9,  -1},
-                {1e-12, 1e-9,  1e-12, -1},
-                {1e-15, 1e-12, 1e-15, -1},
+            { 1e12, 1e15, 1e12, -1 },
+            { 1e9, 1e12, 1e9, -1 },
+            { 1e6, 1e9, 1e6, -1 },
+            { 1e3, 1e6, 1e3, -1 },
+            { 1e0, 1e3, 1e0, -1 },
+            { 1e-3, 1e0, 1e-3, -1 },
+            { 1e-6, 1e-3, 1e-6, -1 },
+            { 1e-9, 1e-6, 1e-9, -1 },
+            { 1e-12, 1e-9, 1e-12, -1 },
+            { 1e-15, 1e-12, 1e-15, -1 },
         };
-        String[] names = {"T", "G", "Meg", "k", "", "m", "u", "n", "p", "f"};
+        String[] names = { "T", "G", "Meg", "k", "", "m", "u", "n", "p", "f" };
 
         for (int i = 0; i < tiers.length; i++) {
             if (abs >= tiers[i][0] && abs < tiers[i][1]) {
                 double scaled = val / tiers[i][2];
-                String number = trimTrailingZeros(String.format("%.6f", scaled));
+                String number = trimTrailingZeros(
+                    String.format("%.6f", scaled)
+                );
                 return number + names[i];
             }
         }
@@ -313,46 +496,86 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
     private void sendUpdatePacket(net.minecraft.core.BlockPos pos) {
         double value = 0.0;
         if (valueField != null) {
-            try { value = parseSI(valueField.getValue()); }
-            catch (NumberFormatException ignored) {}
+            try {
+                value = parseSI(valueField.getValue());
+            } catch (NumberFormatException ignored) {}
         }
-        // sourceType is now tracked directly in the field, not from an EditBox
         double freq = 0.0;
         if (frequencyField != null) {
-            try { freq = parseSI(frequencyField.getValue()); }
-            catch (NumberFormatException ignored) {}
+            try {
+                freq = parseSI(frequencyField.getValue());
+            } catch (NumberFormatException ignored) {}
         }
         String lbl = "";
         if (labelField != null) {
             lbl = labelField.getValue();
         }
-        ModMessages.sendToServer(new ComponentUpdatePacket(pos, value, sourceType, freq, lbl));
+
+        String modelName = "";
+        double w = 1.0,
+            l = 1.0,
+            mult = 1.0;
+        if (showSky130) {
+            if (modelNameField != null) modelName = modelNameField
+                .getValue()
+                .trim();
+            try {
+                w = Double.parseDouble(
+                    wField != null ? wField.getValue().trim() : "1"
+                );
+            } catch (Exception ignored) {}
+            try {
+                l = Double.parseDouble(
+                    lField != null ? lField.getValue().trim() : "1"
+                );
+            } catch (Exception ignored) {}
+            try {
+                mult = Double.parseDouble(
+                    multField != null ? multField.getValue().trim() : "1"
+                );
+            } catch (Exception ignored) {}
+        }
+
+        ModMessages.sendToServer(
+            new ComponentUpdatePacket(
+                pos,
+                value,
+                sourceType,
+                freq,
+                lbl,
+                modelName,
+                w,
+                l,
+                mult
+            )
+        );
     }
 
     private String getValueLabel(String type) {
         return switch (type) {
-            case "resistor"           -> "Resistance (\u03A9)";
-            case "capacitor"          -> "Capacitance (F)";
-            case "inductor"           -> "Inductance (H)";
-            case "voltage_source"     -> "Voltage (V)";
+            case "resistor" -> "Resistance (\u03A9)";
+            case "capacitor" -> "Capacitance (F)";
+            case "inductor" -> "Inductance (H)";
+            case "voltage_source" -> "Voltage (V)";
             case "voltage_source_sin" -> "Amplitude (V)";
-            case "current_source"     -> "Current (A)";
-            default                   -> "Value";
+            case "current_source" -> "Current (A)";
+            default -> "Value";
         };
     }
 
     private String getComponentDisplayName(String type) {
         return switch (type) {
-            case "resistor"           -> "Resistor";
-            case "capacitor"          -> "Capacitor";
-            case "inductor"           -> "Inductor";
-            case "voltage_source"     -> "Voltage Source";
+            case "resistor" -> "Resistor";
+            case "capacitor" -> "Capacitor";
+            case "inductor" -> "Inductor";
+            case "voltage_source" -> "Voltage Source";
             case "voltage_source_sin" -> "SIN Voltage Source";
-            case "current_source"     -> "Current Source";
-            case "diode"              -> "Diode";
-            case "probe"              -> "Voltage Probe";
-            case "current_probe"      -> "Current Probe";
-            default                   -> "Component";
+            case "current_source" -> "Current Source";
+            case "diode" -> "Diode";
+            case "probe" -> "Voltage Probe";
+            case "current_probe" -> "Current Probe";
+            case "ic_resistor" -> "IC Resistor";
+            default -> "Component";
         };
     }
 
@@ -373,5 +596,7 @@ public class ComponentEditScreen extends AbstractContainerScreen<ComponentEditMe
     }
 
     @Override
-    public boolean shouldCloseOnEsc() { return true; }
+    public boolean shouldCloseOnEsc() {
+        return true;
+    }
 }

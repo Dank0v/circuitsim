@@ -41,6 +41,10 @@ public class NgSpiceRunner {
     }
 
     public static Result run(String netlist) {
+        return run(netlist, "hsa");
+    }
+
+    public static Result run(String netlist, String ngBehavior) {
         Result result = new Result();
 
         Path tempDir, netlistFile;
@@ -49,6 +53,16 @@ public class NgSpiceRunner {
             netlistFile = tempDir.resolve("circuit.cir");
             try (BufferedWriter w = Files.newBufferedWriter(netlistFile, StandardCharsets.UTF_8)) {
                 w.write(netlist);
+            }
+            // Write .spiceinit with the selected ngbehavior compatibility mode when using a PDK
+            // library. ngspice reads .spiceinit from the working directory at startup, before
+            // parsing the netlist, so this is the only place the setting takes effect.
+            if (netlist.contains(".lib ")) {
+                String mode = (ngBehavior != null && !ngBehavior.isBlank()) ? ngBehavior : "hsa";
+                Path spiceInit = tempDir.resolve(".spiceinit");
+                try (BufferedWriter w = Files.newBufferedWriter(spiceInit, StandardCharsets.UTF_8)) {
+                    w.write("set ngbehavior=" + mode + "\n");
+                }
             }
         } catch (IOException e) {
             result.error = "Failed to create temporary netlist file: " + e.getMessage();

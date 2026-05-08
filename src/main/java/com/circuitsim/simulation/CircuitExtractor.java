@@ -155,6 +155,34 @@ public class CircuitExtractor {
                 int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
                 components.add(new NetlistBuilder.CircuitComponent(block, pos, nodeA, nodeB, 0, "DC", 0));
 
+            } else if (block instanceof IcResistorBlock) {
+                Direction facing = state.getValue(BaseComponentBlock.FACING);
+                int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
+                int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
+
+                // Bulk pin is on the right side of the block (clockwise of facing).
+                // Default to node 0 (ground) if no wire is connected there.
+                BlockPos bulkPos = pos.relative(facing.getClockWise());
+                int nodeC = visited.contains(bulkPos)
+                        ? resolveNode(bulkPos, visited, nodeMap, nextNode)
+                        : 0;
+
+                String modelName = "";
+                double wParam    = 1.0;
+                double lParam    = 1.0;
+                double multParam = 1.0;
+
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    modelName = be.getModelName();
+                    wParam    = be.getWParam();
+                    lParam    = be.getLParam();
+                    multParam = be.getMultParam();
+                }
+
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, nodeA, nodeB, nodeC, 0, "DC", 0,
+                        modelName, wParam, lParam, multParam));
+
             } else if (block instanceof BaseComponentBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
@@ -193,6 +221,7 @@ public class CircuitExtractor {
     private boolean isCircuitBlock(Level level, BlockPos pos) {
         Block block = level.getBlockState(pos).getBlock();
         return block instanceof ResistorBlock
+                || block instanceof IcResistorBlock
                 || block instanceof CapacitorBlock
                 || block instanceof InductorBlock
                 || block instanceof VoltageSourceBlock
