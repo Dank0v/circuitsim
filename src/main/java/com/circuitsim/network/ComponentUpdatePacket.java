@@ -15,6 +15,7 @@ public class ComponentUpdatePacket {
     private final String   sourceType;
     private final double   frequency;
     private final String   label;
+    private final int      componentNumber;
     // sky130 resistor/mosfet fields
     private final String   modelName;
     private final double   wParam;
@@ -25,45 +26,54 @@ public class ComponentUpdatePacket {
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label) {
-        this(pos, value, sourceType, frequency, label, "", 1.0, 1.0, 1.0, 1.0, "none");
+        this(pos, value, sourceType, frequency, label, "", 1.0, 1.0, 1.0, 1.0, "none", 0);
     }
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label,
                                   String modelName, double wParam, double lParam, double multParam,
                                   String pdkName) {
-        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam, 1.0, pdkName);
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam, 1.0, pdkName, 0);
     }
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label,
                                   String modelName, double wParam, double lParam, double multParam,
                                   double nfParam, String pdkName) {
-        this.pos        = pos;
-        this.value      = value;
-        this.sourceType = sourceType;
-        this.frequency  = frequency;
-        this.label      = label;
-        this.modelName  = modelName;
-        this.wParam     = wParam;
-        this.lParam     = lParam;
-        this.multParam  = multParam;
-        this.nfParam    = nfParam;
-        this.pdkName    = pdkName;
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam, nfParam, pdkName, 0);
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  double nfParam, String pdkName, int componentNumber) {
+        this.pos             = pos;
+        this.value           = value;
+        this.sourceType      = sourceType;
+        this.frequency       = frequency;
+        this.label           = label;
+        this.modelName       = modelName;
+        this.wParam          = wParam;
+        this.lParam          = lParam;
+        this.multParam       = multParam;
+        this.nfParam         = nfParam;
+        this.pdkName         = pdkName;
+        this.componentNumber = Math.max(0, componentNumber);
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
-        this.pos        = buf.readBlockPos();
-        this.value      = buf.readDouble();
-        this.sourceType = buf.readUtf(64);
-        this.frequency  = buf.readDouble();
-        this.label      = buf.readUtf(256);
-        this.modelName  = buf.readUtf(128);
-        this.wParam     = buf.readDouble();
-        this.lParam     = buf.readDouble();
-        this.multParam  = buf.readDouble();
-        this.nfParam    = buf.readDouble();
-        this.pdkName    = buf.readUtf(32);
+        this.pos             = buf.readBlockPos();
+        this.value           = buf.readDouble();
+        this.sourceType      = buf.readUtf(64);
+        this.frequency       = buf.readDouble();
+        this.label           = buf.readUtf(256);
+        this.modelName       = buf.readUtf(128);
+        this.wParam          = buf.readDouble();
+        this.lParam          = buf.readDouble();
+        this.multParam       = buf.readDouble();
+        this.nfParam         = buf.readDouble();
+        this.pdkName         = buf.readUtf(32);
+        this.componentNumber = buf.readVarInt();
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -78,6 +88,7 @@ public class ComponentUpdatePacket {
         buf.writeDouble(multParam);
         buf.writeDouble(nfParam);
         buf.writeUtf(pdkName, 32);
+        buf.writeVarInt(componentNumber);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -101,6 +112,7 @@ public class ComponentUpdatePacket {
             cbe.setMultParam(multParam);
             cbe.setNfParam(nfParam);
             cbe.setPdkName(pdkName);
+            cbe.setComponentNumber(componentNumber);
             cbe.setChanged();
             cbe.syncToClient();
         }

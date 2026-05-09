@@ -22,6 +22,7 @@ public class ComponentEditScreen
     private Button sourceTypeToggle;
     private EditBox labelField;
     private EditBox frequencyField;
+    private EditBox numberField;
     private Button doneButton;
     private Button cancelButton;
     private String componentType;
@@ -41,6 +42,7 @@ public class ComponentEditScreen
     private boolean showFrequency;
     private boolean showSky130;
     private boolean showNf;
+    private boolean showNumber;
 
     private static final int LABEL_H = 10;
     private static final int GAP = 4;
@@ -83,6 +85,7 @@ public class ComponentEditScreen
         double currentL = 1.0;
         double currentMult = 1.0;
         double currentNf = 1.0;
+        int    currentNumber = 0;
 
         if (be instanceof ComponentBlockEntity cbe) {
             currentValue = cbe.getValue();
@@ -95,6 +98,7 @@ public class ComponentEditScreen
             currentL = cbe.getLParam();
             currentMult = cbe.getMultParam();
             currentNf = cbe.getNfParam();
+            currentNumber = cbe.getComponentNumber();
             icPdkName = cbe.getPdkName() != null ? cbe.getPdkName() : "none";
         } else {
             componentType = "resistor";
@@ -118,8 +122,11 @@ public class ComponentEditScreen
         showLabel = isProbe || isCurrentProbe;
         showSky130 = isSky130 || isIcCap || isNmos4 || isPmos4;
         showNf = isNmos4 || isPmos4;
+        // Show the netlist-index field for everything that emits a SPICE element line.
+        showNumber = !isProbe && !isCurrentProbe;
 
         int rowCount = 0;
+        if (showNumber) rowCount++;
         if (showValue) rowCount++;
         if (showSourceType) rowCount++;
         if (showFrequency) rowCount++;
@@ -135,6 +142,17 @@ public class ComponentEditScreen
         int fieldW = this.imageWidth - 20;
 
         int cursorY = panelY + 30;
+
+        if (showNumber) {
+            numberField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                currentNumber > 0 ? Integer.toString(currentNumber) : "",
+                4
+            );
+            cursorY += ROW_H;
+        }
 
         if (showValue) {
             valueField = makeBox(
@@ -356,6 +374,17 @@ public class ComponentEditScreen
         int cursorY = panelY + 30;
         int labelX = panelX + 12;
 
+        if (showNumber) {
+            g.drawString(
+                Minecraft.getInstance().font,
+                getNumberLabel(componentType) + " (blank = auto):",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+        }
+
         if (showValue) {
             g.drawString(
                 Minecraft.getInstance().font,
@@ -566,7 +595,7 @@ public class ComponentEditScreen
         return String.valueOf(val);
     }
 
-    private static String trimTrailingZeros(String s) {
+    public static String trimTrailingZeros(String s) {
         if (!s.contains(".")) return s;
         s = s.replaceAll("0+$", "");
         if (s.endsWith(".")) s = s.substring(0, s.length() - 1);
@@ -624,6 +653,15 @@ public class ComponentEditScreen
             }
         }
 
+        int number = 0;
+        if (showNumber && numberField != null) {
+            String raw = numberField.getValue().trim();
+            if (!raw.isEmpty()) {
+                try { number = Math.max(0, Integer.parseInt(raw)); }
+                catch (NumberFormatException ignored) {}
+            }
+        }
+
         ModMessages.sendToServer(
             new ComponentUpdatePacket(
                 pos,
@@ -636,7 +674,8 @@ public class ComponentEditScreen
                 l,
                 mult,
                 nf,
-                icPdkName
+                icPdkName,
+                number
             )
         );
     }
@@ -650,6 +689,21 @@ public class ComponentEditScreen
             case "voltage_source_sin" -> "Amplitude (V)";
             case "current_source" -> "Current (A)";
             default -> "Value";
+        };
+    }
+
+    /** Prefix used for this block's netlist line; the user picks the trailing number. */
+    private String getNumberLabel(String type) {
+        return switch (type) {
+            case "resistor", "ic_resistor3"  -> "Netlist index R";
+            case "capacitor", "ic_capacitor2"-> "Netlist index C";
+            case "inductor"                  -> "Netlist index L";
+            case "voltage_source",
+                 "voltage_source_sin"        -> "Netlist index V";
+            case "current_source"            -> "Netlist index I";
+            case "diode"                     -> "Netlist index D";
+            case "ic_nmos4", "ic_pmos4"      -> "Netlist index XM";
+            default                          -> "Netlist index";
         };
     }
 

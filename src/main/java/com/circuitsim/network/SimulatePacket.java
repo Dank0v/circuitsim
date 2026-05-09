@@ -185,6 +185,16 @@ public class SimulatePacket {
             bookLines,
             graphPageComponents
         );
+
+        // Open the dedicated output viewer on the client so the player can
+        // browse / search the full ngspice output instead of scrolling chat.
+        ModMessages.sendToPlayer(
+            player,
+            new SimulationOutputPacket(
+                "CircuitSim Output (" + analysis + " " + timestamp + ")",
+                bookLines
+            )
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -1130,7 +1140,7 @@ public class SimulatePacket {
                     c.block, c.pos,
                     c.nodeA, c.nodeB, c.nodeC, c.nodeD,
                     value, c.sourceType, c.frequency,
-                    c.modelName, w, l, mult, nf
+                    c.modelName, w, l, mult, nf, c.componentNumber
                 );
             })
             .collect(Collectors.toList());

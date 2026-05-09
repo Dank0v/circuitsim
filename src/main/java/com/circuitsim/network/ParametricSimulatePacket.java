@@ -137,7 +137,7 @@ public class ParametricSimulatePacket {
                                 c.block, c.pos,
                                 c.nodeA, c.nodeB, c.nodeC, c.nodeD,
                                 value, c.sourceType, c.frequency,
-                                c.modelName, w, l, mult, nf);
+                                c.modelName, w, l, mult, nf, c.componentNumber);
                     })
                     .collect(Collectors.toList());
 

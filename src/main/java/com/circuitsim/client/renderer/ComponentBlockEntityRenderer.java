@@ -158,9 +158,9 @@ public class ComponentBlockEntityRenderer
             double mult = be.getMultParam();
             int    nf   = (int) Math.max(1, Math.round(be.getNfParam()));
             lines.add((model == null || model.isEmpty()) ? defaultModel : model);
-            lines.add("W: " + ComponentEditScreen.formatValue(w) + "u");
-            lines.add("L: " + ComponentEditScreen.formatValue(l) + "u");
-            lines.add("mult: " + ComponentEditScreen.formatValue(mult));
+            lines.add("W: " + ComponentEditScreen.trimTrailingZeros(String.format("%.6f", w)) + "u");
+            lines.add("L: " + ComponentEditScreen.trimTrailingZeros(String.format("%.6f", l)) + "u");
+            lines.add("mult: " + ComponentEditScreen.trimTrailingZeros(String.format("%.6f", mult)));
             lines.add("NF: " + nf);
         }
 

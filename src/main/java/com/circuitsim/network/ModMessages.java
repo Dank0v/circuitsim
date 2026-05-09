@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "2";   // bumped for new packet
+    private static final String PROTOCOL_VERSION = "4";   // bumped for componentNumber
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -56,6 +56,12 @@ public class ModMessages {
                 .decoder(GraphDataPacket::decode)
                 .consumerMainThread(ModMessages::handleGraphData)
                 .add();
+
+        INSTANCE.messageBuilder(SimulationOutputPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(SimulationOutputPacket::encode)
+                .decoder(SimulationOutputPacket::decode)
+                .consumerMainThread(ModMessages::handleSimulationOutput)
+                .add();
     }
 
     // ── handlers ──────────────────────────────────────────────────────────────
@@ -87,6 +93,12 @@ public class ModMessages {
     private static void handleGraphData(GraphDataPacket msg,
                                          Supplier<NetworkEvent.Context> ctx) {
         msg.handle(ctx.get());
+    }
+
+    private static void handleSimulationOutput(SimulationOutputPacket msg,
+                                                Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(msg::handle);
+        ctx.get().setPacketHandled(true);
     }
 
     // ── send helpers ──────────────────────────────────────────────────────────

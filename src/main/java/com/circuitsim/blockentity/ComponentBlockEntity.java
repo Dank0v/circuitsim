@@ -19,6 +19,7 @@ public class ComponentBlockEntity extends BlockEntity {
     private String sourceType = "DC";
     private double frequency = 60.0;
     private String label = "";
+    private int    componentNumber = 0;   // 0 = auto, otherwise R<N>/C<N>/etc. in netlist
 
     // sky130 resistor/mosfet fields
     private String modelName  = "";
@@ -71,6 +72,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setLabel(String label)   { this.label = label; setChanged(); }
     public String getProbeLabel()        { return label; }
     public void setProbeLabel(String l)  { this.label = l; setChanged(); }
+    public int getComponentNumber()        { return componentNumber; }
+    public void setComponentNumber(int n)  { this.componentNumber = Math.max(0, n); setChanged(); }
 
     public String getModelName()           { return modelName; }
     public void setModelName(String name)  { this.modelName = name; setChanged(); }
@@ -104,6 +107,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("sourceType", sourceType);
         tag.putDouble("frequency", frequency);
         tag.putString("label", label);
+        tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
         tag.putDouble("wParam",     wParam);
         tag.putDouble("lParam",     lParam);
@@ -125,6 +129,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("sourceType")) sourceType = tag.getString("sourceType");
         if (tag.contains("frequency"))  frequency  = tag.getDouble("frequency");
         if (tag.contains("label"))      label      = tag.getString("label");
+        if (tag.contains("componentNumber")) componentNumber = tag.getInt("componentNumber");
         if (tag.contains("modelName"))  modelName  = tag.getString("modelName");
         if (tag.contains("wParam"))     wParam     = tag.getDouble("wParam");
         if (tag.contains("lParam"))     lParam     = tag.getDouble("lParam");
@@ -146,6 +151,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("sourceType", sourceType);
         tag.putDouble("frequency", frequency);
         tag.putString("label", label);
+        tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
         tag.putDouble("wParam",     wParam);
         tag.putDouble("lParam",     lParam);
