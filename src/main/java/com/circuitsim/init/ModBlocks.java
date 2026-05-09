@@ -68,11 +68,11 @@ public class ModBlocks {
             () -> new ParametricBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_PINK).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
-    public static final RegistryObject<Block> IC_RESISTOR = BLOCKS.register("ic_resistor",
+    public static final RegistryObject<Block> IC_RESISTOR = BLOCKS.register("ic_resistor3",
             () -> new IcResistorBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.TERRACOTTA_ORANGE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
-    public static final RegistryObject<Block> IC_CAPACITOR = BLOCKS.register("ic_capacitor",
+    public static final RegistryObject<Block> IC_CAPACITOR = BLOCKS.register("ic_capacitor2",
             () -> new IcCapacitorBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.TERRACOTTA_CYAN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 

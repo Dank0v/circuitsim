@@ -1,0 +1,8 @@
+{
+    "parent": "minecraft:block/orientable",
+    "textures": {
+        "top":   "circuitsim:block/ic_capacitor2",
+        "side":  "circuitsim:block/ic_capacitor2_side",
+        "front": "circuitsim:block/ic_capacitor2_front"
+    }
+}

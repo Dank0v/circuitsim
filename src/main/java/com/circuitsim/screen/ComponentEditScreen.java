@@ -103,8 +103,8 @@ public class ComponentEditScreen
         boolean isVoltSrc = "voltage_source".equals(componentType);
         boolean isSinSrc = "voltage_source_sin".equals(componentType);
         boolean isDiode = "diode".equals(componentType);
-        boolean isSky130  = "ic_resistor".equals(componentType);
-        boolean isIcCap   = "ic_capacitor".equals(componentType);
+        boolean isSky130  = "ic_resistor3".equals(componentType);
+        boolean isIcCap   = "ic_capacitor2".equals(componentType);
 
         showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap;
         showSourceType = isVoltSrc;
@@ -182,7 +182,7 @@ public class ComponentEditScreen
             pdkRowY = cursorY;
             cursorY += ROW_H;
 
-            String modelDefault = "ic_capacitor".equals(componentType) ? "cap_mim_m3_1" : "res_high_po";
+            String modelDefault = "ic_capacitor2".equals(componentType) ? "cap_mim_m3_1" : "res_high_po";
             modelNameField = makeBox(
                 fieldX,
                 cursorY + LABEL_H + GAP,
@@ -419,7 +419,7 @@ public class ComponentEditScreen
             cursorY += ROW_H;
             g.drawString(
                 Minecraft.getInstance().font,
-                "ic_capacitor".equals(componentType) ? "MF:" : "mult:",
+                "ic_capacitor2".equals(componentType) ? "MF:" : "mult:",
                 labelX,
                 cursorY,
                 LABEL_COLOR
@@ -625,8 +625,8 @@ public class ComponentEditScreen
             case "diode" -> "Diode";
             case "probe" -> "Voltage Probe";
             case "current_probe" -> "Current Probe";
-            case "ic_resistor"  -> "IC Resistor";
-            case "ic_capacitor" -> "IC Capacitor";
+            case "ic_resistor3"  -> "IC Resistor3";
+            case "ic_capacitor2" -> "IC Capacitor2";
             default -> "Component";
         };
     }
