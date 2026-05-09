@@ -1,0 +1,12 @@
+{
+    "parent": "minecraft:block/cube",
+    "textures": {
+        "particle": "circuitsim:block/ic_nmos4_gate",
+        "up":    "circuitsim:block/ic_nmos4_top",
+        "down":  "circuitsim:block/ic_nmos4_top",
+        "north": "circuitsim:block/ic_nmos4_drain",
+        "south": "circuitsim:block/ic_nmos4_source",
+        "west":  "circuitsim:block/ic_nmos4_gate",
+        "east":  "circuitsim:block/ic_nmos4_bulk"
+    }
+}

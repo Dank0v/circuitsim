@@ -20,11 +20,12 @@ public class ComponentBlockEntity extends BlockEntity {
     private double frequency = 60.0;
     private String label = "";
 
-    // sky130 resistor fields
+    // sky130 resistor/mosfet fields
     private String modelName  = "";
     private double wParam     = 1.0;
     private double lParam     = 1.0;
     private double multParam  = 1.0;
+    private double nfParam    = 1.0;
 
     // simulate block PDK settings
     private String pdkName    = "none";
@@ -55,6 +56,8 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.SIMULATE.get())           return "simulate";
         if (block == ModBlocks.IC_RESISTOR.get())          return "ic_resistor3";
         if (block == ModBlocks.IC_CAPACITOR.get())         return "ic_capacitor2";
+        if (block == ModBlocks.IC_NMOS4.get())             return "ic_nmos4";
+        if (block == ModBlocks.IC_PMOS4.get())             return "ic_pmos4";
         return "unknown";
     }
 
@@ -77,6 +80,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setLParam(double l)        { this.lParam = l; setChanged(); }
     public double getMultParam()           { return multParam; }
     public void setMultParam(double m)     { this.multParam = m; setChanged(); }
+    public double getNfParam()             { return nfParam; }
+    public void setNfParam(double nf)      { this.nfParam = nf; setChanged(); }
     public String getPdkName()               { return pdkName; }
     public void setPdkName(String name)      { this.pdkName = name; setChanged(); }
     public String getPdkLibPath()            { return pdkLibPath; }
@@ -103,6 +108,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("wParam",     wParam);
         tag.putDouble("lParam",     lParam);
         tag.putDouble("multParam",  multParam);
+        tag.putDouble("nfParam",    nfParam);
         tag.putString("pdkName",    pdkName);
         tag.putString("pdkLibPath", pdkLibPath);
         tag.putString("ngBehavior", ngBehavior);
@@ -123,6 +129,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("wParam"))     wParam     = tag.getDouble("wParam");
         if (tag.contains("lParam"))     lParam     = tag.getDouble("lParam");
         if (tag.contains("multParam"))  multParam  = tag.getDouble("multParam");
+        if (tag.contains("nfParam"))    nfParam    = tag.getDouble("nfParam");
         if (tag.contains("pdkName"))     pdkName    = tag.getString("pdkName");
         if (tag.contains("pdkLibPath"))  pdkLibPath = tag.getString("pdkLibPath");
         if (tag.contains("ngBehavior"))  ngBehavior = tag.getString("ngBehavior");
@@ -143,6 +150,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("wParam",     wParam);
         tag.putDouble("lParam",     lParam);
         tag.putDouble("multParam",  multParam);
+        tag.putDouble("nfParam",    nfParam);
         tag.putString("pdkName",    pdkName);
         tag.putString("pdkLibPath", pdkLibPath);
         tag.putString("ngBehavior", ngBehavior);

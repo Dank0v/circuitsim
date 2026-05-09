@@ -22,7 +22,7 @@ public class NetlistBuilder {
         appendPdkLib(sb, pdkName, pdkLibPath);
 
         int rCount = 1, cCount = 1, lCount = 1, vCount = 1, iCount = 1,
-            dCount = 1, vmCount = 1;
+            dCount = 1, vmCount = 1, mCount = 1;
         boolean hasDiode = false;
 
         for (CircuitComponent comp : components) {
@@ -31,6 +31,10 @@ public class NetlistBuilder {
                 line = formatIcResistor(rCount++, comp, pdkName);
             } else if (comp.block instanceof IcCapacitorBlock) {
                 line = formatIcCapacitor(cCount++, comp, pdkName);
+            } else if (comp.block instanceof IcNmos4Block) {
+                line = formatIcMosfet(mCount++, comp, pdkName, false);
+            } else if (comp.block instanceof IcPmos4Block) {
+                line = formatIcMosfet(mCount++, comp, pdkName, true);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -104,7 +108,7 @@ public class NetlistBuilder {
         appendPdkLib(sb, pdkName, pdkLibPath);
 
         int rCount = 1, cCount = 1, lCount = 1, vCount = 1, iCount = 1,
-            dCount = 1, vmCount = 1;
+            dCount = 1, vmCount = 1, mCount = 1;
         boolean hasDiode    = false;
         boolean hasAcSource = false;
 
@@ -114,6 +118,10 @@ public class NetlistBuilder {
                 line = formatIcResistor(rCount++, comp, pdkName);
             } else if (comp.block instanceof IcCapacitorBlock) {
                 line = formatIcCapacitor(cCount++, comp, pdkName);
+            } else if (comp.block instanceof IcNmos4Block) {
+                line = formatIcMosfet(mCount++, comp, pdkName, false);
+            } else if (comp.block instanceof IcPmos4Block) {
+                line = formatIcMosfet(mCount++, comp, pdkName, true);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -210,7 +218,7 @@ public class NetlistBuilder {
         appendPdkLib(sb, pdkName, pdkLibPath);
 
         int rCount = 1, cCount = 1, lCount = 1, vCount = 1, iCount = 1,
-            dCount = 1, vmCount = 1;
+            dCount = 1, vmCount = 1, mCount = 1;
         boolean hasDiode = false;
 
         for (CircuitComponent comp : components) {
@@ -219,6 +227,10 @@ public class NetlistBuilder {
                 line = formatIcResistor(rCount++, comp, pdkName);
             } else if (comp.block instanceof IcCapacitorBlock) {
                 line = formatIcCapacitor(cCount++, comp, pdkName);
+            } else if (comp.block instanceof IcNmos4Block) {
+                line = formatIcMosfet(mCount++, comp, pdkName, false);
+            } else if (comp.block instanceof IcPmos4Block) {
+                line = formatIcMosfet(mCount++, comp, pdkName, true);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -318,6 +330,52 @@ public class NetlistBuilder {
                 idx, comp.nodeA, comp.nodeB, bulk, model, w, l, mult);
     }
 
+    /**
+     * Formats a 4-pin MOSFET instance line for sky130A nfet/pfet models.
+     * Pin order in netlist: drain gate source bulk.
+     * For NMOS: nodeA=drain(front), nodeB=source(back), nodeC=bulk(right), nodeD=gate(left).
+     * For PMOS: nodeA=source(front), nodeB=drain(back), nodeC=bulk(right), nodeD=gate(left).
+     * Derived area/perimeter params computed from W, L, NF per the sky130 HDK formulas.
+     */
+    private static String formatIcMosfet(int idx, CircuitComponent comp, String pdkName, boolean isPmos) {
+        String prefix = pdkModelPrefix(pdkName);
+        String defaultModel = isPmos ? "pfet_01v8" : "nfet_01v8";
+        String name  = comp.modelName.isBlank() ? defaultModel : comp.modelName;
+        String model = prefix + name;
+
+        double w    = comp.wParam    > 0 ? comp.wParam    : 1.0;
+        double l    = comp.lParam    > 0 ? comp.lParam    : 1.0;
+        double mult = comp.multParam > 0 ? comp.multParam : 1.0;
+        int    nf   = (int) Math.max(1, Math.round(comp.nfParam));
+
+        int drain = isPmos ? comp.nodeB : comp.nodeA;
+        int src   = isPmos ? comp.nodeA : comp.nodeB;
+        int bulk  = comp.nodeC >= 0 ? comp.nodeC : 0;
+        int gate  = comp.nodeD >= 0 ? comp.nodeD : 0;
+
+        // sky130 HDK standard area/perimeter formulas
+        double hdif = 0.29;
+        double w_f  = w / nf;
+        int    n_d  = (nf + 1) / 2;
+        int    n_s  = (nf + 2) / 2;
+        double ad   = w_f * hdif * n_d;
+        double as_  = w_f * hdif * n_s;
+        double pd   = 2.0 * n_d * (w_f + hdif);
+        double ps   = 2.0 * n_s * (w_f + hdif);
+        double nrd  = hdif / w;
+        double nrs  = hdif / w;
+
+        return String.format(
+            "XM%d %d %d %d %d %s%n+ L=%g W=%g NF=%d%n+ AD=%g AS=%g%n+ PD=%g PS=%g%n+ NRD=%g NRS=%g%n+ SA=0 SB=0 SD=0 MULT=%g",
+            idx, drain, gate, src, bulk, model,
+            l, w, nf,
+            ad, as_,
+            pd, ps,
+            nrd, nrs,
+            mult
+        );
+    }
+
     /** Formats a 2-pin IC capacitor subcircuit line. */
     private static String formatIcCapacitor(int idx, CircuitComponent comp, String pdkName) {
         String prefix = pdkModelPrefix(pdkName);
@@ -385,36 +443,47 @@ public class NetlistBuilder {
         public final BlockPos pos;
         public final int      nodeA;
         public final int      nodeB;
-        public final int      nodeC;   // third pin (sky130 bulk), -1 means unused
+        public final int      nodeC;   // third pin (bulk for resistor/mosfet), -1 means unused
+        public final int      nodeD;   // fourth pin (gate for mosfet), -1 means unused
         public final double   value;
         public final String   sourceType;
         public final double   frequency;
-        // sky130 resistor params
+        // sky130 params
         public final String   modelName;
         public final double   wParam;
         public final double   lParam;
         public final double   multParam;
+        public final double   nfParam;
 
         public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB,
                                 double value, String sourceType, double frequency) {
-            this(block, pos, nodeA, nodeB, -1, value, sourceType, frequency, "", 1.0, 1.0, 1.0);
+            this(block, pos, nodeA, nodeB, -1, -1, value, sourceType, frequency, "", 1.0, 1.0, 1.0, 1.0);
         }
 
         public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB,
                                 double value, String sourceType, double frequency,
                                 String modelName, double wParam, double lParam, double multParam) {
-            this(block, pos, nodeA, nodeB, -1, value, sourceType, frequency,
-                    modelName, wParam, lParam, multParam);
+            this(block, pos, nodeA, nodeB, -1, -1, value, sourceType, frequency,
+                    modelName, wParam, lParam, multParam, 1.0);
         }
 
         public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB, int nodeC,
                                 double value, String sourceType, double frequency,
                                 String modelName, double wParam, double lParam, double multParam) {
+            this(block, pos, nodeA, nodeB, nodeC, -1, value, sourceType, frequency,
+                    modelName, wParam, lParam, multParam, 1.0);
+        }
+
+        public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB, int nodeC, int nodeD,
+                                double value, String sourceType, double frequency,
+                                String modelName, double wParam, double lParam, double multParam,
+                                double nfParam) {
             this.block      = block;
             this.pos        = pos;
             this.nodeA      = nodeA;
             this.nodeB      = nodeB;
             this.nodeC      = nodeC;
+            this.nodeD      = nodeD;
             this.value      = value;
             this.sourceType = sourceType;
             this.frequency  = frequency;
@@ -422,6 +491,7 @@ public class NetlistBuilder {
             this.wParam     = wParam;
             this.lParam     = lParam;
             this.multParam  = multParam;
+            this.nfParam    = nfParam;
         }
     }
 

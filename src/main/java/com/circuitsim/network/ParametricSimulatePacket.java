@@ -209,7 +209,7 @@ public class ParametricSimulatePacket {
     }
 
     private static String unit(Block b) {
-        if (b instanceof ResistorBlock)         return "Ω";
+        if (b instanceof ResistorBlock)         return "\u03A9";
         if (b instanceof CapacitorBlock)        return "F";
         if (b instanceof InductorBlock)         return "H";
         if (b instanceof VoltageSourceBlock)    return "V";

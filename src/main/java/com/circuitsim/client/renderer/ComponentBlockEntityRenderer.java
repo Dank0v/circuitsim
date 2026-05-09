@@ -12,6 +12,9 @@ import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
 import net.minecraft.world.level.block.Block;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class ComponentBlockEntityRenderer
     implements BlockEntityRenderer<ComponentBlockEntity>
 {
@@ -29,9 +32,8 @@ public class ComponentBlockEntityRenderer
         int packedLight,
         int packedOverlay
     ) {
-        String line1 = getPrimaryText(be);
-        if (line1 == null) return;
-        String line2 = getSecondaryText(be); // may be null
+        List<String> lines = getLines(be);
+        if (lines.isEmpty()) return;
 
         var font = Minecraft.getInstance().font;
         var camera = Minecraft.getInstance().getEntityRenderDispatcher();
@@ -50,22 +52,13 @@ public class ComponentBlockEntityRenderer
 
         var pose = poseStack.last().pose();
 
-        if (line2 != null) {
-            // Two-line layout: line1 on top, line2 below
-            float y1 = -font.lineHeight - 1f;
-            float y2 = 1f;
-            drawLabel(font, line1, y1, pose, buffer, packedLight);
-            drawLabel(font, line2, y2, pose, buffer, packedLight);
-        } else {
-            // Single line, centred vertically
-            drawLabel(
-                font,
-                line1,
-                -(font.lineHeight / 2f),
-                pose,
-                buffer,
-                packedLight
-            );
+        int n = lines.size();
+        int lineSpacing = font.lineHeight + 2;
+        float totalHeight = n * font.lineHeight + (n - 1) * 2f;
+        float startY = -(totalHeight / 2f);
+
+        for (int i = 0; i < n; i++) {
+            drawLabel(font, lines.get(i), startY + i * lineSpacing, pose, buffer, packedLight);
         }
 
         poseStack.popPose();
@@ -85,7 +78,6 @@ public class ComponentBlockEntityRenderer
     ) {
         float x = -(font.width(text) / 2f);
 
-        // Semi-transparent dark background pill for readability
         font.drawInBatch(
             text,
             x,
@@ -95,7 +87,7 @@ public class ComponentBlockEntityRenderer
             pose,
             buffer,
             Font.DisplayMode.NORMAL,
-            0x55000000, // background colour (ARGB)
+            0x55000000,
             0xF000F0
         );
     }
@@ -104,96 +96,74 @@ public class ComponentBlockEntityRenderer
     // Text content — what to show per block type
     // -------------------------------------------------------------------------
 
-    /** First (or only) line of text. Returns null to suppress rendering entirely. */
-    private static String getPrimaryText(ComponentBlockEntity be) {
+    private static List<String> getLines(ComponentBlockEntity be) {
         Block block = be.getBlockState().getBlock();
+        List<String> lines = new ArrayList<>();
         double val = be.getValue();
 
         if (block == ModBlocks.RESISTOR.get()) {
-            return val == 0.0
-                ? "?\u03A9"
-                : ComponentEditScreen.formatValue(val) + "\u03A9";
-        }
-        if (block == ModBlocks.CAPACITOR.get()) {
-            return val == 0.0
-                ? "?F"
-                : ComponentEditScreen.formatValue(val) + "F";
-        }
-        if (block == ModBlocks.INDUCTOR.get()) {
-            return val == 0.0
-                ? "?H"
-                : ComponentEditScreen.formatValue(val) + "H";
-        }
-        if (block == ModBlocks.VOLTAGE_SOURCE.get()) {
-            return val == 0.0
-                ? "?V"
-                : ComponentEditScreen.formatValue(val) + "V";
-        }
-        if (block == ModBlocks.CURRENT_SOURCE.get()) {
-            return val == 0.0
-                ? "?A"
-                : ComponentEditScreen.formatValue(val) + "A";
-        }
-        if (block == ModBlocks.PROBE.get()) {
+            lines.add(val == 0.0
+                ? "?Ω"
+                : ComponentEditScreen.formatValue(val) + "\u03A9");
+        } else if (block == ModBlocks.CAPACITOR.get()) {
+            lines.add(val == 0.0 ? "?F" : ComponentEditScreen.formatValue(val) + "F");
+        } else if (block == ModBlocks.INDUCTOR.get()) {
+            lines.add(val == 0.0 ? "?H" : ComponentEditScreen.formatValue(val) + "H");
+        } else if (block == ModBlocks.VOLTAGE_SOURCE.get()) {
+            lines.add(val == 0.0 ? "?V" : ComponentEditScreen.formatValue(val) + "V");
+            String st = be.getSourceType();
+            lines.add((st == null || st.isEmpty()) ? "DC" : st);
+        } else if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) {
+            lines.add(val == 0.0 ? "?V" : ComponentEditScreen.formatValue(val) + "V");
+            lines.add(ComponentEditScreen.formatValue(be.getFrequency()) + "Hz");
+        } else if (block == ModBlocks.CURRENT_SOURCE.get()) {
+            lines.add(val == 0.0 ? "?A" : ComponentEditScreen.formatValue(val) + "A");
+            String st = be.getSourceType();
+            lines.add((st == null || st.isEmpty()) ? "DC" : st);
+        } else if (block == ModBlocks.PROBE.get()) {
             String lbl = be.getProbeLabel();
-            return (lbl == null || lbl.isEmpty()) ? "V Probe" : lbl;
-        }
-        if (block == ModBlocks.CURRENT_PROBE.get()) {
+            lines.add((lbl == null || lbl.isEmpty()) ? "V Probe" : lbl);
+        } else if (block == ModBlocks.CURRENT_PROBE.get()) {
             String lbl = be.getProbeLabel();
-            return (lbl == null || lbl.isEmpty()) ? "I Probe" : lbl;
-        }
-        if (block == ModBlocks.DIODE.get()) {
-            return "Diode";
-        }
-        if (block == ModBlocks.PARAMETRIC.get()) {
+            lines.add((lbl == null || lbl.isEmpty()) ? "I Probe" : lbl);
+        } else if (block == ModBlocks.DIODE.get()) {
+            lines.add("Diode");
+        } else if (block == ModBlocks.PARAMETRIC.get()) {
             String sweep = be.getLabel();
-            return (sweep == null || sweep.isEmpty())
-                ? "Param: ?"
-                : "Param: " + sweep;
-        }
-        if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) {
-            return val == 0.0
-                ? "?V"
-                : ComponentEditScreen.formatValue(val) + "V";
-        }
-        if (block == ModBlocks.IC_RESISTOR.get()) {
+            lines.add((sweep == null || sweep.isEmpty()) ? "Param: ?" : "Param: " + sweep);
+        } else if (block == ModBlocks.IC_RESISTOR.get()) {
             Double r = NetlistBuilder.computeResistance(
                     be.getPdkName(), be.getModelName(),
                     be.getWParam(), be.getLParam(), be.getMultParam());
-            return r != null ? ComponentEditScreen.formatValue(r) + "\u03A9" : "?";
-        }
-        if (block == ModBlocks.IC_CAPACITOR.get()) {
+            lines.add(r != null
+                ? ComponentEditScreen.formatValue(r) + "\u03A9"
+                : "?");
+            String model = be.getModelName();
+            lines.add((model == null || model.isEmpty()) ? "res_high_po" : model);
+        } else if (block == ModBlocks.IC_CAPACITOR.get()) {
             Double c = NetlistBuilder.computeCapacitance(
                     be.getPdkName(), be.getModelName(),
                     be.getWParam(), be.getLParam(), be.getMultParam());
-            return c != null ? ComponentEditScreen.formatValue(c) + "F" : "?";
+            lines.add(c != null
+                ? ComponentEditScreen.formatValue(c) + "F"
+                : "?");
+            String model = be.getModelName();
+            lines.add((model == null || model.isEmpty()) ? "cap_mim_m3_1" : model);
+        } else if (block == ModBlocks.IC_NMOS4.get() || block == ModBlocks.IC_PMOS4.get()) {
+            boolean isNmos     = block == ModBlocks.IC_NMOS4.get();
+            String defaultModel = isNmos ? "nfet_01v8" : "pfet_01v8";
+            String model        = be.getModelName();
+            double w    = be.getWParam();
+            double l    = be.getLParam();
+            double mult = be.getMultParam();
+            int    nf   = (int) Math.max(1, Math.round(be.getNfParam()));
+            lines.add((model == null || model.isEmpty()) ? defaultModel : model);
+            lines.add("W: " + ComponentEditScreen.formatValue(w) + "u");
+            lines.add("L: " + ComponentEditScreen.formatValue(l) + "u");
+            lines.add("mult: " + ComponentEditScreen.formatValue(mult));
+            lines.add("NF: " + nf);
         }
-        // Wire, Ground, Simulate — no label needed
-        return null;
-    }
 
-    /** Optional second line (e.g. source type for voltage sources). May return null. */
-    private static String getSecondaryText(ComponentBlockEntity be) {
-        Block block = be.getBlockState().getBlock();
-        if (
-            block == ModBlocks.VOLTAGE_SOURCE.get() ||
-            block == ModBlocks.CURRENT_SOURCE.get()
-        ) {
-            String st = be.getSourceType();
-            return (st == null || st.isEmpty()) ? "DC" : st;
-        }
-        if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) {
-            double freq = be.getFrequency();
-            return ComponentEditScreen.formatValue(freq) + "Hz";
-        }
-        if (block == ModBlocks.IC_RESISTOR.get()) {
-            String model = be.getModelName();
-            return (model == null || model.isEmpty()) ? "res_high_po" : model;
-        }
-        if (block == ModBlocks.IC_CAPACITOR.get()) {
-            String model = be.getModelName();
-            return (model == null || model.isEmpty()) ? "cap_mim_m3_1" : model;
-        }
-        return null;
+        return lines;
     }
 }

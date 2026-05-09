@@ -204,6 +204,41 @@ public class CircuitExtractor {
                         block, pos, nodeA, nodeB, 0, "DC", 0,
                         modelName, wParam, lParam, multParam));
 
+            } else if (block instanceof IcNmos4Block || block instanceof IcPmos4Block) {
+                Direction facing = state.getValue(BaseComponentBlock.FACING);
+                // Front = drain (NMOS) / source (PMOS), back = source (NMOS) / drain (PMOS)
+                int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
+                int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
+                // Right (clockwise) = bulk
+                BlockPos bulkPos = pos.relative(facing.getClockWise());
+                int nodeC = visited.contains(bulkPos)
+                        ? resolveNode(bulkPos, visited, nodeMap, nextNode)
+                        : 0;
+                // Left (counter-clockwise) = gate
+                BlockPos gatePos = pos.relative(facing.getCounterClockWise());
+                int nodeD = visited.contains(gatePos)
+                        ? resolveNode(gatePos, visited, nodeMap, nextNode)
+                        : 0;
+
+                String modelName = "";
+                double wParam    = 1.0;
+                double lParam    = 1.0;
+                double multParam = 1.0;
+                double nfParam   = 1.0;
+
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    modelName = be.getModelName();
+                    wParam    = be.getWParam();
+                    lParam    = be.getLParam();
+                    multParam = be.getMultParam();
+                    nfParam   = be.getNfParam();
+                }
+
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, nodeA, nodeB, nodeC, nodeD,
+                        0, "DC", 0,
+                        modelName, wParam, lParam, multParam, nfParam));
+
             } else if (block instanceof BaseComponentBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
@@ -244,6 +279,8 @@ public class CircuitExtractor {
         return block instanceof ResistorBlock
                 || block instanceof IcResistorBlock
                 || block instanceof IcCapacitorBlock
+                || block instanceof IcNmos4Block
+                || block instanceof IcPmos4Block
                 || block instanceof CapacitorBlock
                 || block instanceof InductorBlock
                 || block instanceof VoltageSourceBlock

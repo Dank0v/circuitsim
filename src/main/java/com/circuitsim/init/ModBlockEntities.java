@@ -30,7 +30,9 @@ public class ModBlockEntities {
                             ModBlocks.SIMULATE.get(),
                             ModBlocks.PARAMETRIC.get(),
                             ModBlocks.IC_RESISTOR.get(),
-                            ModBlocks.IC_CAPACITOR.get()
+                            ModBlocks.IC_CAPACITOR.get(),
+                            ModBlocks.IC_NMOS4.get(),
+                            ModBlocks.IC_PMOS4.get()
                     ).build(null)
             );
 

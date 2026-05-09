@@ -110,6 +110,12 @@ public class WireBlock extends Block {
 
             // IC resistor has an additional right-side (bulk) pin
             if (neighbor instanceof IcResistorBlock && facing.getClockWise() == toWire) return true;
+
+            // 4-pin MOSFETs: also connect on left (gate) and right (bulk) sides
+            if ((neighbor instanceof IcNmos4Block || neighbor instanceof IcPmos4Block)) {
+                if (facing.getClockWise() == toWire) return true;        // right = bulk
+                if (facing.getCounterClockWise() == toWire) return true; // left  = gate
+            }
         }
 
         return false;

@@ -76,6 +76,14 @@ public class ModBlocks {
             () -> new IcCapacitorBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.TERRACOTTA_CYAN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> IC_NMOS4 = BLOCKS.register("ic_nmos4",
+            () -> new IcNmos4Block(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.TERRACOTTA_GREEN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> IC_PMOS4 = BLOCKS.register("ic_pmos4",
+            () -> new IcPmos4Block(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.TERRACOTTA_RED).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static void register(IEventBus eventBus) {
         BLOCKS.register(eventBus);
     }

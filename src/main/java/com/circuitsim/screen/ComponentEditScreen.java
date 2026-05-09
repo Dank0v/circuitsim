@@ -26,11 +26,12 @@ public class ComponentEditScreen
     private Button cancelButton;
     private String componentType;
 
-    // sky130 resistor fields
+    // sky130 resistor/mosfet fields
     private EditBox modelNameField;
     private EditBox wField;
     private EditBox lField;
     private EditBox multField;
+    private EditBox nfField;
     private String  icPdkName = "none";
     private int     pdkRowY   = 0; // absolute Y of the PDK radio row (set during init)
 
@@ -39,6 +40,7 @@ public class ComponentEditScreen
     private boolean showLabel;
     private boolean showFrequency;
     private boolean showSky130;
+    private boolean showNf;
 
     private static final int LABEL_H = 10;
     private static final int GAP = 4;
@@ -80,6 +82,7 @@ public class ComponentEditScreen
         double currentW = 1.0;
         double currentL = 1.0;
         double currentMult = 1.0;
+        double currentNf = 1.0;
 
         if (be instanceof ComponentBlockEntity cbe) {
             currentValue = cbe.getValue();
@@ -91,6 +94,7 @@ public class ComponentEditScreen
             currentW = cbe.getWParam();
             currentL = cbe.getLParam();
             currentMult = cbe.getMultParam();
+            currentNf = cbe.getNfParam();
             icPdkName = cbe.getPdkName() != null ? cbe.getPdkName() : "none";
         } else {
             componentType = "resistor";
@@ -105,19 +109,22 @@ public class ComponentEditScreen
         boolean isDiode = "diode".equals(componentType);
         boolean isSky130  = "ic_resistor3".equals(componentType);
         boolean isIcCap   = "ic_capacitor2".equals(componentType);
+        boolean isNmos4   = "ic_nmos4".equals(componentType);
+        boolean isPmos4   = "ic_pmos4".equals(componentType);
 
-        showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap;
+        showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap && !isNmos4 && !isPmos4;
         showSourceType = isVoltSrc;
         showFrequency = isSinSrc;
         showLabel = isProbe || isCurrentProbe;
-        showSky130 = isSky130 || isIcCap;
+        showSky130 = isSky130 || isIcCap || isNmos4 || isPmos4;
+        showNf = isNmos4 || isPmos4;
 
         int rowCount = 0;
         if (showValue) rowCount++;
         if (showSourceType) rowCount++;
         if (showFrequency) rowCount++;
         if (showLabel) rowCount++;
-        if (showSky130) rowCount += 5; // pdk, model, W, L, mult
+        if (showSky130) rowCount += 5 + (showNf ? 1 : 0); // pdk, model, W, L, mult [, NF]
 
         this.imageHeight = 10 + 10 + 10 + (rowCount * ROW_H) + 36;
 
@@ -182,7 +189,10 @@ public class ComponentEditScreen
             pdkRowY = cursorY;
             cursorY += ROW_H;
 
-            String modelDefault = "ic_capacitor2".equals(componentType) ? "cap_mim_m3_1" : "res_high_po";
+            String modelDefault = "ic_capacitor2".equals(componentType) ? "cap_mim_m3_1"
+                    : "ic_pmos4".equals(componentType) ? "pfet_01v8"
+                    : "ic_nmos4".equals(componentType) ? "nfet_01v8"
+                    : "res_high_po";
             modelNameField = makeBox(
                 fieldX,
                 cursorY + LABEL_H + GAP,
@@ -215,6 +225,16 @@ public class ComponentEditScreen
                 32
             );
             cursorY += ROW_H;
+            if (showNf) {
+                nfField = makeBox(
+                    fieldX,
+                    cursorY + LABEL_H + GAP,
+                    fieldW,
+                    String.valueOf((int) Math.max(1, Math.round(currentNf))),
+                    16
+                );
+                cursorY += ROW_H;
+            }
         }
 
         int buttonY = panelY + this.imageHeight - 28;
@@ -424,6 +444,16 @@ public class ComponentEditScreen
                 cursorY,
                 LABEL_COLOR
             );
+            cursorY += ROW_H;
+            if (showNf) {
+                g.drawString(
+                    Minecraft.getInstance().font,
+                    "NF:",
+                    labelX,
+                    cursorY,
+                    LABEL_COLOR
+                );
+            }
         }
     }
 
@@ -482,7 +512,7 @@ public class ComponentEditScreen
             case "G" -> 1e9;
             case "T" -> 1e12;
             default -> {
-                String stripped = suffix.replaceAll("[ΩFHVAROhm]+$", "");
+                String stripped = suffix.replaceAll("[\u03A9FHVAROhm]+$", "");
                 if (stripped.isEmpty()) yield 1.0;
                 yield switch (stripped) {
                     case "f" -> 1e-15;
@@ -564,7 +594,8 @@ public class ComponentEditScreen
         String modelName = "";
         double w = 1.0,
             l = 1.0,
-            mult = 1.0;
+            mult = 1.0,
+            nf = 1.0;
         if (showSky130) {
             if (modelNameField != null) modelName = modelNameField
                 .getValue()
@@ -584,6 +615,13 @@ public class ComponentEditScreen
                     multField != null ? multField.getValue().trim() : "1"
                 );
             } catch (Exception ignored) {}
+            if (showNf) {
+                try {
+                    nf = Double.parseDouble(
+                        nfField != null ? nfField.getValue().trim() : "1"
+                    );
+                } catch (Exception ignored) {}
+            }
         }
 
         ModMessages.sendToServer(
@@ -597,6 +635,7 @@ public class ComponentEditScreen
                 w,
                 l,
                 mult,
+                nf,
                 icPdkName
             )
         );
@@ -627,6 +666,8 @@ public class ComponentEditScreen
             case "current_probe" -> "Current Probe";
             case "ic_resistor3"  -> "IC Resistor3";
             case "ic_capacitor2" -> "IC Capacitor2";
+            case "ic_nmos4"      -> "IC NMOS4";
+            case "ic_pmos4"      -> "IC PMOS4";
             default -> "Component";
         };
     }
