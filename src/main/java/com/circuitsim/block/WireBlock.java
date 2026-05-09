@@ -85,37 +85,49 @@ public class WireBlock extends Block {
         BlockState neighborState = level.getBlockState(neighborPos);
         Block neighbor = neighborState.getBlock();
 
-        // Wire-to-wire: always connect horizontally
+        // Wire-to-wire: always connect
         if (neighbor instanceof WireBlock) return true;
 
-        // Ground node: always connect
-        if (neighbor instanceof GroundBlock) return true;
+        // Simulate block: connect from any horizontal side
+        if (neighbor instanceof SimulateBlock) return true;
 
-        // Non-directional circuit blocks: connect from any horizontal side
-        if (neighbor instanceof SimulateBlock
-                || neighbor instanceof ProbeBlock
-                || neighbor instanceof CurrentProbeBlock
-                || neighbor instanceof ParametricBlock) {
-            return true;
-        }
-
-        // Directional component blocks: connect only at valid pin faces
+        // All remaining connectable blocks are directional (have FACING)
         if (neighbor instanceof BaseComponentBlock) {
             Direction facing = neighborState.getValue(BaseComponentBlock.FACING);
-            // The direction pointing from this neighbour back toward the wire
+            // Direction pointing from the neighbour back toward this wire
             Direction toWire = dir.getOpposite();
 
-            // Front pin (block faces toward wire) or back pin (block faces away)
-            if (facing == toWire || facing.getOpposite() == toWire) return true;
+            // Parametric block: never connects to wires
+            if (neighbor instanceof ParametricBlock) return false;
 
-            // IC resistor has an additional right-side (bulk) pin
-            if (neighbor instanceof IcResistorBlock && facing.getClockWise() == toWire) return true;
+            // Ground: front only
+            if (neighbor instanceof GroundBlock) return facing == toWire;
 
-            // 4-pin MOSFETs: also connect on left (gate) and right (bulk) sides
-            if ((neighbor instanceof IcNmos4Block || neighbor instanceof IcPmos4Block)) {
-                if (facing.getClockWise() == toWire) return true;        // right = bulk
-                if (facing.getCounterClockWise() == toWire) return true; // left  = gate
+            // Probe: front only
+            if (neighbor instanceof ProbeBlock) return facing == toWire;
+
+            // Current probe: front and back
+            if (neighbor instanceof CurrentProbeBlock) {
+                return facing == toWire || facing.getOpposite() == toWire;
             }
+
+            // IC resistor: front, back, and right (bulk)
+            if (neighbor instanceof IcResistorBlock) {
+                return facing == toWire
+                        || facing.getOpposite() == toWire
+                        || facing.getClockWise() == toWire;
+            }
+
+            // 4-pin MOSFETs: front, back, left (gate), right (bulk)
+            if (neighbor instanceof IcNmos4Block || neighbor instanceof IcPmos4Block) {
+                return facing == toWire
+                        || facing.getOpposite() == toWire
+                        || facing.getClockWise() == toWire
+                        || facing.getCounterClockWise() == toWire;
+            }
+
+            // All other directional components (resistor, capacitor, voltage source, etc.): front and back
+            return facing == toWire || facing.getOpposite() == toWire;
         }
 
         return false;
