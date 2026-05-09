@@ -183,6 +183,27 @@ public class CircuitExtractor {
                         block, pos, nodeA, nodeB, nodeC, 0, "DC", 0,
                         modelName, wParam, lParam, multParam));
 
+            } else if (block instanceof IcCapacitorBlock) {
+                Direction facing = state.getValue(BaseComponentBlock.FACING);
+                int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
+                int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
+
+                String modelName = "";
+                double wParam    = 1.0;
+                double lParam    = 1.0;
+                double multParam = 1.0;
+
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    modelName = be.getModelName();
+                    wParam    = be.getWParam();
+                    lParam    = be.getLParam();
+                    multParam = be.getMultParam();
+                }
+
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, nodeA, nodeB, 0, "DC", 0,
+                        modelName, wParam, lParam, multParam));
+
             } else if (block instanceof BaseComponentBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
@@ -222,6 +243,7 @@ public class CircuitExtractor {
         Block block = level.getBlockState(pos).getBlock();
         return block instanceof ResistorBlock
                 || block instanceof IcResistorBlock
+                || block instanceof IcCapacitorBlock
                 || block instanceof CapacitorBlock
                 || block instanceof InductorBlock
                 || block instanceof VoltageSourceBlock

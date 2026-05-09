@@ -20,15 +20,17 @@ public class ComponentUpdatePacket {
     private final double   wParam;
     private final double   lParam;
     private final double   multParam;
+    private final String   pdkName;
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label) {
-        this(pos, value, sourceType, frequency, label, "", 1.0, 1.0, 1.0);
+        this(pos, value, sourceType, frequency, label, "", 1.0, 1.0, 1.0, "none");
     }
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label,
-                                  String modelName, double wParam, double lParam, double multParam) {
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  String pdkName) {
         this.pos        = pos;
         this.value      = value;
         this.sourceType = sourceType;
@@ -38,6 +40,7 @@ public class ComponentUpdatePacket {
         this.wParam     = wParam;
         this.lParam     = lParam;
         this.multParam  = multParam;
+        this.pdkName    = pdkName;
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
@@ -50,6 +53,7 @@ public class ComponentUpdatePacket {
         this.wParam     = buf.readDouble();
         this.lParam     = buf.readDouble();
         this.multParam  = buf.readDouble();
+        this.pdkName    = buf.readUtf(32);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -62,6 +66,7 @@ public class ComponentUpdatePacket {
         buf.writeDouble(wParam);
         buf.writeDouble(lParam);
         buf.writeDouble(multParam);
+        buf.writeUtf(pdkName, 32);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -83,6 +88,7 @@ public class ComponentUpdatePacket {
             cbe.setWParam(wParam);
             cbe.setLParam(lParam);
             cbe.setMultParam(multParam);
+            cbe.setPdkName(pdkName);
             cbe.setChanged();
             cbe.syncToClient();
         }

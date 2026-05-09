@@ -13,6 +13,7 @@
     "block.circuitsim.simulate": "Simulate Block",
     "block.circuitsim.parametric": "Parametric Block",
     "block.circuitsim.ic_resistor": "IC Resistor",
+    "block.circuitsim.ic_capacitor": "IC Capacitor",
     "gui.circuitsim.title": "Edit Component",
     "gui.circuitsim.value": "Value:",
     "gui.circuitsim.resistance": "Resistance (\u03A9):",

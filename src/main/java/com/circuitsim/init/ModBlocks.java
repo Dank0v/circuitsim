@@ -72,6 +72,10 @@ public class ModBlocks {
             () -> new IcResistorBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.TERRACOTTA_ORANGE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> IC_CAPACITOR = BLOCKS.register("ic_capacitor",
+            () -> new IcCapacitorBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.TERRACOTTA_CYAN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static void register(IEventBus eventBus) {
         BLOCKS.register(eventBus);
     }

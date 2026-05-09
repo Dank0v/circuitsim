@@ -29,6 +29,8 @@ public class NetlistBuilder {
             String line;
             if (comp.block instanceof IcResistorBlock) {
                 line = formatIcResistor(rCount++, comp, pdkName);
+            } else if (comp.block instanceof IcCapacitorBlock) {
+                line = formatIcCapacitor(cCount++, comp, pdkName);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -110,6 +112,8 @@ public class NetlistBuilder {
             String line;
             if (comp.block instanceof IcResistorBlock) {
                 line = formatIcResistor(rCount++, comp, pdkName);
+            } else if (comp.block instanceof IcCapacitorBlock) {
+                line = formatIcCapacitor(cCount++, comp, pdkName);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -213,6 +217,8 @@ public class NetlistBuilder {
             String line;
             if (comp.block instanceof IcResistorBlock) {
                 line = formatIcResistor(rCount++, comp, pdkName);
+            } else if (comp.block instanceof IcCapacitorBlock) {
+                line = formatIcCapacitor(cCount++, comp, pdkName);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %d %d %g", rCount++, comp.nodeA, comp.nodeB, comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -312,7 +318,57 @@ public class NetlistBuilder {
                 idx, comp.nodeA, comp.nodeB, bulk, model, w, l, mult);
     }
 
-    /** Computes the expected resistance in Ohms using the sky130 formula (W, L in µm). */
+    /** Formats a 2-pin IC capacitor subcircuit line. */
+    private static String formatIcCapacitor(int idx, CircuitComponent comp, String pdkName) {
+        String prefix = pdkModelPrefix(pdkName);
+        String name   = comp.modelName.isBlank() ? "cap_mim_m3_1" : comp.modelName;
+        String model  = prefix + name;
+        double w  = comp.wParam    > 0 ? comp.wParam    : 1.0;
+        double l  = comp.lParam    > 0 ? comp.lParam    : 1.0;
+        double mf = comp.multParam > 0 ? comp.multParam : 1.0;
+        return String.format("XC%d %d %d %s W=%g L=%g MF=%g m=%g",
+                idx, comp.nodeA, comp.nodeB, model, w, l, mf, mf);
+    }
+
+    /**
+     * Computes display capacitance in Farads given the active PDK and model name.
+     * W and L are in µm. Returns null if no formula is known for the combination.
+     */
+    public static Double computeCapacitance(String pdkName, String modelName, double w, double l, double mf) {
+        double wEff  = w  > 0 ? w  : 1.0;
+        double lEff  = l  > 0 ? l  : 1.0;
+        double mfEff = mf > 0 ? mf : 1.0;
+        if ("sky130A".equals(pdkName)) {
+            String name = (modelName == null || modelName.isBlank()) ? "cap_mim_m3_1" : modelName;
+            return switch (name) {
+                case "cap_mim_m3_1" -> mfEff * (wEff * lEff * 2e-15 + (wEff + lEff) * 0.38e-15);
+                default             -> null;
+            };
+        }
+        return null;
+    }
+
+    /**
+     * Computes display resistance in Ohms given the active PDK and model name.
+     * W and L are in µm. Returns null if no formula is known for the combination.
+     */
+    public static Double computeResistance(String pdkName, String modelName, double w, double l, double mult) {
+        double wEff    = w    > 0 ? w    : 1.0;
+        double lEff    = l    > 0 ? l    : 1.0;
+        double multEff = mult > 0 ? mult : 1.0;
+        if ("sky130A".equals(pdkName)) {
+            String name = (modelName == null || modelName.isBlank()) ? "res_high_po" : modelName;
+            return switch (name) {
+                case "res_high_po"  -> (378.3 + 317.17 * lEff) / wEff / multEff;
+                case "res_xhigh_po" -> 2000.0 * lEff / wEff / multEff;
+                default             -> null;
+            };
+        }
+        return null;
+    }
+
+    /** @deprecated Use {@link #computeResistance} with pdkName and modelName. */
+    @Deprecated
     public static double computeSky130Resistance(double w, double l, double mult) {
         double wEff    = w    > 0 ? w    : 1.0;
         double lEff    = l    > 0 ? l    : 1.0;

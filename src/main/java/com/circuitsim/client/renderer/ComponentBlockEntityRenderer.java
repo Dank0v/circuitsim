@@ -157,9 +157,16 @@ public class ComponentBlockEntityRenderer
                 : ComponentEditScreen.formatValue(val) + "V";
         }
         if (block == ModBlocks.IC_RESISTOR.get()) {
-            double r = NetlistBuilder.computeSky130Resistance(
+            Double r = NetlistBuilder.computeResistance(
+                    be.getPdkName(), be.getModelName(),
                     be.getWParam(), be.getLParam(), be.getMultParam());
-            return ComponentEditScreen.formatValue(r) + "\u03A9";
+            return r != null ? ComponentEditScreen.formatValue(r) + "\u03A9" : "?";
+        }
+        if (block == ModBlocks.IC_CAPACITOR.get()) {
+            Double c = NetlistBuilder.computeCapacitance(
+                    be.getPdkName(), be.getModelName(),
+                    be.getWParam(), be.getLParam(), be.getMultParam());
+            return c != null ? ComponentEditScreen.formatValue(c) + "F" : "?";
         }
         // Wire, Ground, Simulate — no label needed
         return null;
@@ -182,6 +189,10 @@ public class ComponentBlockEntityRenderer
         if (block == ModBlocks.IC_RESISTOR.get()) {
             String model = be.getModelName();
             return (model == null || model.isEmpty()) ? "res_high_po" : model;
+        }
+        if (block == ModBlocks.IC_CAPACITOR.get()) {
+            String model = be.getModelName();
+            return (model == null || model.isEmpty()) ? "cap_mim_m3_1" : model;
         }
         return null;
     }

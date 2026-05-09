@@ -31,6 +31,8 @@ public class ComponentEditScreen
     private EditBox wField;
     private EditBox lField;
     private EditBox multField;
+    private String  icPdkName = "none";
+    private int     pdkRowY   = 0; // absolute Y of the PDK radio row (set during init)
 
     private boolean showValue;
     private boolean showSourceType;
@@ -89,6 +91,7 @@ public class ComponentEditScreen
             currentW = cbe.getWParam();
             currentL = cbe.getLParam();
             currentMult = cbe.getMultParam();
+            icPdkName = cbe.getPdkName() != null ? cbe.getPdkName() : "none";
         } else {
             componentType = "resistor";
         }
@@ -100,20 +103,21 @@ public class ComponentEditScreen
         boolean isVoltSrc = "voltage_source".equals(componentType);
         boolean isSinSrc = "voltage_source_sin".equals(componentType);
         boolean isDiode = "diode".equals(componentType);
-        boolean isSky130 = "ic_resistor".equals(componentType);
+        boolean isSky130  = "ic_resistor".equals(componentType);
+        boolean isIcCap   = "ic_capacitor".equals(componentType);
 
-        showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130;
+        showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap;
         showSourceType = isVoltSrc;
         showFrequency = isSinSrc;
         showLabel = isProbe || isCurrentProbe;
-        showSky130 = isSky130;
+        showSky130 = isSky130 || isIcCap;
 
         int rowCount = 0;
         if (showValue) rowCount++;
         if (showSourceType) rowCount++;
         if (showFrequency) rowCount++;
         if (showLabel) rowCount++;
-        if (showSky130) rowCount += 4; // model, W, L, mult
+        if (showSky130) rowCount += 5; // pdk, model, W, L, mult
 
         this.imageHeight = 10 + 10 + 10 + (rowCount * ROW_H) + 36;
 
@@ -174,11 +178,16 @@ public class ComponentEditScreen
         }
 
         if (showSky130) {
+            // PDK selection row — no EditBox, just record Y for rendering/clicking
+            pdkRowY = cursorY;
+            cursorY += ROW_H;
+
+            String modelDefault = "ic_capacitor".equals(componentType) ? "cap_mim_m3_1" : "res_high_po";
             modelNameField = makeBox(
                 fieldX,
                 cursorY + LABEL_H + GAP,
                 fieldW,
-                currentModelName.isEmpty() ? "res_high_po" : currentModelName,
+                currentModelName.isEmpty() ? modelDefault : currentModelName,
                 64
             );
             cursorY += ROW_H;
@@ -368,6 +377,22 @@ public class ComponentEditScreen
             cursorY += ROW_H;
         }
         if (showSky130) {
+            // PDK row
+            g.drawString(Minecraft.getInstance().font, "PDK:", labelX, cursorY, LABEL_COLOR);
+            int checkY = cursorY + LABEL_H + GAP;
+            boolean isNone        = "none".equals(icPdkName);
+            boolean isSky130A     = "sky130A".equals(icPdkName);
+            boolean isPlaceholder = "placeholder".equals(icPdkName);
+            int SEL = 0xFF4FC3F7;
+            int DIM = 0xFF666666;
+            drawCheckbox(g, panelX + 12, checkY, isNone);
+            g.drawString(Minecraft.getInstance().font, "none",        panelX + 26, checkY + 1, isNone        ? SEL : DIM);
+            drawCheckbox(g, panelX + 70, checkY, isSky130A);
+            g.drawString(Minecraft.getInstance().font, "sky130A",     panelX + 84, checkY + 1, isSky130A     ? SEL : DIM);
+            drawCheckbox(g, panelX + 140, checkY, isPlaceholder);
+            g.drawString(Minecraft.getInstance().font, "placeholder", panelX + 154, checkY + 1, isPlaceholder ? SEL : DIM);
+            cursorY += ROW_H;
+
             g.drawString(
                 Minecraft.getInstance().font,
                 "Model:",
@@ -394,12 +419,37 @@ public class ComponentEditScreen
             cursorY += ROW_H;
             g.drawString(
                 Minecraft.getInstance().font,
-                "mult:",
+                "ic_capacitor".equals(componentType) ? "MF:" : "mult:",
                 labelX,
                 cursorY,
                 LABEL_COLOR
             );
         }
+    }
+
+    private void drawCheckbox(GuiGraphics g, int x, int y, boolean sel) {
+        g.fill(x, y, x + 10, y + 10, 0xFF888888);
+        g.fill(x + 1, y + 1, x + 9, y + 9, BG_COLOR);
+        if (sel) g.fill(x + 2, y + 2, x + 8, y + 8, 0xFF4FC3F7);
+    }
+
+    @Override
+    public boolean mouseClicked(double mx, double my, int btn) {
+        if (showSky130 && pdkRowY > 0) {
+            int checkY = pdkRowY + LABEL_H + GAP;
+            int panelX = (this.width - this.imageWidth) / 2;
+            // none checkbox: x=panelX+12, w covers label too (~50px)
+            if (hitBox(mx, my, panelX + 12, checkY, 58, 12)) { icPdkName = "none";        return true; }
+            // sky130A checkbox
+            if (hitBox(mx, my, panelX + 70, checkY, 68, 12)) { icPdkName = "sky130A";     return true; }
+            // placeholder checkbox
+            if (hitBox(mx, my, panelX + 140, checkY, 72, 12)) { icPdkName = "placeholder"; return true; }
+        }
+        return super.mouseClicked(mx, my, btn);
+    }
+
+    private static boolean hitBox(double mx, double my, int x, int y, int w, int h) {
+        return mx >= x && mx < x + w && my >= y && my < y + h;
     }
 
     public static double parseSI(String raw) throws NumberFormatException {
@@ -546,7 +596,8 @@ public class ComponentEditScreen
                 modelName,
                 w,
                 l,
-                mult
+                mult,
+                icPdkName
             )
         );
     }
@@ -574,7 +625,8 @@ public class ComponentEditScreen
             case "diode" -> "Diode";
             case "probe" -> "Voltage Probe";
             case "current_probe" -> "Current Probe";
-            case "ic_resistor" -> "IC Resistor";
+            case "ic_resistor"  -> "IC Resistor";
+            case "ic_capacitor" -> "IC Capacitor";
             default -> "Component";
         };
     }
