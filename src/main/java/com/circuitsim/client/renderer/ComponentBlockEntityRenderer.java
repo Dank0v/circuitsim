@@ -103,7 +103,7 @@ public class ComponentBlockEntityRenderer
 
         if (block == ModBlocks.RESISTOR.get()) {
             lines.add(val == 0.0
-                ? "?Ω"
+                ? "?\u03A9"
                 : ComponentEditScreen.formatValue(val) + "\u03A9");
         } else if (block == ModBlocks.CAPACITOR.get()) {
             lines.add(val == 0.0 ? "?F" : ComponentEditScreen.formatValue(val) + "F");

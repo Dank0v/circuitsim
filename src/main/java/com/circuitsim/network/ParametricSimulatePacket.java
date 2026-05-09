@@ -67,16 +67,19 @@ public class ParametricSimulatePacket {
         Block     targetBlock = level.getBlockState(targetPos).getBlock();
 
         if (!isParametrizable(targetBlock)) {
-            msg(player, "The block in front is not a parametrizable component "
-                    + "(need Resistor, Capacitor, Inductor, Voltage Source, "
-                    + "SIN Voltage Source, or Current Source).",
+            msg(player, "The block in front is not a parametrizable component.",
                     ChatFormatting.RED);
             return;
         }
 
+        // Parse "paramName=sweepStr" — legacy bare strings default to "value"
+        String[] spec      = com.circuitsim.screen.ParametricEditScreen.parseParametricSpec(paramString);
+        String   paramName = spec[0];
+        String   sweepStr  = spec[1];
+
         List<Double> paramValues;
         try {
-            paramValues = parseParamString(paramString);
+            paramValues = parseParamString(sweepStr);
         } catch (IllegalArgumentException e) {
             msg(player, "Invalid sweep string: " + e.getMessage(), ChatFormatting.RED);
             return;
@@ -113,23 +116,35 @@ public class ParametricSimulatePacket {
             effectiveProbes = extraction.probes;
         }
 
-        msg(player, "=== Parametric: " + displayName(targetBlock) + " sweep ("
+        msg(player, "=== Parametric: " + displayName(targetBlock) + " (" + paramName + ") sweep ("
                 + paramValues.size() + " points) ===", ChatFormatting.GOLD);
 
         for (double val : paramValues) {
             final double sweepVal = val;
             List<NetlistBuilder.CircuitComponent> swept = extraction.components.stream()
-                    .map(c -> c.pos.equals(targetPos)
-                            ? new NetlistBuilder.CircuitComponent(
-                                    c.block, c.pos, c.nodeA, c.nodeB,
-                                    sweepVal, c.sourceType, c.frequency)
-                            : c)
+                    .map(c -> {
+                        if (!c.pos.equals(targetPos)) return c;
+                        double value = c.value;
+                        double w = c.wParam, l = c.lParam, mult = c.multParam, nf = c.nfParam;
+                        switch (paramName) {
+                            case "W"    -> w    = sweepVal;
+                            case "L"    -> l    = sweepVal;
+                            case "mult" -> mult = sweepVal;
+                            case "nf"   -> nf   = sweepVal;
+                            default     -> value = sweepVal;
+                        }
+                        return new NetlistBuilder.CircuitComponent(
+                                c.block, c.pos,
+                                c.nodeA, c.nodeB, c.nodeC, c.nodeD,
+                                value, c.sourceType, c.frequency,
+                                c.modelName, w, l, mult, nf);
+                    })
                     .collect(Collectors.toList());
 
             String netlist = NetlistBuilder.buildNetlist(swept, effectiveProbes, extraction.currentProbes);
             NgSpiceRunner.Result result = NgSpiceRunner.run(netlist);
 
-            msg(player, "--- " + ComponentEditScreen.formatValue(val) + unit(targetBlock) + " ---",
+            msg(player, "--- " + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName) + " ---",
                     ChatFormatting.YELLOW);
 
             if (result.error != null) {
@@ -195,7 +210,11 @@ public class ParametricSimulatePacket {
                 || b instanceof InductorBlock
                 || b instanceof VoltageSourceBlock
                 || b instanceof VoltageSourceSinBlock
-                || b instanceof CurrentSourceBlock;
+                || b instanceof CurrentSourceBlock
+                || b instanceof IcResistorBlock
+                || b instanceof IcCapacitorBlock
+                || b instanceof IcNmos4Block
+                || b instanceof IcPmos4Block;
     }
 
     private static String displayName(Block b) {
@@ -205,10 +224,16 @@ public class ParametricSimulatePacket {
         if (b instanceof VoltageSourceBlock)    return "Voltage Source";
         if (b instanceof VoltageSourceSinBlock) return "SIN Voltage Source";
         if (b instanceof CurrentSourceBlock)    return "Current Source";
+        if (b instanceof IcResistorBlock)       return "IC Resistor";
+        if (b instanceof IcCapacitorBlock)      return "IC Capacitor";
+        if (b instanceof IcNmos4Block)          return "IC NMOS4";
+        if (b instanceof IcPmos4Block)          return "IC PMOS4";
         return "Component";
     }
 
-    private static String unit(Block b) {
+    private static String unit(Block b, String paramName) {
+        if ("W".equals(paramName) || "L".equals(paramName)) return "u";
+        if ("mult".equals(paramName) || "nf".equals(paramName)) return "";
         if (b instanceof ResistorBlock)         return "\u03A9";
         if (b instanceof CapacitorBlock)        return "F";
         if (b instanceof InductorBlock)         return "H";

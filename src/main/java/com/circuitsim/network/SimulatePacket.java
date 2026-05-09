@@ -521,9 +521,24 @@ public class SimulatePacket {
             return;
         }
 
+        // Parse "paramName=sweepStr" — legacy bare sweep strings default to "value"
+        String[] spec      = com.circuitsim.screen.ParametricEditScreen.parseParametricSpec(param.sweepString);
+        String   paramName = spec[0];
+        String   sweepStr  = spec[1];
+
+        if (!isValidParamForBlock(targetBlock, paramName)) {
+            msg(
+                player,
+                "Parameter '" + paramName + "' is not sweepable for "
+                    + displayName(targetBlock) + ".",
+                ChatFormatting.RED
+            );
+            return;
+        }
+
         List<Double> sweepValues;
         try {
-            sweepValues = parseSweepString(param.sweepString);
+            sweepValues = parseSweepString(sweepStr);
         } catch (IllegalArgumentException e) {
             msg(
                 player,
@@ -557,7 +572,7 @@ public class SimulatePacket {
         String header =
             "=== Parametric: " +
             displayName(targetBlock) +
-            " sweep (" +
+            " (" + paramName + ") sweep (" +
             sweepValues.size() +
             " pts, " +
             analysis +
@@ -571,6 +586,7 @@ public class SimulatePacket {
                 extraction,
                 targetPos,
                 targetBlock,
+                paramName,
                 sweepValues,
                 effectiveProbes,
                 cpList,
@@ -582,6 +598,7 @@ public class SimulatePacket {
                 extraction,
                 targetPos,
                 targetBlock,
+                paramName,
                 sweepValues,
                 effectiveProbes,
                 cpList,
@@ -593,6 +610,7 @@ public class SimulatePacket {
                 extraction,
                 targetPos,
                 targetBlock,
+                paramName,
                 sweepValues,
                 effectiveProbes,
                 cpList,
@@ -609,6 +627,7 @@ public class SimulatePacket {
         CircuitExtractor.ExtractionResult extraction,
         BlockPos targetPos,
         Block targetBlock,
+        String paramName,
         List<Double> sweepValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
@@ -627,14 +646,14 @@ public class SimulatePacket {
             String secHdr =
                 "--- " +
                 ComponentEditScreen.formatValue(val) +
-                unit(targetBlock) +
+                unit(targetBlock, paramName) +
                 " ---";
             msg(player, secHdr, ChatFormatting.YELLOW);
             bookLines.add(secHdr);
 
             NgSpiceRunner.Result result = NgSpiceRunner.run(
                 NetlistBuilder.buildNetlist(
-                    swapValue(extraction.components, targetPos, val),
+                    swapParam(extraction.components, targetPos, paramName, val),
                     effectiveProbes,
                     cpList,
                     pdkName,
@@ -691,8 +710,8 @@ public class SimulatePacket {
         if (validSweep.isEmpty()) return;
         int sessionId = ParametricResultCache.store(
             new ParametricResultCache.ResultSet(
-                displayName(targetBlock),
-                unit(targetBlock),
+                displayName(targetBlock) + " (" + paramName + ")",
+                unit(targetBlock, paramName),
                 validSweep,
                 voltData,
                 currData,
@@ -715,6 +734,7 @@ public class SimulatePacket {
         CircuitExtractor.ExtractionResult extraction,
         BlockPos targetPos,
         Block targetBlock,
+        String paramName,
         List<Double> sweepValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
@@ -729,13 +749,13 @@ public class SimulatePacket {
             String secHdr =
                 "--- " +
                 ComponentEditScreen.formatValue(val) +
-                unit(targetBlock) +
+                unit(targetBlock, paramName) +
                 " (AC) ---";
             msg(player, secHdr, ChatFormatting.YELLOW);
             bookLines.add(secHdr);
 
             String netlist = NetlistBuilder.buildAcNetlist(
-                swapValue(extraction.components, targetPos, val),
+                swapParam(extraction.components, targetPos, paramName, val),
                 effectiveProbes,
                 cpList,
                 fStart,
@@ -770,7 +790,7 @@ public class SimulatePacket {
             if (freqAxis == null) freqAxis = sortedFreqs;
 
             String stepSuffix =
-                "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock);
+                "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName);
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                 String seriesName = probe.label + stepSuffix;
                 String vKey = "v(" + probe.node + ")_mag";
@@ -827,6 +847,7 @@ public class SimulatePacket {
         CircuitExtractor.ExtractionResult extraction,
         BlockPos targetPos,
         Block targetBlock,
+        String paramName,
         List<Double> sweepValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
@@ -844,13 +865,13 @@ public class SimulatePacket {
             String secHdr =
                 "--- " +
                 ComponentEditScreen.formatValue(val) +
-                unit(targetBlock) +
+                unit(targetBlock, paramName) +
                 " (TRAN) ---";
             msg(player, secHdr, ChatFormatting.YELLOW);
             bookLines.add(secHdr);
 
             String netlist = NetlistBuilder.buildTranNetlist(
-                swapValue(extraction.components, targetPos, val),
+                swapParam(extraction.components, targetPos, paramName, val),
                 effectiveProbes,
                 cpList,
                 tstep,
@@ -886,7 +907,7 @@ public class SimulatePacket {
             if (timeAxis == null) timeAxis = sortedTimes;
 
             String stepSuffix =
-                "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock);
+                "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName);
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                 String seriesName = probe.label + stepSuffix;
                 String vKey = "v(" + probe.node + ")";
@@ -1078,26 +1099,40 @@ public class SimulatePacket {
         );
     }
 
-    private static List<NetlistBuilder.CircuitComponent> swapValue(
+    /**
+     * Returns a new component list with one parameter on the target block swapped.
+     * Preserves all other fields including sky130 W/L/mult/nf and node assignments.
+     * paramName ∈ {"value", "W", "L", "mult", "nf"}.
+     */
+    private static List<NetlistBuilder.CircuitComponent> swapParam(
         List<NetlistBuilder.CircuitComponent> components,
         BlockPos targetPos,
+        String paramName,
         double newVal
     ) {
         return components
             .stream()
-            .map(c ->
-                c.pos.equals(targetPos)
-                    ? new NetlistBuilder.CircuitComponent(
-                          c.block,
-                          c.pos,
-                          c.nodeA,
-                          c.nodeB,
-                          newVal,
-                          c.sourceType,
-                          c.frequency
-                      )
-                    : c
-            )
+            .map(c -> {
+                if (!c.pos.equals(targetPos)) return c;
+                double value = c.value;
+                double w     = c.wParam;
+                double l     = c.lParam;
+                double mult  = c.multParam;
+                double nf    = c.nfParam;
+                switch (paramName == null ? "value" : paramName) {
+                    case "W"    -> w    = newVal;
+                    case "L"    -> l    = newVal;
+                    case "mult" -> mult = newVal;
+                    case "nf"   -> nf   = newVal;
+                    default     -> value = newVal;
+                }
+                return new NetlistBuilder.CircuitComponent(
+                    c.block, c.pos,
+                    c.nodeA, c.nodeB, c.nodeC, c.nodeD,
+                    value, c.sourceType, c.frequency,
+                    c.modelName, w, l, mult, nf
+                );
+            })
             .collect(Collectors.toList());
     }
 
@@ -1112,8 +1147,26 @@ public class SimulatePacket {
             b instanceof InductorBlock ||
             b instanceof VoltageSourceBlock ||
             b instanceof VoltageSourceSinBlock ||
-            b instanceof CurrentSourceBlock
+            b instanceof CurrentSourceBlock ||
+            b instanceof IcResistorBlock ||
+            b instanceof IcCapacitorBlock ||
+            b instanceof IcNmos4Block ||
+            b instanceof IcPmos4Block
         );
+    }
+
+    /** Whether {@code paramName} is a valid sweep parameter for the target block. */
+    private static boolean isValidParamForBlock(Block b, String paramName) {
+        if (paramName == null) return false;
+        if (b instanceof IcNmos4Block || b instanceof IcPmos4Block) {
+            return paramName.equals("W") || paramName.equals("L")
+                    || paramName.equals("mult") || paramName.equals("nf");
+        }
+        if (b instanceof IcResistorBlock || b instanceof IcCapacitorBlock) {
+            return paramName.equals("W") || paramName.equals("L") || paramName.equals("mult");
+        }
+        // Ideal components only sweep "value"
+        return paramName.equals("value");
     }
 
     private static String displayName(Block b) {
@@ -1123,10 +1176,21 @@ public class SimulatePacket {
         if (b instanceof VoltageSourceBlock) return "Voltage Source";
         if (b instanceof VoltageSourceSinBlock) return "SIN Voltage Source";
         if (b instanceof CurrentSourceBlock) return "Current Source";
+        if (b instanceof IcResistorBlock) return "IC Resistor";
+        if (b instanceof IcCapacitorBlock) return "IC Capacitor";
+        if (b instanceof IcNmos4Block) return "IC NMOS4";
+        if (b instanceof IcPmos4Block) return "IC PMOS4";
         return "Component";
     }
 
     private static String unit(Block b) {
+        return unit(b, "value");
+    }
+
+    /** Unit suffix for a swept value. For W/L it's "u" (microns); mult/nf are unitless. */
+    private static String unit(Block b, String paramName) {
+        if ("W".equals(paramName) || "L".equals(paramName)) return "u";
+        if ("mult".equals(paramName) || "nf".equals(paramName)) return "";
         if (b instanceof ResistorBlock) return "\u03A9";
         if (b instanceof CapacitorBlock) return "F";
         if (b instanceof InductorBlock) return "H";
