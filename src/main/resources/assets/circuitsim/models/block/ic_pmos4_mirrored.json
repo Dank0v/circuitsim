@@ -1,0 +1,26 @@
+{
+    "parent": "block/block",
+    "textures": {
+        "particle": "circuitsim:block/ic_pmos4_gate",
+        "up":    "circuitsim:block/ic_pmos4_top",
+        "down":  "circuitsim:block/ic_pmos4_top",
+        "north": "circuitsim:block/ic_pmos4_source",
+        "south": "circuitsim:block/ic_pmos4_drain",
+        "west":  "circuitsim:block/ic_pmos4_bulk",
+        "east":  "circuitsim:block/ic_pmos4_gate"
+    },
+    "elements": [
+        {
+            "from": [0, 0, 0],
+            "to": [16, 16, 16],
+            "faces": {
+                "down":  { "uv": [16, 0, 0, 16], "texture": "#down",  "cullface": "down"  },
+                "up":    { "uv": [16, 0, 0, 16], "texture": "#up",    "cullface": "up"    },
+                "north": { "uv": [0, 0, 16, 16], "texture": "#north", "cullface": "north" },
+                "south": { "uv": [0, 0, 16, 16], "texture": "#south", "cullface": "south" },
+                "west":  { "uv": [0, 0, 16, 16], "texture": "#west",  "cullface": "west"  },
+                "east":  { "uv": [0, 0, 16, 16], "texture": "#east",  "cullface": "east"  }
+            }
+        }
+    ]
+}

@@ -1,11 +1,13 @@
 package com.circuitsim.network;
 
+import com.circuitsim.block.BaseComponentBlock;
 import com.circuitsim.blockentity.ComponentBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.network.NetworkEvent;
 
 public class ComponentUpdatePacket {
@@ -23,30 +25,38 @@ public class ComponentUpdatePacket {
     private final double   multParam;
     private final double   nfParam;
     private final String   pdkName;
+    private final boolean  mirrored;
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label) {
-        this(pos, value, sourceType, frequency, label, "", 1.0, 1.0, 1.0, 1.0, "none", 0);
+        this(pos, value, sourceType, frequency, label, "", 1.0, 1.0, 1.0, 1.0, "none", 0, false);
     }
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label,
                                   String modelName, double wParam, double lParam, double multParam,
                                   String pdkName) {
-        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam, 1.0, pdkName, 0);
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam, 1.0, pdkName, 0, false);
     }
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label,
                                   String modelName, double wParam, double lParam, double multParam,
                                   double nfParam, String pdkName) {
-        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam, nfParam, pdkName, 0);
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam, nfParam, pdkName, 0, false);
     }
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label,
                                   String modelName, double wParam, double lParam, double multParam,
                                   double nfParam, String pdkName, int componentNumber) {
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam, nfParam, pdkName, componentNumber, false);
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  double nfParam, String pdkName, int componentNumber, boolean mirrored) {
         this.pos             = pos;
         this.value           = value;
         this.sourceType      = sourceType;
@@ -59,6 +69,7 @@ public class ComponentUpdatePacket {
         this.nfParam         = nfParam;
         this.pdkName         = pdkName;
         this.componentNumber = Math.max(0, componentNumber);
+        this.mirrored        = mirrored;
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
@@ -74,6 +85,7 @@ public class ComponentUpdatePacket {
         this.nfParam         = buf.readDouble();
         this.pdkName         = buf.readUtf(32);
         this.componentNumber = buf.readVarInt();
+        this.mirrored        = buf.readBoolean();
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -89,6 +101,7 @@ public class ComponentUpdatePacket {
         buf.writeDouble(nfParam);
         buf.writeUtf(pdkName, 32);
         buf.writeVarInt(componentNumber);
+        buf.writeBoolean(mirrored);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -114,6 +127,13 @@ public class ComponentUpdatePacket {
             cbe.setPdkName(pdkName);
             cbe.setComponentNumber(componentNumber);
             cbe.setChanged();
+
+            BlockState curState = level.getBlockState(pos);
+            if (curState.hasProperty(BaseComponentBlock.MIRRORED)
+                    && curState.getValue(BaseComponentBlock.MIRRORED) != mirrored) {
+                level.setBlock(pos, curState.setValue(BaseComponentBlock.MIRRORED, mirrored), 3);
+            }
+
             cbe.syncToClient();
         }
     }

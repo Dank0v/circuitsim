@@ -1,6 +1,7 @@
 package com.circuitsim.client.renderer;
 
 import com.circuitsim.blockentity.ComponentBlockEntity;
+import com.circuitsim.client.KeyBindings;
 import com.circuitsim.init.ModBlocks;
 import com.circuitsim.screen.ComponentEditScreen;
 import com.circuitsim.simulation.NetlistBuilder;
@@ -32,6 +33,7 @@ public class ComponentBlockEntityRenderer
         int packedLight,
         int packedOverlay
     ) {
+        if (!KeyBindings.labelsVisible) return;
         List<String> lines = getLines(be);
         if (lines.isEmpty()) return;
 

@@ -1,5 +1,6 @@
 package com.circuitsim.screen;
 
+import com.circuitsim.block.BaseComponentBlock;
 import com.circuitsim.blockentity.ComponentBlockEntity;
 import com.circuitsim.client.ClientSetup;
 import com.circuitsim.network.ComponentUpdatePacket;
@@ -35,6 +36,8 @@ public class ComponentEditScreen
     private EditBox nfField;
     private String  icPdkName = "none";
     private int     pdkRowY   = 0; // absolute Y of the PDK radio row (set during init)
+    private int     mirrorRowY = 0; // absolute Y of the Mirror checkbox row (set during init)
+    private boolean icMirrored = false;
 
     private boolean showValue;
     private boolean showSourceType;
@@ -42,6 +45,7 @@ public class ComponentEditScreen
     private boolean showFrequency;
     private boolean showSky130;
     private boolean showNf;
+    private boolean showMirror;
     private boolean showNumber;
 
     private static final int LABEL_H = 10;
@@ -100,6 +104,10 @@ public class ComponentEditScreen
             currentNf = cbe.getNfParam();
             currentNumber = cbe.getComponentNumber();
             icPdkName = cbe.getPdkName() != null ? cbe.getPdkName() : "none";
+            var bs = cbe.getBlockState();
+            if (bs.hasProperty(BaseComponentBlock.MIRRORED)) {
+                icMirrored = bs.getValue(BaseComponentBlock.MIRRORED);
+            }
         } else {
             componentType = "resistor";
         }
@@ -122,6 +130,7 @@ public class ComponentEditScreen
         showLabel = isProbe || isCurrentProbe;
         showSky130 = isSky130 || isIcCap || isNmos4 || isPmos4;
         showNf = isNmos4 || isPmos4;
+        showMirror = isNmos4 || isPmos4;
         // Show the netlist-index field for everything that emits a SPICE element line.
         showNumber = !isProbe && !isCurrentProbe;
 
@@ -131,7 +140,7 @@ public class ComponentEditScreen
         if (showSourceType) rowCount++;
         if (showFrequency) rowCount++;
         if (showLabel) rowCount++;
-        if (showSky130) rowCount += 5 + (showNf ? 1 : 0); // pdk, model, W, L, mult [, NF]
+        if (showSky130) rowCount += 5 + (showNf ? 1 : 0) + (showMirror ? 1 : 0); // pdk, model, W, L, mult [, NF] [, Mirror]
 
         this.imageHeight = 10 + 10 + 10 + (rowCount * ROW_H) + 36;
 
@@ -251,6 +260,10 @@ public class ComponentEditScreen
                     String.valueOf((int) Math.max(1, Math.round(currentNf))),
                     16
                 );
+                cursorY += ROW_H;
+            }
+            if (showMirror) {
+                mirrorRowY = cursorY;
                 cursorY += ROW_H;
             }
         }
@@ -482,6 +495,18 @@ public class ComponentEditScreen
                     cursorY,
                     LABEL_COLOR
                 );
+                cursorY += ROW_H;
+            }
+            if (showMirror) {
+                g.drawString(Minecraft.getInstance().font, "Mirror:", labelX, cursorY, LABEL_COLOR);
+                int mCheckY = cursorY + LABEL_H + GAP;
+                drawCheckbox(g, panelX + 12, mCheckY, icMirrored);
+                g.drawString(
+                    Minecraft.getInstance().font,
+                    icMirrored ? "mirrored (gate on east)" : "default (gate on west)",
+                    panelX + 26, mCheckY + 1,
+                    icMirrored ? 0xFF4FC3F7 : 0xFF666666
+                );
             }
         }
     }
@@ -503,6 +528,11 @@ public class ComponentEditScreen
             if (hitBox(mx, my, panelX + 70, checkY, 68, 12)) { icPdkName = "sky130A";     return true; }
             // placeholder checkbox
             if (hitBox(mx, my, panelX + 140, checkY, 72, 12)) { icPdkName = "placeholder"; return true; }
+        }
+        if (showMirror && mirrorRowY > 0) {
+            int checkY = mirrorRowY + LABEL_H + GAP;
+            int panelX = (this.width - this.imageWidth) / 2;
+            if (hitBox(mx, my, panelX + 12, checkY, 200, 12)) { icMirrored = !icMirrored; return true; }
         }
         return super.mouseClicked(mx, my, btn);
     }
@@ -675,7 +705,8 @@ public class ComponentEditScreen
                 mult,
                 nf,
                 icPdkName,
-                number
+                number,
+                icMirrored
             )
         );
     }

@@ -1,8 +1,12 @@
 {
     "variants": {
-        "facing=north": { "model": "circuitsim:block/ic_pmos4" },
-        "facing=south": { "model": "circuitsim:block/ic_pmos4", "y": 180 },
-        "facing=east":  { "model": "circuitsim:block/ic_pmos4", "y": 90 },
-        "facing=west":  { "model": "circuitsim:block/ic_pmos4", "y": 270 }
+        "facing=north,mirrored=false": { "model": "circuitsim:block/ic_pmos4" },
+        "facing=south,mirrored=false": { "model": "circuitsim:block/ic_pmos4", "y": 180 },
+        "facing=east,mirrored=false":  { "model": "circuitsim:block/ic_pmos4", "y": 90 },
+        "facing=west,mirrored=false":  { "model": "circuitsim:block/ic_pmos4", "y": 270 },
+        "facing=north,mirrored=true":  { "model": "circuitsim:block/ic_pmos4_mirrored" },
+        "facing=south,mirrored=true":  { "model": "circuitsim:block/ic_pmos4_mirrored", "y": 180 },
+        "facing=east,mirrored=true":   { "model": "circuitsim:block/ic_pmos4_mirrored", "y": 90 },
+        "facing=west,mirrored=true":   { "model": "circuitsim:block/ic_pmos4_mirrored", "y": 270 }
     }
 }

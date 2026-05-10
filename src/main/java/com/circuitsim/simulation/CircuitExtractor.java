@@ -216,16 +216,21 @@ public class CircuitExtractor {
 
             } else if (block instanceof IcNmos4Block || block instanceof IcPmos4Block) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
+                boolean mirrored = state.hasProperty(BaseComponentBlock.MIRRORED)
+                        && state.getValue(BaseComponentBlock.MIRRORED);
                 // Front = drain (NMOS) / source (PMOS), back = source (NMOS) / drain (PMOS)
                 int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
                 int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
-                // Right (clockwise) = bulk
-                BlockPos bulkPos = pos.relative(facing.getClockWise());
+                // Default: gate on counter-clockwise (left/west when facing north),
+                // bulk on clockwise (right/east when facing north).
+                // Mirrored: swap so gate is on clockwise side and bulk on counter-clockwise.
+                Direction gateDir = mirrored ? facing.getClockWise()        : facing.getCounterClockWise();
+                Direction bulkDir = mirrored ? facing.getCounterClockWise() : facing.getClockWise();
+                BlockPos bulkPos = pos.relative(bulkDir);
                 int nodeC = visited.contains(bulkPos)
                         ? resolveNode(bulkPos, visited, nodeMap, nextNode)
                         : 0;
-                // Left (counter-clockwise) = gate
-                BlockPos gatePos = pos.relative(facing.getCounterClockWise());
+                BlockPos gatePos = pos.relative(gateDir);
                 int nodeD = visited.contains(gatePos)
                         ? resolveNode(gatePos, visited, nodeMap, nextNode)
                         : 0;
