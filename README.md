@@ -71,8 +71,6 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
  
 ## Known Issues / TODO
  
-- **No Probe = Full Chat** — when simulating without any probe ngspice dumbs a lot of info in the chat.
-- **Only .OP, .AC Simulation** — add .DC, .TRAN, in the future
  
 ---
  

@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "4";   // bumped for componentNumber
+    private static final String PROTOCOL_VERSION = "5";   // bumped for CommandsUpdatePacket
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -42,6 +42,12 @@ public class ModMessages {
                 .encoder(SimulatePacket::encode)
                 .decoder(SimulatePacket::decode)
                 .consumerMainThread(ModMessages::handleSimulate)
+                .add();
+
+        INSTANCE.messageBuilder(CommandsUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(CommandsUpdatePacket::encode)
+                .decoder(CommandsUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleCommandsUpdate)
                 .add();
 
         // ── client-bound ──────────────────────────────────────────────────────
@@ -80,6 +86,12 @@ public class ModMessages {
 
     private static void handleSimulate(SimulatePacket msg,
                                         Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleCommandsUpdate(CommandsUpdatePacket msg,
+                                              Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }

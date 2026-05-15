@@ -14,9 +14,26 @@ public class NgSpiceRunner {
     public static class Result {
         public List<String>  output   = new ArrayList<>();
         public String        error    = null;
+        /** Full raw stdout from ngspice (with stderr merged), unparsed. */
+        public String        rawStdout = "";
 
         /** .OP results — keys like "v(1)", "i(vm1)" */
         public Map<String, Double> values = new LinkedHashMap<>();
+
+        /**
+         * Pre-formatted output lines from user-supplied {@code print} commands
+         * whose names aren't {@code v(...)}/{@code i(...)} — e.g.
+         * {@code @m.xm1.msky130_fd_pr__nfet_01v8[gm] = 5.12e-04}. Each entry
+         * is the line as it should be displayed to the user.
+         */
+        public List<String> extras = new ArrayList<>();
+
+        /**
+         * Programmatic lookup for OP-analysis extras. Keys are lowercased
+         * names (matching {@code UserPlot.name}); values are the parsed
+         * scalar. Mirrors {@link #extras} but is queryable.
+         */
+        public Map<String, Double> extrasByName = new LinkedHashMap<>();
 
         /** .AC results — outer key = frequency (Hz), inner key = "v(N)_mag" / "i(vmK)_mag" */
         public Map<Double, Map<String, Double>> acData   = new LinkedHashMap<>();
@@ -25,8 +42,18 @@ public class NgSpiceRunner {
         public Map<Double, Map<String, Double>> tranData = new LinkedHashMap<>();
 
         public String getNodeVoltage(int nodeIndex) {
-            if (nodeIndex == 0) return "0.000000 V (Ground)";
-            String key = "v(" + nodeIndex + ")";
+            return getNodeVoltage(Integer.toString(nodeIndex));
+        }
+
+        /**
+         * Looks up a node voltage by its netlist name — the integer node id as
+         * a string ({@code "7"}) for unaliased nodes, or the sanitised probe
+         * label ({@code "vout"}) when net aliasing is in effect.
+         */
+        public String getNodeVoltage(String netName) {
+            if (netName == null) return "N/A";
+            if ("0".equals(netName)) return "0.000000 V (Ground)";
+            String key = "v(" + netName.toLowerCase() + ")";
             if (values.containsKey(key))
                 return String.format("%.6f V", values.get(key));
             return "N/A";
@@ -95,6 +122,7 @@ public class NgSpiceRunner {
             result.error = "Failed to read ngspice output: " + e.getMessage();
             return result;
         }
+        result.rawStdout = fullOutput;
 
         try {
             boolean finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
@@ -149,6 +177,9 @@ public class NgSpiceRunner {
                 else if (k.startsWith("i(")) result.output.add(String.format("  %s = %.6f A", k, v));
                 else                          result.output.add(String.format("  %s = %g",    k, v));
             }
+            // result.extras is intentionally NOT appended here — SimulatePacket
+            // emits it in its own colour so user print outputs stand out from
+            // the default green node/branch values.
         }
 
         return result;
@@ -164,12 +195,40 @@ public class NgSpiceRunner {
             if (!line.contains("=")) continue;
             String[] parts = line.split("=", 2);
             if (parts.length != 2) continue;
-            String key    = parts[0].trim().toLowerCase();
-            String valStr = parts[1].trim();
-            if (!key.startsWith("v(") && !key.startsWith("i(")) continue;
-            try { result.values.put(key, Double.parseDouble(valStr)); }
-            catch (NumberFormatException ignored) {}
+            String keyOriginal = parts[0].trim();
+            String keyLower    = keyOriginal.toLowerCase();
+            String valStr      = parts[1].trim();
+            // Need a parseable leading numeric token for both v/i and extras.
+            String[] valToks = valStr.split("\\s+");
+            if (valToks.length == 0) continue;
+            double val;
+            try { val = Double.parseDouble(valToks[0]); }
+            catch (NumberFormatException ignored) { continue; }
+
+            if (keyLower.startsWith("v(") || keyLower.startsWith("i(")) {
+                result.values.put(keyLower, val);
+            } else if (isUserPrintKey(keyOriginal)) {
+                // Non-v/i scalar print outputs from user .control commands,
+                // e.g. "@m.xm1.msky130_fd_pr__nfet_01v8_lvt[gm] = 5.12e-04".
+                result.extras.add(keyOriginal + " = " + valStr);
+                result.extrasByName.put(keyLower, val);
+            }
         }
+    }
+
+    /**
+     * True if {@code key} looks like the name a user would receive from a
+     * {@code print} command. ngspice meta-output lines like
+     * {@code "Doing analysis at TEMP"} or {@code "Total DRAM available"} have
+     * whitespace in the key; real print names ({@code @m.xm1[gm]},
+     * {@code i(vm1)}, custom {@code let}-defined identifiers) do not.
+     */
+    private static boolean isUserPrintKey(String keyOriginal) {
+        if (keyOriginal == null || keyOriginal.isEmpty()) return false;
+        for (int i = 0; i < keyOriginal.length(); i++) {
+            if (Character.isWhitespace(keyOriginal.charAt(i))) return false;
+        }
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -217,9 +276,11 @@ public class NgSpiceRunner {
                     String hdr = headerToks[col].toLowerCase();
                     double mag = parseComplexMag(tok[col]);
                     if (Double.isNaN(mag)) continue;
-                    if (hdr.startsWith("v(") || hdr.startsWith("i(")) {
-                        rowMap.put(hdr + "_mag", mag);
-                    }
+                    // Capture v/i probe columns AND user-plot columns (any other
+                    // header named by a `let`/`plot` directive). The store key
+                    // always carries the "_mag" suffix so callers can look up
+                    // either by probe name or plot name uniformly.
+                    rowMap.put(hdr + "_mag", mag);
                 }
             }
             // Do NOT break here — continue scanning for the next chunk header
@@ -243,6 +304,12 @@ public class NgSpiceRunner {
             }
         }
 
+        // Pick up scalar `meas` / `print` outputs (e.g. dc_gain, gbw, pm),
+        // which ngspice prints as plain "name = value" lines outside of any
+        // tabular block. These flow into result.extras for display, and into
+        // result.extrasByName for programmatic lookup.
+        parseScalarMeasurements(lines, result);
+
         if (!result.acData.isEmpty()) {
             result.output.add("AC analysis: " + result.acData.size() + " frequency points");
         } else {
@@ -255,6 +322,50 @@ public class NgSpiceRunner {
                 }
             }
         }
+    }
+
+    /**
+     * Scans for {@code name = value} scalar lines outside of tabular blocks,
+     * the form ngspice uses for {@code .meas} / {@code print} of a single
+     * value. Skips {@code v(...)} / {@code i(...)} (they belong to the per-
+     * frequency table) and skips lines that look like meta-output (any
+     * whitespace inside the key).
+     */
+    private static void parseScalarMeasurements(String[] lines, Result result) {
+        for (String rawLine : lines) {
+            String line = rawLine.trim();
+            if (!line.contains("=")) continue;
+            String[] parts = line.split("=", 2);
+            if (parts.length != 2) continue;
+            String keyOriginal = parts[0].trim();
+            String keyLower    = keyOriginal.toLowerCase();
+            String valStr      = parts[1].trim();
+            if (keyLower.startsWith("v(") || keyLower.startsWith("i(")) continue;
+            if (!isUserPrintKey(keyOriginal)) continue;
+            // First token of the value side must be a parseable number.
+            String[] valToks = valStr.split("\\s+");
+            if (valToks.length == 0) continue;
+            double val;
+            try { val = Double.parseDouble(valToks[0]); }
+            catch (NumberFormatException ignored) { continue; }
+            // Deduplicate by name — keep only the latest value.
+            result.extrasByName.put(keyLower, val);
+            // result.extras is built as a deduped, ordered display list at end.
+        }
+        // Rebuild result.extras from extrasByName preserving insertion order.
+        if (!result.extrasByName.isEmpty()) {
+            result.extras.clear();
+            for (Map.Entry<String, Double> e : result.extrasByName.entrySet()) {
+                result.extras.add(e.getKey() + " = " + formatScalar(e.getValue()));
+            }
+        }
+    }
+
+    private static String formatScalar(double v) {
+        double abs = Math.abs(v);
+        if (abs == 0) return "0";
+        if (abs >= 1e4 || abs < 1e-3) return String.format("%.6g", v);
+        return String.format("%.6f", v);
     }
 
     // -------------------------------------------------------------------------
@@ -304,9 +415,9 @@ public class NgSpiceRunner {
                     String hdr = headerToks[col].toLowerCase();
                     try {
                         double val = Double.parseDouble(tok[col]);
-                        if (hdr.startsWith("v(") || hdr.startsWith("i(")) {
-                            rowMap.put(hdr, val);
-                        }
+                        // Capture v/i probe columns AND any user-plot column
+                        // emitted by a `let`/`plot` directive in the .control block.
+                        rowMap.put(hdr, val);
                     } catch (NumberFormatException ignored) {}
                 }
             }

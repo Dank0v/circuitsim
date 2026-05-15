@@ -12,6 +12,7 @@
     "block.circuitsim.current_probe": "Current Probe",
     "block.circuitsim.simulate": "Simulate Block",
     "block.circuitsim.parametric": "Parametric Block",
+    "block.circuitsim.commands": "Commands Block",
     "block.circuitsim.ic_resistor3": "IC Resistor3",
     "block.circuitsim.ic_capacitor2": "IC Capacitor2",
     "block.circuitsim.ic_nmos4": "IC NMOS4",

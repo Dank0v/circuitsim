@@ -305,8 +305,11 @@ public class ComponentEditScreen
             BOX_H,
             Component.empty()
         );
-        box.setValue(initial);
+        // setMaxLength before setValue — EditBox defaults to 32 and setValue
+        // truncates to the current limit, which silently cuts long saved
+        // values when the dialog reopens.
         box.setMaxLength(maxLen);
+        box.setValue(initial);
         box.setBordered(true);
         box.setTextColor(FIELD_COLOR);
         addRenderableWidget(box);

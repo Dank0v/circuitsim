@@ -69,9 +69,30 @@ public class NetlistBuilder {
                                        List<CurrentProbeInfo> currentProbes,
                                        String                 pdkName,
                                        String                 pdkLibPath) {
+        return buildNetlist(components, probes, currentProbes, pdkName, pdkLibPath, List.of(), List.of());
+    }
+
+    public static String buildNetlist(List<CircuitComponent> components,
+                                       List<ProbeInfo>        probes,
+                                       List<CurrentProbeInfo> currentProbes,
+                                       String                 pdkName,
+                                       String                 pdkLibPath,
+                                       List<String>           userCommands) {
+        return buildNetlist(components, probes, currentProbes, pdkName, pdkLibPath, userCommands, List.of());
+    }
+
+    public static String buildNetlist(List<CircuitComponent> components,
+                                       List<ProbeInfo>        probes,
+                                       List<CurrentProbeInfo> currentProbes,
+                                       String                 pdkName,
+                                       String                 pdkLibPath,
+                                       List<String>           userCommands,
+                                       List<UserPlot>         userPlots) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim Netlist\n");
         appendPdkLib(sb, pdkName, pdkLibPath);
+
+        java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
@@ -84,31 +105,31 @@ public class NetlistBuilder {
         for (CircuitComponent comp : components) {
             String line;
             if (comp.block instanceof IcResistorBlock) {
-                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName);
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
-                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName);
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcNmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false, aliases);
             } else if (comp.block instanceof IcPmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
-                line = String.format("R%d %d %d %g", rIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
-                line = String.format("C%d %d %d %g", cIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("C%d %s %s %g", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %d %d %g", lIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 if ("AC".equalsIgnoreCase(comp.sourceType)) {
-                    line = String.format("V%d %d %d AC %g", vIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                    line = String.format("V%d %s %s AC %g", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                 } else {
-                    line = String.format("V%d %d %d DC %g", vIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                    line = String.format("V%d %s %s DC %g", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                 }
             } else if (comp.block instanceof VoltageSourceSinBlock) {
-                line = String.format("V%d %d %d DC 0", vIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB);
+                line = String.format("V%d %s %s DC 0", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else if (comp.block instanceof CurrentSourceBlock) {
-                line = String.format("I%d %d %d DC %g", iIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof DiodeBlock) {
-                line = String.format("D%d %d %d DMOD", dIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB);
+                line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
                 hasDiode = true;
             } else {
                 continue;
@@ -117,7 +138,7 @@ public class NetlistBuilder {
         }
 
         for (CurrentProbeInfo cp : currentProbes) {
-            sb.append(String.format("VM%d %d %d DC 0\n", vmCount++, cp.nodeA, cp.nodeB));
+            sb.append(String.format("VM%d %s %s DC 0\n", vmCount++, nodeRef(cp.nodeA, aliases), nodeRef(cp.nodeB, aliases)));
         }
 
         if (hasDiode) sb.append(".MODEL DMOD D\n");
@@ -127,12 +148,21 @@ public class NetlistBuilder {
 
         sb.append("  run\n");
 
+        appendUserPlotLets(sb, userPlots);
+
+        appendUserCommands(sb, userCommands);
+
         for (ProbeInfo probe : probes) {
-            sb.append(String.format("  print v(%d)\n", probe.node));
+            sb.append(String.format("  print v(%s)\n", probe.netName));
         }
         int vmIdx = 1;
         for (CurrentProbeInfo cp : currentProbes) {
             sb.append(String.format("  print i(VM%d)\n", vmIdx++));
+        }
+        if (userPlots != null) {
+            for (UserPlot p : userPlots) {
+                if (p != null && p.name != null) sb.append("  print ").append(p.name).append("\n");
+            }
         }
 
         sb.append(".endc\n");
@@ -159,9 +189,32 @@ public class NetlistBuilder {
                                          List<CurrentProbeInfo> currentProbes,
                                          double fStart, double fStop, int ptsPerDec,
                                          String pdkName, String pdkLibPath) {
+        return buildAcNetlist(components, probes, currentProbes, fStart, fStop, ptsPerDec,
+                pdkName, pdkLibPath, List.of(), List.of());
+    }
+
+    public static String buildAcNetlist(List<CircuitComponent> components,
+                                         List<ProbeInfo>        probes,
+                                         List<CurrentProbeInfo> currentProbes,
+                                         double fStart, double fStop, int ptsPerDec,
+                                         String pdkName, String pdkLibPath,
+                                         List<String> userCommands) {
+        return buildAcNetlist(components, probes, currentProbes, fStart, fStop, ptsPerDec,
+                pdkName, pdkLibPath, userCommands, List.of());
+    }
+
+    public static String buildAcNetlist(List<CircuitComponent> components,
+                                         List<ProbeInfo>        probes,
+                                         List<CurrentProbeInfo> currentProbes,
+                                         double fStart, double fStop, int ptsPerDec,
+                                         String pdkName, String pdkLibPath,
+                                         List<String> userCommands,
+                                         List<UserPlot> userPlots) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim AC Netlist\n");
         appendPdkLib(sb, pdkName, pdkLibPath);
+
+        java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
@@ -175,43 +228,43 @@ public class NetlistBuilder {
         for (CircuitComponent comp : components) {
             String line;
             if (comp.block instanceof IcResistorBlock) {
-                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName);
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
-                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName);
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcNmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false, aliases);
             } else if (comp.block instanceof IcPmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
-                line = String.format("R%d %d %d %g", rIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
-                line = String.format("C%d %d %d %g", cIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("C%d %s %s %g", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %d %d %g", lIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 if ("AC".equalsIgnoreCase(comp.sourceType)) {
-                    line = String.format("V%d %d %d DC 0 AC %g",
-                            vIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                    line = String.format("V%d %s %s DC 0 AC %g",
+                            vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                     hasAcSource = true;
                 } else {
-                    line = String.format("V%d %d %d DC %g AC 0",
-                            vIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                    line = String.format("V%d %s %s DC %g AC 0",
+                            vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                 }
             } else if (comp.block instanceof VoltageSourceSinBlock) {
-                line = String.format("V%d %d %d DC 0 AC %g",
-                        vIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("V%d %s %s DC 0 AC %g",
+                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                 hasAcSource = true;
             } else if (comp.block instanceof CurrentSourceBlock) {
                 if ("AC".equalsIgnoreCase(comp.sourceType)) {
-                    line = String.format("I%d %d %d DC 0 AC %g",
-                            iIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                    line = String.format("I%d %s %s DC 0 AC %g",
+                            iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                     hasAcSource = true;
                 } else {
-                    line = String.format("I%d %d %d DC %g AC 0",
-                            iIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                    line = String.format("I%d %s %s DC %g AC 0",
+                            iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                 }
             } else if (comp.block instanceof DiodeBlock) {
-                line = String.format("D%d %d %d DMOD", dIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB);
+                line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
                 hasDiode = true;
             } else {
                 continue;
@@ -222,14 +275,14 @@ public class NetlistBuilder {
         if (!hasAcSource && !components.isEmpty()) {
             for (CircuitComponent comp : components) {
                 if (comp.nodeA != 0) {
-                    sb.append(String.format("VACDEF %d 0 DC 0 AC 1\n", comp.nodeA));
+                    sb.append(String.format("VACDEF %s 0 DC 0 AC 1\n", nodeRef(comp.nodeA, aliases)));
                     break;
                 }
             }
         }
 
         for (CurrentProbeInfo cp : currentProbes) {
-            sb.append(String.format("VM%d %d %d DC 0\n", vmCount++, cp.nodeA, cp.nodeB));
+            sb.append(String.format("VM%d %s %s DC 0\n", vmCount++, nodeRef(cp.nodeA, aliases), nodeRef(cp.nodeB, aliases)));
         }
 
         if (hasDiode) sb.append(".MODEL DMOD D\n");
@@ -240,14 +293,24 @@ public class NetlistBuilder {
 
         sb.append("  run\n");
 
-        if (!probes.isEmpty() || !currentProbes.isEmpty()) {
+        appendUserPlotLets(sb, userPlots);
+
+        appendUserCommands(sb, userCommands);
+
+        boolean hasUserPlots = userPlots != null && !userPlots.isEmpty();
+        if (!probes.isEmpty() || !currentProbes.isEmpty() || hasUserPlots) {
             StringBuilder printLine = new StringBuilder("  print");
             for (ProbeInfo probe : probes) {
-                printLine.append(String.format(" v(%d)", probe.node));
+                printLine.append(String.format(" v(%s)", probe.netName));
             }
             int vmIdx2 = 1;
             for (int k = 0; k < currentProbes.size(); k++) {
                 printLine.append(String.format(" i(VM%d)", vmIdx2++));
+            }
+            if (hasUserPlots) {
+                for (UserPlot p : userPlots) {
+                    if (p != null && p.name != null) printLine.append(' ').append(p.name);
+                }
             }
             sb.append(printLine).append("\n");
         }
@@ -273,9 +336,32 @@ public class NetlistBuilder {
                                            List<CurrentProbeInfo> currentProbes,
                                            double tstep, double tstop,
                                            String pdkName, String pdkLibPath) {
+        return buildTranNetlist(components, probes, currentProbes, tstep, tstop,
+                pdkName, pdkLibPath, List.of(), List.of());
+    }
+
+    public static String buildTranNetlist(List<CircuitComponent> components,
+                                           List<ProbeInfo>        probes,
+                                           List<CurrentProbeInfo> currentProbes,
+                                           double tstep, double tstop,
+                                           String pdkName, String pdkLibPath,
+                                           List<String> userCommands) {
+        return buildTranNetlist(components, probes, currentProbes, tstep, tstop,
+                pdkName, pdkLibPath, userCommands, List.of());
+    }
+
+    public static String buildTranNetlist(List<CircuitComponent> components,
+                                           List<ProbeInfo>        probes,
+                                           List<CurrentProbeInfo> currentProbes,
+                                           double tstep, double tstop,
+                                           String pdkName, String pdkLibPath,
+                                           List<String> userCommands,
+                                           List<UserPlot> userPlots) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim TRAN Netlist\n");
         appendPdkLib(sb, pdkName, pdkLibPath);
+
+        java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
@@ -288,29 +374,29 @@ public class NetlistBuilder {
         for (CircuitComponent comp : components) {
             String line;
             if (comp.block instanceof IcResistorBlock) {
-                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName);
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
-                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName);
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcNmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false, aliases);
             } else if (comp.block instanceof IcPmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
-                line = String.format("R%d %d %d %g", rIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
-                line = String.format("C%d %d %d %g", cIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("C%d %s %s %g", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %d %d %g", lIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof VoltageSourceBlock) {
-                line = String.format("V%d %d %d DC %g", vIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("V%d %s %s DC %g", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof VoltageSourceSinBlock) {
                 double freq = (comp.frequency > 0) ? comp.frequency : 1.0;
-                line = String.format("V%d %d %d SIN(0 %g %g)",
-                        vIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value, freq);
+                line = String.format("V%d %s %s SIN(0 %g %g)",
+                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value, freq);
             } else if (comp.block instanceof CurrentSourceBlock) {
-                line = String.format("I%d %d %d DC %g", iIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB, comp.value);
+                line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof DiodeBlock) {
-                line = String.format("D%d %d %d DMOD", dIdx.assign(comp.componentNumber), comp.nodeA, comp.nodeB);
+                line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
                 hasDiode = true;
             } else {
                 continue;
@@ -319,7 +405,7 @@ public class NetlistBuilder {
         }
 
         for (CurrentProbeInfo cp : currentProbes) {
-            sb.append(String.format("VM%d %d %d DC 0\n", vmCount++, cp.nodeA, cp.nodeB));
+            sb.append(String.format("VM%d %s %s DC 0\n", vmCount++, nodeRef(cp.nodeA, aliases), nodeRef(cp.nodeB, aliases)));
         }
 
         if (hasDiode) sb.append(".MODEL DMOD D\n");
@@ -330,14 +416,24 @@ public class NetlistBuilder {
 
         sb.append("  run\n");
 
-        if (!probes.isEmpty() || !currentProbes.isEmpty()) {
+        appendUserPlotLets(sb, userPlots);
+
+        appendUserCommands(sb, userCommands);
+
+        boolean hasUserPlots = userPlots != null && !userPlots.isEmpty();
+        if (!probes.isEmpty() || !currentProbes.isEmpty() || hasUserPlots) {
             StringBuilder printLine = new StringBuilder("  print");
             for (ProbeInfo probe : probes) {
-                printLine.append(String.format(" v(%d)", probe.node));
+                printLine.append(String.format(" v(%s)", probe.netName));
             }
             int vmIdx = 1;
             for (int k = 0; k < currentProbes.size(); k++) {
                 printLine.append(String.format(" i(VM%d)", vmIdx++));
+            }
+            if (hasUserPlots) {
+                for (UserPlot p : userPlots) {
+                    if (p != null && p.name != null) printLine.append(' ').append(p.name);
+                }
             }
             sb.append(printLine).append("\n");
         }
@@ -364,6 +460,86 @@ public class NetlistBuilder {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Net aliasing — voltage probe labels become ngspice node names
+    // -------------------------------------------------------------------------
+
+    /**
+     * Sanitises a free-form probe label into something ngspice will accept as
+     * a node name: lowercased, only {@code [a-z0-9_]}; a leading underscore is
+     * inserted if the result starts with a digit. Returns the empty string
+     * when no usable characters remain.
+     */
+    public static String sanitizeNodeName(String s) {
+        if (s == null) return "";
+        StringBuilder out = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (Character.isLetterOrDigit(c) || c == '_') {
+                out.append(Character.toLowerCase(c));
+            } else {
+                out.append('_');
+            }
+        }
+        // Strip leading/trailing underscores but keep interior ones
+        while (out.length() > 0 && out.charAt(0) == '_') out.deleteCharAt(0);
+        while (out.length() > 0 && out.charAt(out.length() - 1) == '_') out.deleteCharAt(out.length() - 1);
+        if (out.length() == 0) return "";
+        if (Character.isDigit(out.charAt(0))) out.insert(0, '_');
+        return out.toString();
+    }
+
+    /**
+     * Builds a node→alias map from the netName of each {@link ProbeInfo}. Only
+     * probes whose {@code netName} differs from the stringified node id (i.e.
+     * the user actually set a label that became a non-trivial alias) are kept.
+     * Node 0 (ground) is never aliased.
+     */
+    public static java.util.Map<Integer, String> aliasesFromProbes(List<ProbeInfo> probes) {
+        java.util.Map<Integer, String> aliases = new java.util.HashMap<>();
+        if (probes == null) return aliases;
+        for (ProbeInfo p : probes) {
+            if (p.node == 0) continue;
+            if (p.netName == null) continue;
+            if (p.netName.equals(Integer.toString(p.node))) continue;
+            aliases.putIfAbsent(p.node, p.netName);
+        }
+        return aliases;
+    }
+
+    /** Returns the alias for {@code n} if one exists, otherwise the stringified integer. */
+    private static String nodeRef(int n, java.util.Map<Integer, String> aliases) {
+        if (aliases != null) {
+            String s = aliases.get(n);
+            if (s != null) return s;
+        }
+        return Integer.toString(n);
+    }
+
+    /** Emits each user-supplied command as its own indented line inside .control. */
+    private static void appendUserCommands(StringBuilder sb, List<String> userCommands) {
+        if (userCommands == null) return;
+        for (String cmd : userCommands) {
+            if (cmd == null) continue;
+            String trimmed = cmd.strip();
+            if (trimmed.isEmpty()) continue;
+            sb.append("  ").append(trimmed).append("\n");
+        }
+    }
+
+    /**
+     * Emits a {@code let NAME = EXPR} line for each user plot. Called after
+     * {@code run} but before raw user commands so plot-defined vectors are
+     * available for any subsequent {@code print}/{@code show}/etc.
+     */
+    private static void appendUserPlotLets(StringBuilder sb, List<UserPlot> plots) {
+        if (plots == null) return;
+        for (UserPlot p : plots) {
+            if (p == null || p.name == null || p.expr == null) continue;
+            sb.append("  let ").append(p.name).append(" = ").append(p.expr).append("\n");
+        }
+    }
+
 
     /**
      * Formats a sky130A resistor instance line.
@@ -381,7 +557,8 @@ public class NetlistBuilder {
      * The model prefix is determined by the active PDK (e.g. sky130_fd_pr__ for sky130A).
      * Resistance formula for display (W, L in µm): R = (378.3 + 317.17*L) / W / mult
      */
-    private static String formatIcResistor(int idx, CircuitComponent comp, String pdkName) {
+    private static String formatIcResistor(int idx, CircuitComponent comp, String pdkName,
+                                            java.util.Map<Integer, String> aliases) {
         String prefix = pdkModelPrefix(pdkName);
         String name   = comp.modelName.isBlank() ? "res_high_po" : comp.modelName;
         String model  = prefix + name;
@@ -390,8 +567,9 @@ public class NetlistBuilder {
         double mult = comp.multParam > 0 ? comp.multParam : 1.0;
         // 3-pin subcircuit: p+ p- bulk
         int bulk = comp.nodeC >= 0 ? comp.nodeC : 0;
-        return String.format("XR%d %d %d %d %s W=%g L=%g mult=%g",
-                idx, comp.nodeA, comp.nodeB, bulk, model, w, l, mult);
+        return String.format("XR%d %s %s %s %s W=%g L=%g mult=%g",
+                idx, nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                nodeRef(bulk, aliases), model, w, l, mult);
     }
 
     /**
@@ -401,7 +579,8 @@ public class NetlistBuilder {
      * For PMOS: nodeA=source(front), nodeB=drain(back), nodeC=bulk(right), nodeD=gate(left).
      * Derived area/perimeter params computed from W, L, NF per the sky130 HDK formulas.
      */
-    private static String formatIcMosfet(int idx, CircuitComponent comp, String pdkName, boolean isPmos) {
+    private static String formatIcMosfet(int idx, CircuitComponent comp, String pdkName, boolean isPmos,
+                                          java.util.Map<Integer, String> aliases) {
         String prefix = pdkModelPrefix(pdkName);
         String defaultModel = isPmos ? "pfet_01v8" : "nfet_01v8";
         String name  = comp.modelName.isBlank() ? defaultModel : comp.modelName;
@@ -430,8 +609,11 @@ public class NetlistBuilder {
         double nrs  = hdif / w;
 
         return String.format(
-            "XM%d %d %d %d %d %s%n+ L=%g W=%g NF=%d%n+ AD=%g AS=%g%n+ PD=%g PS=%g%n+ NRD=%g NRS=%g%n+ SA=0 SB=0 SD=0 MULT=%g",
-            idx, drain, gate, src, bulk, model,
+            "XM%d %s %s %s %s %s%n+ L=%g W=%g NF=%d%n+ AD=%g AS=%g%n+ PD=%g PS=%g%n+ NRD=%g NRS=%g%n+ SA=0 SB=0 SD=0 MULT=%g",
+            idx,
+            nodeRef(drain, aliases), nodeRef(gate, aliases),
+            nodeRef(src, aliases),   nodeRef(bulk, aliases),
+            model,
             l, w, nf,
             ad, as_,
             pd, ps,
@@ -441,15 +623,17 @@ public class NetlistBuilder {
     }
 
     /** Formats a 2-pin IC capacitor subcircuit line. */
-    private static String formatIcCapacitor(int idx, CircuitComponent comp, String pdkName) {
+    private static String formatIcCapacitor(int idx, CircuitComponent comp, String pdkName,
+                                             java.util.Map<Integer, String> aliases) {
         String prefix = pdkModelPrefix(pdkName);
         String name   = comp.modelName.isBlank() ? "cap_mim_m3_1" : comp.modelName;
         String model  = prefix + name;
         double w  = comp.wParam    > 0 ? comp.wParam    : 1.0;
         double l  = comp.lParam    > 0 ? comp.lParam    : 1.0;
         double mf = comp.multParam > 0 ? comp.multParam : 1.0;
-        return String.format("XC%d %d %d %s W=%g L=%g MF=%g m=%g",
-                idx, comp.nodeA, comp.nodeB, model, w, l, mf, mf);
+        return String.format("XC%d %s %s %s W=%g L=%g MF=%g m=%g",
+                idx, nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                model, w, l, mf, mf);
     }
 
     /**
@@ -571,9 +755,26 @@ public class NetlistBuilder {
     }
 
     public static class ProbeInfo {
+        /** Numeric node id assigned during graph extraction. Always the canonical integer. */
         public final int    node;
+        /** Human-readable label shown in chat/book/UI. */
         public final String label;
-        public ProbeInfo(int node, String label) { this.node = node; this.label = label; }
+        /**
+         * Name used in the netlist and ngspice output for this node. Either the
+         * sanitized probe label (e.g. {@code "vout"}) when the user has set one
+         * and aliasing is unique, or the stringified integer node id.
+         */
+        public final String netName;
+
+        public ProbeInfo(int node, String label) {
+            this(node, label, Integer.toString(node));
+        }
+
+        public ProbeInfo(int node, String label, String netName) {
+            this.node    = node;
+            this.label   = label;
+            this.netName = netName == null || netName.isEmpty() ? Integer.toString(node) : netName;
+        }
     }
 
     public static class CurrentProbeInfo {
@@ -582,6 +783,34 @@ public class NetlistBuilder {
         public final String label;
         public CurrentProbeInfo(int nodeA, int nodeB, String label) {
             this.nodeA = nodeA; this.nodeB = nodeB; this.label = label;
+        }
+    }
+
+    /**
+     * A user-defined plot expression coming from a {@code plot NAME = EXPR}
+     * directive in a Commands block. Each plot results in a {@code let NAME = EXPR}
+     * line plus an entry in the {@code print} column list, so the value is
+     * available both as a scalar (OP) and as a graphable series (AC/TRAN).
+     */
+    public static class UserPlot {
+        /** Sanitised ngspice vector name (lowercase, [a-z0-9_]). */
+        public final String name;
+        /** The right-hand-side expression as the user typed it. */
+        public final String expr;
+        /** Display label shown in chat/book/graph legends. */
+        public final String label;
+        /** Y-axis unit for the plot ("" = unitless, "V", "A", "dB", "rad", etc.). */
+        public final String unit;
+
+        public UserPlot(String name, String expr, String label) {
+            this(name, expr, label, "");
+        }
+
+        public UserPlot(String name, String expr, String label, String unit) {
+            this.name  = name;
+            this.expr  = expr;
+            this.label = label;
+            this.unit  = unit == null ? "" : unit;
         }
     }
 }

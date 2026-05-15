@@ -33,6 +33,7 @@ public class ModCreativeTabs {
                                 output.accept(ModItems.CURRENT_PROBE.get());
                                 output.accept(ModItems.SIMULATE.get());
                                 output.accept(ModItems.PARAMETRIC.get());
+                                output.accept(ModItems.COMMANDS.get());
                                 output.accept(ModItems.IC_RESISTOR.get());
                                 output.accept(ModItems.IC_CAPACITOR.get());
                                 output.accept(ModItems.IC_NMOS4.get());

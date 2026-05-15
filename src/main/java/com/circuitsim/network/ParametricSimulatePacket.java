@@ -161,7 +161,7 @@ public class ParametricSimulatePacket {
 
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                 msg(player, "  [" + probe.label + "]: "
-                        + result.getNodeVoltage(probe.node), ChatFormatting.AQUA);
+                        + result.getNodeVoltage(probe.netName), ChatFormatting.AQUA);
             }
             int vmIdx = 1;
             for (NetlistBuilder.CurrentProbeInfo cp : extraction.currentProbes) {

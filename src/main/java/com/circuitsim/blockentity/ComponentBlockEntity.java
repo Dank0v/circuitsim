@@ -39,6 +39,9 @@ public class ComponentBlockEntity extends BlockEntity {
     private String simParam2   = "1Meg";
     private String simParam3   = "10";
 
+    // commands block: free-form ngspice control commands, one per line
+    private String commands    = "";
+
     public ComponentBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.COMPONENT_BE.get(), pos, state);
     }
@@ -59,6 +62,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.IC_CAPACITOR.get())         return "ic_capacitor2";
         if (block == ModBlocks.IC_NMOS4.get())             return "ic_nmos4";
         if (block == ModBlocks.IC_PMOS4.get())             return "ic_pmos4";
+        if (block == ModBlocks.COMMANDS.get())             return "commands";
         return "unknown";
     }
 
@@ -99,6 +103,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setSimParam2(String v)       { this.simParam2 = v; setChanged(); }
     public String getSimParam3()             { return simParam3; }
     public void setSimParam3(String v)       { this.simParam3 = v; setChanged(); }
+    public String getCommands()              { return commands; }
+    public void setCommands(String c)        { this.commands = c == null ? "" : c; setChanged(); }
 
     @Override
     protected void saveAdditional(CompoundTag tag) {
@@ -120,6 +126,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simParam1",   simParam1);
         tag.putString("simParam2",   simParam2);
         tag.putString("simParam3",   simParam3);
+        tag.putString("commands",    commands);
     }
 
     @Override
@@ -142,6 +149,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("simParam1"))   simParam1   = tag.getString("simParam1");
         if (tag.contains("simParam2"))   simParam2   = tag.getString("simParam2");
         if (tag.contains("simParam3"))   simParam3   = tag.getString("simParam3");
+        if (tag.contains("commands"))    commands    = tag.getString("commands");
     }
 
     @Override
@@ -164,6 +172,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simParam1",   simParam1);
         tag.putString("simParam2",   simParam2);
         tag.putString("simParam3",   simParam3);
+        tag.putString("commands",    commands);
         return tag;
     }
 

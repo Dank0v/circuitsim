@@ -115,8 +115,11 @@ public class ParametricEditScreen extends AbstractContainerScreen<ParametricEdit
                     fieldW, BOX_H,
                     Component.empty()
             );
-            f.box.setValue(f.name.equals(storedParam) ? storedSweep : "");
+            // setMaxLength before setValue — EditBox defaults to 32 and
+            // setValue truncates to the current limit; long sweep strings
+            // would otherwise be silently cut when the dialog reopens.
             f.box.setMaxLength(256);
+            f.box.setValue(f.name.equals(storedParam) ? storedSweep : "");
             f.box.setBordered(true);
             f.box.setTextColor(FIELD_COLOR);
             addRenderableWidget(f.box);

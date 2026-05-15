@@ -21,6 +21,7 @@ import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -127,6 +128,11 @@ public class SimulatePacket {
             ChatFormatting.GOLD
         );
 
+        // Extraction must happen on the main thread (Level reads aren't safe
+        // off-thread). Everything after this — netlist building, the ngspice
+        // subprocess, and result parsing — runs on a background worker so the
+        // server thread stays responsive (otherwise sky130 sweeps blow past the
+        // 60s watchdog and trigger "Can't keep up" ticks).
         CircuitExtractor.ExtractionResult extraction = CircuitExtractor.extract(
             level,
             pos
@@ -140,61 +146,94 @@ public class SimulatePacket {
             return;
         }
 
-        List<String> bookLines = new ArrayList<>();
-        List<Component> graphPageComponents = new ArrayList<>();
-
-        String timestamp = LocalDateTime.now().format(
+        final MinecraftServer server = player.getServer();
+        final String timestamp = LocalDateTime.now().format(
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
         );
-        bookLines.add("CircuitSim Results (" + analysis + ")");
-        bookLines.add(timestamp);
-        bookLines.add("---");
 
-        if (!extraction.parametricBlocks.isEmpty()) {
-            for (CircuitExtractor.ParametricInfo param : extraction.parametricBlocks) {
-                runParametricSweep(
-                    player,
-                    level,
-                    extraction,
-                    param,
-                    bookLines,
-                    graphPageComponents
-                );
+        Thread worker = new Thread(
+            () -> runSimulationOffThread(player, server, extraction, timestamp),
+            "CircuitSim-Sim"
+        );
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Body of the simulation. Runs on a dedicated worker thread. Anything that
+     * touches player state (chat, inventory, network) hops back to the main
+     * thread via {@code msg(...)} (already thread-safe) or
+     * {@code server.execute(...)} for the final book / output-screen handoff.
+     */
+    private void runSimulationOffThread(
+        ServerPlayer player,
+        MinecraftServer server,
+        CircuitExtractor.ExtractionResult extraction,
+        String timestamp
+    ) {
+        try {
+            List<String> bookLines = new ArrayList<>();
+            List<Component> graphPageComponents = new ArrayList<>();
+
+            bookLines.add("CircuitSim Results (" + analysis + ")");
+            bookLines.add(timestamp);
+            bookLines.add("---");
+
+            if (!extraction.parametricBlocks.isEmpty()) {
+                for (CircuitExtractor.ParametricInfo param : extraction.parametricBlocks) {
+                    runParametricSweep(
+                        player,
+                        extraction,
+                        param,
+                        bookLines,
+                        graphPageComponents
+                    );
+                }
+            } else {
+                switch (analysis) {
+                    case "AC" -> runAcSimulation(
+                        player,
+                        extraction,
+                        bookLines,
+                        graphPageComponents
+                    );
+                    case "TRAN" -> runTranSimulation(
+                        player,
+                        extraction,
+                        bookLines,
+                        graphPageComponents
+                    );
+                    default -> runOpSimulation(player, extraction, bookLines);
+                }
             }
-        } else {
-            switch (analysis) {
-                case "AC" -> runAcSimulation(
-                    player,
-                    extraction,
-                    bookLines,
-                    graphPageComponents
-                );
-                case "TRAN" -> runTranSimulation(
-                    player,
-                    extraction,
-                    bookLines,
-                    graphPageComponents
-                );
-                default -> runOpSimulation(player, extraction, bookLines);
+
+            // Inventory mutation must occur on the main server thread.
+            // Auto-opening the output viewer is no longer done here — every
+            // sim path emits its own clickable "[Open output viewer]" chat
+            // link via emitOutputViewerLink so the player decides when to
+            // open the screen.
+            if (server != null) {
+                server.execute(() -> {
+                    try {
+                        giveResultBook(
+                            player,
+                            analysis + " " + timestamp,
+                            bookLines,
+                            graphPageComponents
+                        );
+                    } catch (Throwable t) {
+                        com.circuitsim.CircuitSimMod.LOGGER.error(
+                                "giveResultBook failed", t);
+                        msg(player, "Result book failed: " + t.getClass().getSimpleName()
+                                + " — " + (t.getMessage() == null ? "" : t.getMessage()),
+                                ChatFormatting.RED);
+                    }
+                });
             }
+        } catch (Throwable t) {
+            String detail = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
+            msg(player, "Simulation crashed: " + detail, ChatFormatting.RED);
         }
-
-        giveResultBook(
-            player,
-            analysis + " " + timestamp,
-            bookLines,
-            graphPageComponents
-        );
-
-        // Open the dedicated output viewer on the client so the player can
-        // browse / search the full ngspice output instead of scrolling chat.
-        ModMessages.sendToPlayer(
-            player,
-            new SimulationOutputPacket(
-                "CircuitSim Output (" + analysis + " " + timestamp + ")",
-                bookLines
-            )
-        );
     }
 
     // -------------------------------------------------------------------------
@@ -211,7 +250,9 @@ public class SimulatePacket {
             extraction.probes,
             extraction.currentProbes,
             pdkName,
-            pdkLibPath
+            pdkLibPath,
+            extraction.userCommands,
+            extraction.userPlots
         );
         printNetlist(player, netlist, bookLines);
 
@@ -232,14 +273,19 @@ public class SimulatePacket {
             msg(player, line, ChatFormatting.GREEN);
             bookLines.add(line.trim());
         }
+        for (String extra : result.extras) {
+            String line = "  " + extra;
+            msg(player, line, ChatFormatting.AQUA);
+            bookLines.add(line);
+        }
         for (NetlistBuilder.ProbeInfo probe : extraction.probes) {
             String line =
                 "Probe [" +
                 probe.label +
                 "] Node " +
-                probe.node +
+                probe.netName +
                 ": " +
-                result.getNodeVoltage(probe.node);
+                result.getNodeVoltage(probe.netName);
             msg(player, line, ChatFormatting.AQUA);
             bookLines.add(line);
         }
@@ -253,6 +299,16 @@ public class SimulatePacket {
             msg(player, line, ChatFormatting.LIGHT_PURPLE);
             bookLines.add(line);
         }
+
+        // OP runs have no sweep, but we still cache an output-only session so
+        // the player can click "[Open output viewer]" in chat to browse the
+        // netlist + values in the searchable screen.
+        int sessionId = ParametricResultCache.store(
+            new ParametricResultCache.ResultSet(
+                "OP", "", java.util.Collections.emptyList(),
+                new LinkedHashMap<>(), new LinkedHashMap<>(), false));
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (OP)");
     }
 
     // -------------------------------------------------------------------------
@@ -277,7 +333,9 @@ public class SimulatePacket {
             fStop,
             ptsPerDec,
             pdkName,
-            pdkLibPath
+            pdkLibPath,
+            extraction.userCommands,
+            extraction.userPlots
         );
         printNetlist(player, netlist, bookLines);
 
@@ -320,7 +378,7 @@ public class SimulatePacket {
             bookLines.add("  f=" + fLbl);
             Map<String, Double> vals = result.acData.get(f);
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
-                String key = "v(" + probe.node + ")_mag";
+                String key = "v(" + probe.netName + ")_mag";
                 Double mag = vals.get(key);
                 String line =
                     "    [" +
@@ -334,15 +392,41 @@ public class SimulatePacket {
             }
         }
 
+        // Scalar measurements (e.g. .meas dc_gain / gbw / pm). These come from
+        // the user's Commands block via raw `meas` / `print` ngspice lines.
+        if (!result.extras.isEmpty()) {
+            msg(player, "--- Measurements ---", ChatFormatting.LIGHT_PURPLE);
+            bookLines.add("=== Measurements ===");
+            for (String extra : result.extras) {
+                String line = "  " + extra;
+                msg(player, line, ChatFormatting.LIGHT_PURPLE);
+                bookLines.add(line);
+            }
+        }
+
+        // Diagnostic dump of raw ngspice stdout, so users running `meas` /
+        // `print` can see exactly what ngspice produced even if our parser
+        // didn't pick the values up. Goes only into the result book / output
+        // viewer to avoid flooding chat.
+        if (result.rawStdout != null && !result.rawStdout.isEmpty()) {
+            bookLines.add("=== ngspice raw output ===");
+            for (String l : result.rawStdout.split("\n")) {
+                String s = l.replace("\r", "");
+                if (s.isEmpty()) continue;
+                bookLines.add("  " + s);
+            }
+        }
+
         Map<String, List<Double>> voltageData = new LinkedHashMap<>();
         Map<String, List<Double>> currentData = new LinkedHashMap<>();
+        Map<String, String>       probeUnits  = new LinkedHashMap<>();
 
         for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
             List<Double> mags = new ArrayList<>();
             for (double f : freqAxis) {
                 Map<String, Double> vals = result.acData.get(f);
                 Double v =
-                    vals != null ? vals.get("v(" + probe.node + ")_mag") : null;
+                    vals != null ? vals.get("v(" + probe.netName + ")_mag") : null;
                 mags.add(v != null ? v : 0.0);
             }
             voltageData.put(probe.label, mags);
@@ -360,6 +444,18 @@ public class SimulatePacket {
             }
             currentData.put(cp.label, mags);
         }
+        // Each `plot NAME = EXPR` directive contributes one extra series.
+        for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+            List<Double> mags = new ArrayList<>();
+            String key = plot.name + "_mag";
+            for (double f : freqAxis) {
+                Map<String, Double> vals = result.acData.get(f);
+                Double v = vals != null ? vals.get(key) : null;
+                mags.add(v != null ? v : 0.0);
+            }
+            voltageData.put(plot.label, mags);
+            probeUnits.put(plot.label, plot.unit);
+        }
 
         int sessionId = ParametricResultCache.store(
             new ParametricResultCache.ResultSet(
@@ -368,6 +464,7 @@ public class SimulatePacket {
                 freqAxis,
                 voltageData,
                 currentData,
+                probeUnits,
                 true
             )
         );
@@ -376,8 +473,11 @@ public class SimulatePacket {
             sessionId,
             voltageData,
             currentData,
+            probeUnits,
             graphPageComponents
         );
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (AC)");
     }
 
     // -------------------------------------------------------------------------
@@ -404,7 +504,9 @@ public class SimulatePacket {
             tstep,
             tstop,
             pdkName,
-            pdkLibPath
+            pdkLibPath,
+            extraction.userCommands,
+            extraction.userPlots
         );
         printNetlist(player, netlist, bookLines);
 
@@ -447,7 +549,7 @@ public class SimulatePacket {
             bookLines.add("  t=" + tLbl);
             Map<String, Double> vals = result.tranData.get(t);
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
-                String key = "v(" + probe.node + ")";
+                String key = "v(" + probe.netName + ")";
                 Double v = vals != null ? vals.get(key) : null;
                 String line =
                     "    [" +
@@ -463,13 +565,14 @@ public class SimulatePacket {
 
         Map<String, List<Double>> voltageData = new LinkedHashMap<>();
         Map<String, List<Double>> currentData = new LinkedHashMap<>();
+        Map<String, String>       probeUnits  = new LinkedHashMap<>();
 
         for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
             List<Double> vals = new ArrayList<>();
             for (double t : timeAxis) {
                 Map<String, Double> row = result.tranData.get(t);
                 Double v =
-                    row != null ? row.get("v(" + probe.node + ")") : null;
+                    row != null ? row.get("v(" + probe.netName + ")") : null;
                 vals.add(v != null ? v : 0.0);
             }
             voltageData.put(probe.label, vals);
@@ -487,6 +590,17 @@ public class SimulatePacket {
             }
             currentData.put(cp.label, vals);
         }
+        // Each `plot NAME = EXPR` directive contributes one extra series.
+        for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+            List<Double> vals = new ArrayList<>();
+            for (double t : timeAxis) {
+                Map<String, Double> row = result.tranData.get(t);
+                Double v = row != null ? row.get(plot.name) : null;
+                vals.add(v != null ? v : 0.0);
+            }
+            voltageData.put(plot.label, vals);
+            probeUnits.put(plot.label, plot.unit);
+        }
 
         int sessionId = ParametricResultCache.store(
             new ParametricResultCache.ResultSet(
@@ -495,6 +609,7 @@ public class SimulatePacket {
                 timeAxis,
                 voltageData,
                 currentData,
+                probeUnits,
                 false
             )
         );
@@ -503,8 +618,11 @@ public class SimulatePacket {
             sessionId,
             voltageData,
             currentData,
+            probeUnits,
             graphPageComponents
         );
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (TRAN)");
     }
 
     // -------------------------------------------------------------------------
@@ -513,14 +631,13 @@ public class SimulatePacket {
 
     private void runParametricSweep(
         ServerPlayer player,
-        Level level,
         CircuitExtractor.ExtractionResult extraction,
         CircuitExtractor.ParametricInfo param,
         List<String> bookLines,
         List<Component> graphPageComponents
     ) {
         BlockPos targetPos = param.targetPos;
-        Block targetBlock = level.getBlockState(targetPos).getBlock();
+        Block targetBlock = param.targetBlock;
 
         if (!isParametrizable(targetBlock)) {
             msg(
@@ -560,7 +677,7 @@ public class SimulatePacket {
         if (sweepValues.isEmpty()) {
             msg(
                 player,
-                "No sweep values — right-click the Parametric block to set them.",
+                "No sweep values - right-click the Parametric block to set them.",
                 ChatFormatting.RED
             );
             return;
@@ -645,13 +762,19 @@ public class SimulatePacket {
         List<Component> graphPageComponents
     ) {
         List<Double> validSweep = new ArrayList<>();
-        Map<String, List<Double>> voltData = new LinkedHashMap<>();
-        Map<String, List<Double>> currData = new LinkedHashMap<>();
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
         for (NetlistBuilder.ProbeInfo p : effectiveProbes)
             voltData.put(p.label, new ArrayList<>());
         for (NetlistBuilder.CurrentProbeInfo c : cpList)
             currData.put(c.label, new ArrayList<>());
+        for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+            voltData.put(plot.label, new ArrayList<>());
+            probeUnits.put(plot.label, plot.unit);
+        }
 
+        boolean firstIteration = true;
         for (double val : sweepValues) {
             String secHdr =
                 "--- " +
@@ -661,16 +784,23 @@ public class SimulatePacket {
             msg(player, secHdr, ChatFormatting.YELLOW);
             bookLines.add(secHdr);
 
-            NgSpiceRunner.Result result = NgSpiceRunner.run(
-                NetlistBuilder.buildNetlist(
-                    swapParam(extraction.components, targetPos, paramName, val),
-                    effectiveProbes,
-                    cpList,
-                    pdkName,
-                    pdkLibPath
-                ),
-                ngBehavior
+            String netlist = NetlistBuilder.buildNetlist(
+                swapParam(extraction.components, targetPos, paramName, val),
+                effectiveProbes,
+                cpList,
+                pdkName,
+                pdkLibPath,
+                extraction.userCommands,
+                extraction.userPlots
             );
+            if (firstIteration) {
+                appendNetlistToBook(bookLines, netlist,
+                        "Netlist (iter 1 of " + sweepValues.size() + ", "
+                                + paramName + "=" + ComponentEditScreen.formatValue(val)
+                                + unit(targetBlock, paramName) + ")");
+                firstIteration = false;
+            }
+            NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
 
             if (result.error != null) {
                 String first = result.error
@@ -698,10 +828,10 @@ public class SimulatePacket {
                     "  [" +
                     probe.label +
                     "]: " +
-                    result.getNodeVoltage(probe.node);
+                    result.getNodeVoltage(probe.netName);
                 msg(player, line, ChatFormatting.AQUA);
                 bookLines.add(line);
-                Double v = result.values.get("v(" + probe.node + ")");
+                Double v = result.values.get("v(" + probe.netName + ")");
                 voltData.get(probe.label).add(v != null ? v : 0.0);
             }
             for (int k = 0; k < cpList.size(); k++) {
@@ -715,6 +845,10 @@ public class SimulatePacket {
                 Double i = result.values.get("i(vm" + (k + 1) + ")");
                 currData.get(cpList.get(k).label).add(i != null ? i : 0.0);
             }
+            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                Double v = result.extrasByName.get(plot.name);
+                voltData.get(plot.label).add(v != null ? v : 0.0);
+            }
         }
 
         if (validSweep.isEmpty()) return;
@@ -725,6 +859,7 @@ public class SimulatePacket {
                 validSweep,
                 voltData,
                 currData,
+                probeUnits,
                 false
             )
         );
@@ -733,8 +868,11 @@ public class SimulatePacket {
             sessionId,
             voltData,
             currData,
+            probeUnits,
             graphPageComponents
         );
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (parametric " + analysis + ")");
     }
 
     // --- Parametric .AC ---
@@ -752,9 +890,11 @@ public class SimulatePacket {
         List<Component> graphPageComponents
     ) {
         List<Double> freqAxis = null;
-        Map<String, List<Double>> voltData = new LinkedHashMap<>();
-        Map<String, List<Double>> currData = new LinkedHashMap<>();
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
 
+        boolean firstIteration = true;
         for (double val : sweepValues) {
             String secHdr =
                 "--- " +
@@ -772,8 +912,17 @@ public class SimulatePacket {
                 fStop,
                 ptsPerDec,
                 pdkName,
-                pdkLibPath
+                pdkLibPath,
+                extraction.userCommands,
+                extraction.userPlots
             );
+            if (firstIteration) {
+                appendNetlistToBook(bookLines, netlist,
+                        "Netlist (iter 1 of " + sweepValues.size() + ", "
+                                + paramName + "=" + ComponentEditScreen.formatValue(val)
+                                + unit(targetBlock, paramName) + ")");
+                firstIteration = false;
+            }
 
             NgSpiceRunner.Result result = NgSpiceRunner.run(
                 netlist,
@@ -803,7 +952,7 @@ public class SimulatePacket {
                 "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName);
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                 String seriesName = probe.label + stepSuffix;
-                String vKey = "v(" + probe.node + ")_mag";
+                String vKey = "v(" + probe.netName + ")_mag";
                 List<Double> mags = new ArrayList<>();
                 for (double f : sortedFreqs) {
                     Map<String, Double> vals = result.acData.get(f);
@@ -823,6 +972,27 @@ public class SimulatePacket {
                 }
                 currData.put(seriesName, mags);
             }
+            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                String seriesName = plot.label + stepSuffix;
+                String key = plot.name + "_mag";
+                List<Double> mags = new ArrayList<>();
+                for (double f : sortedFreqs) {
+                    Map<String, Double> vals = result.acData.get(f);
+                    Double m = vals != null ? vals.get(key) : null;
+                    mags.add(m != null ? m : 0.0);
+                }
+                voltData.put(seriesName, mags);
+                probeUnits.put(seriesName, plot.unit);
+            }
+            // Per-iteration scalar measurements (.meas dc_gain / gbw / pm).
+            if (!result.extras.isEmpty()) {
+                bookLines.add("  Measurements:");
+                for (String extra : result.extras) {
+                    String line = "    " + extra;
+                    msg(player, line, ChatFormatting.LIGHT_PURPLE);
+                    bookLines.add(line);
+                }
+            }
         }
 
         if (freqAxis == null || freqAxis.isEmpty()) return;
@@ -838,6 +1008,7 @@ public class SimulatePacket {
                 freqAxis,
                 voltData,
                 currData,
+                probeUnits,
                 true
             )
         );
@@ -846,8 +1017,11 @@ public class SimulatePacket {
             sessionId,
             voltData,
             currData,
+            probeUnits,
             graphPageComponents
         );
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (parametric " + analysis + ")");
     }
 
     // --- Parametric .TRAN ---
@@ -868,9 +1042,11 @@ public class SimulatePacket {
         double tstop = fStop;
 
         List<Double> timeAxis = null;
-        Map<String, List<Double>> voltData = new LinkedHashMap<>();
-        Map<String, List<Double>> currData = new LinkedHashMap<>();
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
 
+        boolean firstIteration = true;
         for (double val : sweepValues) {
             String secHdr =
                 "--- " +
@@ -887,8 +1063,17 @@ public class SimulatePacket {
                 tstep,
                 tstop,
                 pdkName,
-                pdkLibPath
+                pdkLibPath,
+                extraction.userCommands,
+                extraction.userPlots
             );
+            if (firstIteration) {
+                appendNetlistToBook(bookLines, netlist,
+                        "Netlist (iter 1 of " + sweepValues.size() + ", "
+                                + paramName + "=" + ComponentEditScreen.formatValue(val)
+                                + unit(targetBlock, paramName) + ")");
+                firstIteration = false;
+            }
 
             NgSpiceRunner.Result result = NgSpiceRunner.run(
                 netlist,
@@ -920,7 +1105,7 @@ public class SimulatePacket {
                 "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName);
             for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                 String seriesName = probe.label + stepSuffix;
-                String vKey = "v(" + probe.node + ")";
+                String vKey = "v(" + probe.netName + ")";
                 List<Double> vals = new ArrayList<>();
                 for (double t : sortedTimes) {
                     Map<String, Double> row = result.tranData.get(t);
@@ -940,6 +1125,17 @@ public class SimulatePacket {
                 }
                 currData.put(seriesName, vals);
             }
+            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                String seriesName = plot.label + stepSuffix;
+                List<Double> vals = new ArrayList<>();
+                for (double t : sortedTimes) {
+                    Map<String, Double> row = result.tranData.get(t);
+                    Double v = row != null ? row.get(plot.name) : null;
+                    vals.add(v != null ? v : 0.0);
+                }
+                voltData.put(seriesName, vals);
+                probeUnits.put(seriesName, plot.unit);
+            }
         }
 
         if (timeAxis == null || timeAxis.isEmpty()) return;
@@ -955,6 +1151,7 @@ public class SimulatePacket {
                 timeAxis,
                 voltData,
                 currData,
+                probeUnits,
                 false
             )
         );
@@ -963,8 +1160,11 @@ public class SimulatePacket {
             sessionId,
             voltData,
             currData,
+            probeUnits,
             graphPageComponents
         );
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (parametric " + analysis + ")");
     }
 
     // -------------------------------------------------------------------------
@@ -980,6 +1180,23 @@ public class SimulatePacket {
         bookLines.add("=== Netlist ===");
         for (String line : netlist.split("\n")) {
             msg(player, "  " + line, ChatFormatting.WHITE);
+            bookLines.add("  " + line);
+        }
+    }
+
+    /**
+     * Appends a netlist to the result book / output viewer text only — no chat
+     * spam. Used by parametric sweeps to show a representative netlist (the
+     * first iteration's) without flooding chat with N copies of nearly the
+     * same text.
+     */
+    private static void appendNetlistToBook(
+        List<String> bookLines,
+        String netlist,
+        String header
+    ) {
+        bookLines.add("=== " + header + " ===");
+        for (String line : netlist.split("\n")) {
             bookLines.add("  " + line);
         }
     }
@@ -1004,6 +1221,7 @@ public class SimulatePacket {
         int sessionId,
         Map<String, List<Double>> voltData,
         Map<String, List<Double>> currData,
+        Map<String, String> probeUnits,
         List<Component> graphPageComponents
     ) {
         List<String> allNames = new ArrayList<>();
@@ -1018,10 +1236,17 @@ public class SimulatePacket {
         for (int idx = 0; idx < allNames.size(); idx++) {
             String name = allNames.get(idx);
             boolean isVolt = voltData.containsKey(name);
+            String unit;
+            if (probeUnits != null && probeUnits.containsKey(name)) {
+                unit = probeUnits.get(name);
+            } else {
+                unit = isVolt ? "V" : "A";
+            }
+            String unitTag = unit == null || unit.isEmpty() ? "" : " (" + unit + ")";
             String cmd = "/circuitsim graph " + sessionId + " " + idx;
-            String label = "  Plot " + name + (isVolt ? " (V)" : " (A)");
+            String label = "  Plot " + name + unitTag;
 
-            player.displayClientMessage(
+            sendChatComponent(player,
                 Component.literal(label).withStyle(
                     Style.EMPTY.withColor(
                         isVolt
@@ -1032,13 +1257,12 @@ public class SimulatePacket {
                         .withClickEvent(
                             new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd)
                         )
-                ),
-                false
+                )
             );
 
             graphPageComponents.add(
                 Component.literal(
-                    "Plot " + name + (isVolt ? " (V)" : " (A)") + "\n"
+                    "Plot " + name + unitTag + "\n"
                 ).withStyle(
                     Style.EMPTY.withColor(
                         isVolt
@@ -1146,8 +1370,58 @@ public class SimulatePacket {
             .collect(Collectors.toList());
     }
 
+    /**
+     * Thread-safe chat helper. Auto-dispatches to the main server thread when
+     * called from the simulation worker, so existing call sites in the
+     * sweep / analysis code don't need to know whether they're on-thread.
+     */
     private static void msg(ServerPlayer p, String text, ChatFormatting fmt) {
-        p.displayClientMessage(Component.literal(text).withStyle(fmt), false);
+        sendChatComponent(p, Component.literal(text).withStyle(fmt));
+    }
+
+    /**
+     * Attaches the simulation's output lines to the cached {@link ResultSet}
+     * (so {@code /circuitsim output <id>} can re-open the output viewer) and
+     * emits a clickable chat link the player can click to manually open it.
+     *
+     * Used for parametric runs, where auto-opening the output viewer
+     * deterministically crashes the client with a native-crash-no-hs_err
+     * pattern. Keeping the open as a manual action sidesteps the crash while
+     * still giving the player access to the searchable output text.
+     */
+    private void emitOutputViewerLink(
+        ServerPlayer player,
+        int sessionId,
+        List<String> bookLines,
+        String label
+    ) {
+        ParametricResultCache.ResultSet rs = ParametricResultCache.get(sessionId);
+        if (rs != null) {
+            rs.outputLines = new ArrayList<>(bookLines);
+            rs.outputTitle = label;
+        }
+        String cmd = "/circuitsim output " + sessionId;
+        sendChatComponent(player,
+            Component.literal("[Open output viewer]").withStyle(
+                Style.EMPTY.withColor(ChatFormatting.GOLD)
+                    .withUnderlined(true)
+                    .withClickEvent(
+                        new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd))));
+    }
+
+    /**
+     * Thread-safe variant for pre-built styled components (e.g. graph links
+     * with click events). Sending packets from the background simulation
+     * worker can produce silent native crashes — this hops to the main thread
+     * if necessary.
+     */
+    private static void sendChatComponent(ServerPlayer p, Component msg) {
+        MinecraftServer s = p.getServer();
+        if (s != null && !s.isSameThread()) {
+            s.execute(() -> p.displayClientMessage(msg, false));
+        } else {
+            p.displayClientMessage(msg, false);
+        }
     }
 
     private static boolean isParametrizable(Block b) {

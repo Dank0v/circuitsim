@@ -3,6 +3,7 @@ package com.circuitsim.init;
 import com.circuitsim.CircuitSimMod;
 import com.circuitsim.network.GraphDataPacket;
 import com.circuitsim.network.ModMessages;
+import com.circuitsim.network.SimulationOutputPacket;
 import com.circuitsim.simulation.ParametricResultCache;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import net.minecraft.commands.Commands;
@@ -21,6 +22,40 @@ public class ModCommands {
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         event.getDispatcher().register(
             Commands.literal("circuitsim")
+                .then(Commands.literal("output")
+                    .then(Commands.argument("sessionId", IntegerArgumentType.integer(0))
+                        .executes(ctx -> {
+                            int sessionId = IntegerArgumentType.getInteger(ctx, "sessionId");
+                            ServerPlayer player;
+                            try { player = ctx.getSource().getPlayerOrException(); }
+                            catch (Exception e) { return 0; }
+                            ParametricResultCache.ResultSet rs =
+                                    ParametricResultCache.get(sessionId);
+                            if (rs == null) {
+                                player.displayClientMessage(
+                                    Component.literal(
+                                        "[CircuitSim] Session expired — run the simulation again.")
+                                            .withStyle(net.minecraft.ChatFormatting.RED),
+                                    false);
+                                return 0;
+                            }
+                            if (rs.outputLines == null || rs.outputLines.isEmpty()) {
+                                player.displayClientMessage(
+                                    Component.literal(
+                                        "[CircuitSim] No output text stored for this session.")
+                                            .withStyle(net.minecraft.ChatFormatting.GRAY),
+                                    false);
+                                return 0;
+                            }
+                            ModMessages.sendToPlayer(player, new SimulationOutputPacket(
+                                    rs.outputTitle == null || rs.outputTitle.isEmpty()
+                                            ? "CircuitSim Output"
+                                            : rs.outputTitle,
+                                    rs.outputLines));
+                            return 1;
+                        })
+                    )
+                )
                 .then(Commands.literal("graph")
                     .then(Commands.argument("sessionId", IntegerArgumentType.integer(0))
                         .then(Commands.argument("probeIndex", IntegerArgumentType.integer(0))
@@ -54,7 +89,7 @@ public class ModCommands {
 
                                 String       probeName   = names.get(probeIndex);
                                 List<Double> probeValues = rs.getValues(probeName);
-                                boolean      isVoltage   = rs.isVoltage(probeName);
+                                String       yUnit       = rs.getUnit(probeName);
 
                                 ModMessages.sendToPlayer(player, new GraphDataPacket(
                                         probeName,
@@ -62,7 +97,7 @@ public class ModCommands {
                                         rs.sweepUnit,
                                         rs.sweepValues,
                                         probeValues,
-                                        isVoltage,
+                                        yUnit,
                                         rs.isLogFrequency));
                                 return 1;
                             })

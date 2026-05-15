@@ -15,36 +15,32 @@ import java.util.List;
 
 /**
  * Scrollable, searchable viewer for ngspice simulation output.
- * Opened automatically by {@link com.circuitsim.network.SimulationOutputPacket}
- * after a simulation finishes; can be reopened via the cached results.
+ *
+ * Rendering is intentionally stripped down — a single background fill plus the
+ * vanilla {@link EditBox} / {@link Button} widgets. An earlier version with a
+ * custom section sidebar, custom scrollbar, and per-frame hover highlights
+ * was reliably hanging the NVIDIA display driver (TDR) on RTX 50-series cards
+ * when opened with parametric-sim output. Keep this screen boring.
  */
 public class SimulationOutputScreen extends Screen {
 
     private final String       headerTitle;
     private final List<String> sourceLines;
 
-    private static final int PANEL_W = 540;
-    private static final int PANEL_H = 360;
-    private static final int SIDE_W  = 130;
+    private static final int PANEL_W = 520;
+    private static final int PANEL_H = 340;
 
-    private static final int C_BG        = 0xFF1A1A2E;
-    private static final int C_PANE_BG   = 0xFF16213E;
-    private static final int C_BORDER    = 0xFF4A90D9;
-    private static final int C_SEP       = 0xFF444466;
-    private static final int C_TITLE     = 0xFFFFD700;
-    private static final int C_TEXT      = 0xFFE0E0E0;
-    private static final int C_DIM       = 0xFF8888AA;
-    private static final int C_HEADER    = 0xFF4FC3F7;
-    private static final int C_ERROR     = 0xFFFF6464;
-    private static final int C_MATCH_BG  = 0x80B58900;
-    private static final int C_HIT_BG    = 0xC0FF8800;
-    private static final int C_HOVER_BG  = 0x40FFFFFF;
-    private static final int C_SCROLL    = 0xFF4A90D9;
-    private static final int C_SCROLL_BG = 0xFF2A2A4A;
+    private static final int C_BG     = 0xFF1A1A2E;
+    private static final int C_TITLE  = 0xFFFFD700;
+    private static final int C_TEXT   = 0xFFE0E0E0;
+    private static final int C_DIM    = 0xFF8888AA;
+    private static final int C_HEADER = 0xFF4FC3F7;
+    private static final int C_ERROR  = 0xFFFF6464;
+    private static final int C_MATCH  = 0x80B58900;
+    private static final int C_HIT    = 0xC0FF8800;
+    private static final int C_BORDER = 0xFF4A90D9;
 
     private int panelX, panelY;
-    private int paneX, paneY, paneW, paneH;
-    private int sideX, sideY, sideW, sideH;
     private int contentX, contentY, contentW, contentH;
     private int lineHeight;
 
@@ -52,10 +48,8 @@ public class SimulationOutputScreen extends Screen {
 
     private final List<FormattedCharSequence> displayLines = new ArrayList<>();
     private final List<Integer>               srcOfDisplay = new ArrayList<>();
-    private final List<int[]>                 sections     = new ArrayList<>();
 
     private int scrollLine    = 0;
-    private int sectionScroll = 0;
     private int currentMatch  = -1;
     private final List<Integer> matchSourceLines = new ArrayList<>();
 
@@ -69,26 +63,17 @@ public class SimulationOutputScreen extends Screen {
     protected void init() {
         super.init();
         lineHeight = font.lineHeight + 2;
+
         panelX = (this.width  - PANEL_W) / 2;
         panelY = (this.height - PANEL_H) / 2;
 
-        sideX = panelX + 8;
-        sideY = panelY + 70;
-        sideW = SIDE_W - 4;
-        sideH = PANEL_H - 70 - 32;
-
-        paneX = panelX + SIDE_W + 8;
-        paneY = panelY + 70;
-        paneW = PANEL_W - SIDE_W - 16;
-        paneH = PANEL_H - 70 - 32;
-
-        contentX = paneX + 6;
-        contentY = paneY + 4;
-        contentW = paneW - 14;            // leave 8px for scrollbar
-        contentH = paneH - 8;
+        contentX = panelX + 10;
+        contentY = panelY + 64;
+        contentW = PANEL_W - 20;
+        contentH = PANEL_H - 64 - 30;
 
         searchBox = new EditBox(font,
-                panelX + 60, panelY + 38, PANEL_W - 220, 16,
+                panelX + 60, panelY + 36, PANEL_W - 220, 16,
                 Component.literal("Search"));
         searchBox.setMaxLength(256);
         searchBox.setBordered(true);
@@ -97,20 +82,19 @@ public class SimulationOutputScreen extends Screen {
 
         addRenderableWidget(Button.builder(Component.literal("<"),
                 b -> jumpMatch(-1))
-                .bounds(panelX + PANEL_W - 152, panelY + 36, 18, 20).build());
+                .bounds(panelX + PANEL_W - 152, panelY + 34, 18, 20).build());
         addRenderableWidget(Button.builder(Component.literal(">"),
                 b -> jumpMatch(+1))
-                .bounds(panelX + PANEL_W - 132, panelY + 36, 18, 20).build());
+                .bounds(panelX + PANEL_W - 132, panelY + 34, 18, 20).build());
 
-        addRenderableWidget(Button.builder(Component.literal("Copy All"),
+        addRenderableWidget(Button.builder(Component.literal("Copy"),
                 b -> copyAll())
-                .bounds(panelX + PANEL_W - 110, panelY + 8, 60, 18).build());
+                .bounds(panelX + PANEL_W - 108, panelY + 8, 50, 18).build());
         addRenderableWidget(Button.builder(Component.literal("X"),
                 b -> onClose())
                 .bounds(panelX + PANEL_W - 28, panelY + 8, 20, 18).build());
 
         rewrap();
-        rebuildSections();
     }
 
     private void rewrap() {
@@ -118,7 +102,7 @@ public class SimulationOutputScreen extends Screen {
         srcOfDisplay.clear();
         for (int i = 0; i < sourceLines.size(); i++) {
             String src = sourceLines.get(i);
-            if (src.isEmpty()) {
+            if (src == null || src.isEmpty()) {
                 displayLines.add(FormattedCharSequence.EMPTY);
                 srcOfDisplay.add(i);
                 continue;
@@ -133,21 +117,6 @@ public class SimulationOutputScreen extends Screen {
                     displayLines.add(fcs);
                     srcOfDisplay.add(i);
                 }
-            }
-        }
-    }
-
-    private void rebuildSections() {
-        sections.clear();
-        for (int i = 0; i < sourceLines.size(); i++) {
-            String s = sourceLines.get(i).trim();
-            if (s.startsWith("===") && s.endsWith("===") && s.length() > 6) {
-                int displayIdx = -1;
-                for (int d = 0; d < srcOfDisplay.size(); d++) {
-                    if (srcOfDisplay.get(d) == i) { displayIdx = d; break; }
-                }
-                if (displayIdx < 0) displayIdx = 0;
-                sections.add(new int[]{ i, displayIdx });
             }
         }
     }
@@ -198,7 +167,8 @@ public class SimulationOutputScreen extends Screen {
 
     private void clampScroll() {
         int maxScroll = Math.max(0, displayLines.size() - visibleLineCount());
-        scrollLine = Math.max(0, Math.min(scrollLine, maxScroll));
+        if (scrollLine < 0) scrollLine = 0;
+        if (scrollLine > maxScroll) scrollLine = maxScroll;
     }
 
     private void copyAll() {
@@ -210,13 +180,17 @@ public class SimulationOutputScreen extends Screen {
     public void render(GuiGraphics g, int mouseX, int mouseY, float pt) {
         renderBackground(g);
 
+        // Single panel background + thin border. No nested panels, no
+        // custom hover regions, no decorative separators.
         g.fill(panelX, panelY, panelX + PANEL_W, panelY + PANEL_H, C_BG);
-        drawBorder(g, panelX, panelY, PANEL_W, PANEL_H, 2, C_BORDER);
+        g.fill(panelX, panelY, panelX + PANEL_W, panelY + 1, C_BORDER);
+        g.fill(panelX, panelY + PANEL_H - 1, panelX + PANEL_W, panelY + PANEL_H, C_BORDER);
+        g.fill(panelX, panelY, panelX + 1, panelY + PANEL_H, C_BORDER);
+        g.fill(panelX + PANEL_W - 1, panelY, panelX + PANEL_W, panelY + PANEL_H, C_BORDER);
 
-        g.drawString(font, headerTitle, panelX + 10, panelY + 12, C_TITLE);
-        g.fill(panelX + 2, panelY + 28, panelX + PANEL_W - 2, panelY + 29, C_SEP);
+        g.drawString(font, headerTitle, panelX + 10, panelY + 12, C_TITLE, false);
+        g.drawString(font, "Search:", panelX + 10, panelY + 40, C_DIM, false);
 
-        g.drawString(font, "Search:", panelX + 10, panelY + 42, C_DIM);
         String matchInfo;
         if (matchSourceLines.isEmpty()) {
             matchInfo = (searchBox != null && !searchBox.getValue().isEmpty())
@@ -224,22 +198,14 @@ public class SimulationOutputScreen extends Screen {
         } else {
             matchInfo = (currentMatch + 1) + " / " + matchSourceLines.size();
         }
-        g.drawString(font, matchInfo, panelX + PANEL_W - 110, panelY + 42, C_DIM);
+        g.drawString(font, matchInfo, panelX + PANEL_W - 110, panelY + 40, C_DIM, false);
 
-        g.fill(sideX, sideY, sideX + sideW, sideY + sideH, C_PANE_BG);
-        drawBorder(g, sideX, sideY, sideW, sideH, 1, C_SEP);
-        g.drawString(font, "Sections", sideX + 4, sideY + 4, C_TITLE);
-        drawSections(g, mouseX, mouseY, sideX, sideY + 16, sideW, sideH - 16);
-
-        g.fill(paneX, paneY, paneX + paneW, paneY + paneH, C_PANE_BG);
-        drawBorder(g, paneX, paneY, paneW, paneH, 1, C_SEP);
         drawText(g);
-        drawScrollbar(g, paneX + paneW - 6, paneY + 2, paneH - 4);
 
         String status = "lines " + (sourceLines.isEmpty() ? 0 : 1)
                 + "-" + sourceLines.size()
-                + "  |  PgUp/PgDn scroll  |  Ctrl+F search  |  Ctrl+C copy";
-        g.drawString(font, status, panelX + 10, panelY + PANEL_H - 18, C_DIM);
+                + "  |  scroll: wheel / arrows  |  Ctrl+F search  |  Ctrl+C copy";
+        g.drawString(font, status, panelX + 10, panelY + PANEL_H - 16, C_DIM, false);
 
         super.render(g, mouseX, mouseY, pt);
     }
@@ -254,13 +220,13 @@ public class SimulationOutputScreen extends Screen {
         int currentSrc = (currentMatch >= 0 && currentMatch < matchSourceLines.size())
                 ? matchSourceLines.get(currentMatch) : -1;
 
-        for (int i = 0; i < visible && (scrollLine + i) < displayLines.size(); i++) {
-            int idx = scrollLine + i;
+        int end = Math.min(displayLines.size(), scrollLine + visible);
+        for (int idx = scrollLine; idx < end; idx++) {
             int srcIdx = srcOfDisplay.get(idx);
             String src = sourceLines.get(srcIdx);
 
             if (hasQ && src.toLowerCase().contains(q)) {
-                int bg = (srcIdx == currentSrc) ? C_HIT_BG : C_MATCH_BG;
+                int bg = (srcIdx == currentSrc) ? C_HIT : C_MATCH;
                 g.fill(contentX - 2, y - 1, contentX + contentW, y + lineHeight - 2, bg);
             }
 
@@ -275,74 +241,12 @@ public class SimulationOutputScreen extends Screen {
         }
     }
 
-    private void drawScrollbar(GuiGraphics g, int x, int y, int h) {
-        int total = Math.max(displayLines.size(), 1);
-        int visible = visibleLineCount();
-        if (total <= visible) return;
-        g.fill(x, y, x + 4, y + h, C_SCROLL_BG);
-        int barH = Math.max(12, (int) (h * (double) visible / total));
-        double frac = scrollLine / (double) Math.max(1, total - visible);
-        int barY = y + (int) ((h - barH) * frac);
-        g.fill(x, barY, x + 4, barY + barH, C_SCROLL);
-    }
-
-    private void drawSections(GuiGraphics g, int mouseX, int mouseY,
-                              int x, int y, int w, int h) {
-        if (sections.isEmpty()) {
-            g.drawString(font, "(no sections)", x + 4, y + 4, C_DIM);
-            return;
-        }
-        int rowH = lineHeight;
-        int visible = Math.max(1, h / rowH);
-        sectionScroll = Math.max(0, Math.min(sectionScroll,
-                Math.max(0, sections.size() - visible)));
-
-        int yy = y + 2;
-        int maxLabelW = w - 8;
-        for (int i = 0; i < visible && (sectionScroll + i) < sections.size(); i++) {
-            int[] sec = sections.get(sectionScroll + i);
-            String label = sourceLines.get(sec[0]).replace("===", "").trim();
-            while (font.width(label) > maxLabelW && label.length() > 1) {
-                label = label.substring(0, label.length() - 2) + "..";
-            }
-            boolean hover = mouseX >= x + 2 && mouseX <= x + w - 2
-                         && mouseY >= yy - 1 && mouseY < yy + rowH - 1;
-            if (hover) g.fill(x + 2, yy - 1, x + w - 2, yy + rowH - 1, C_HOVER_BG);
-            g.drawString(font, label, x + 4, yy, hover ? 0xFFFFFFFF : C_HEADER);
-            yy += rowH;
-        }
-    }
-
-    @Override
-    public boolean mouseClicked(double mx, double my, int btn) {
-        // section sidebar click -> jump to that section
-        int listY = sideY + 16;
-        int listH = sideH - 16;
-        if (mx >= sideX + 2 && mx <= sideX + sideW - 2
-                && my >= listY + 2 && my < listY + listH) {
-            int rowH = lineHeight;
-            int idx = (int) ((my - listY - 2) / rowH) + sectionScroll;
-            if (idx >= 0 && idx < sections.size()) {
-                scrollLine = sections.get(idx)[1];
-                clampScroll();
-                return true;
-            }
-        }
-        return super.mouseClicked(mx, my, btn);
-    }
-
     @Override
     public boolean mouseScrolled(double mx, double my, double delta) {
         if (mx >= contentX && mx <= contentX + contentW
                 && my >= contentY && my <= contentY + contentH) {
             scrollLine -= (int) Math.signum(delta) * 3;
             clampScroll();
-            return true;
-        }
-        if (mx >= sideX && mx <= sideX + sideW
-                && my >= sideY && my <= sideY + sideH) {
-            sectionScroll -= (int) Math.signum(delta);
-            sectionScroll = Math.max(0, sectionScroll);
             return true;
         }
         return super.mouseScrolled(mx, my, delta);
@@ -353,7 +257,7 @@ public class SimulationOutputScreen extends Screen {
         boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
         if (ctrl && keyCode == GLFW.GLFW_KEY_F) {
             setFocused(searchBox);
-            searchBox.setFocused(true);
+            if (searchBox != null) searchBox.setFocused(true);
             return true;
         }
         if (ctrl && keyCode == GLFW.GLFW_KEY_C && getFocused() != searchBox) {
@@ -388,12 +292,5 @@ public class SimulationOutputScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
-    }
-
-    private static void drawBorder(GuiGraphics g, int x, int y, int w, int h, int t, int color) {
-        g.fill(x, y, x + w, y + t, color);
-        g.fill(x, y + h - t, x + w, y + h, color);
-        g.fill(x, y, x + t, y + h, color);
-        g.fill(x + w - t, y, x + w, y + h, color);
     }
 }

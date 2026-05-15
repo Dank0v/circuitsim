@@ -1,0 +1,8 @@
+{
+    "variants": {
+        "facing=north": {"model": "circuitsim:block/commands"},
+        "facing=east":  {"model": "circuitsim:block/commands", "y": 90},
+        "facing=south": {"model": "circuitsim:block/commands", "y": 180},
+        "facing=west":  {"model": "circuitsim:block/commands", "y": 270}
+    }
+}

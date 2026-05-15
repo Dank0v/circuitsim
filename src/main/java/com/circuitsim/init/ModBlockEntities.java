@@ -29,6 +29,7 @@ public class ModBlockEntities {
                             ModBlocks.CURRENT_PROBE.get(),
                             ModBlocks.SIMULATE.get(),
                             ModBlocks.PARAMETRIC.get(),
+                            ModBlocks.COMMANDS.get(),
                             ModBlocks.IC_RESISTOR.get(),
                             ModBlocks.IC_CAPACITOR.get(),
                             ModBlocks.IC_NMOS4.get(),

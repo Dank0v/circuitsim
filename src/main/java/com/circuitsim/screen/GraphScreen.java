@@ -20,7 +20,7 @@ public class GraphScreen extends Screen {
     private final String       sweepUnit;
     private final List<Double> sweepValues;
     private final List<Double> probeValues;
-    private final boolean      isVoltage;
+    private final String       yUnit;
     private final boolean      isLogFrequency;
 
     // ── layout ───────────────────────────────────────────────────────────────
@@ -48,14 +48,14 @@ public class GraphScreen extends Screen {
 
     public GraphScreen(String probeLabel, String sweepComponentName, String sweepUnit,
                        List<Double> sweepValues, List<Double> probeValues,
-                       boolean isVoltage, boolean isLogFrequency) {
+                       String yUnit, boolean isLogFrequency) {
         super(Component.literal("Graph"));
         this.probeLabel         = probeLabel;
         this.sweepComponentName = sweepComponentName;
         this.sweepUnit          = sweepUnit;
         this.sweepValues        = sweepValues;
         this.probeValues        = probeValues;
-        this.isVoltage          = isVoltage;
+        this.yUnit              = yUnit == null ? "" : yUnit;
         this.isLogFrequency     = isLogFrequency;
     }
 
@@ -94,12 +94,14 @@ public class GraphScreen extends Screen {
     }
 
     private void drawTitle(GuiGraphics g) {
-        String yUnit = isVoltage ? "(V)" : "(A)";
+        String yLabel = yUnit.isEmpty() ? "" : "(" + yUnit + ")";
         String title = probeLabel + "  vs  "
                 + sweepComponentName + " (" + sweepUnit + ")"
                 + (isLogFrequency ? "  [log]" : "");
         g.drawCenteredString(font, title, panelX + PANEL_W / 2, panelY + 7, C_TITLE);
-        g.drawString(font, yUnit, panelX + 2, panelY + GT, C_UNIT);
+        if (!yLabel.isEmpty()) {
+            g.drawString(font, yLabel, panelX + 2, panelY + GT, C_UNIT);
+        }
     }
 
     // ── graph ─────────────────────────────────────────────────────────────────
@@ -198,7 +200,7 @@ public class GraphScreen extends Screen {
                     ? ComponentEditScreen.formatValue(rawXH) + "Hz"
                     : ComponentEditScreen.formatValue(rawXH) + sweepUnit;
             String yStr = ComponentEditScreen.formatValue(probeValues.get(hoverIdx))
-                    + (isVoltage ? " V" : " A");
+                    + (yUnit.isEmpty() ? "" : " " + yUnit);
             String tip  = yStr + " at " + xStr;
             int tw = font.width(tip) + 6, th = 12;
             int tx = clamp(px[hoverIdx] + 6, gx, gx + gw - tw);

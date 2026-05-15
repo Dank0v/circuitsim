@@ -104,8 +104,12 @@ public class SimulateEditScreen extends Screen {
             18,
             Component.empty()
         );
-        b.setValue(init);
+        // setMaxLength MUST come before setValue — EditBox defaults to 32 and
+        // setValue silently truncates to the current limit. The .lib path is
+        // typically >32 chars; this is what caused stored paths to be cut at
+        // exactly position 32 after the dialog was reopened.
         b.setMaxLength(256);
+        b.setValue(init);
         b.setBordered(true);
         addRenderableWidget(b);
         return b;

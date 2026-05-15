@@ -27,6 +27,7 @@ public class ModItems {
     public static final RegistryObject<Item> CURRENT_PROBE      = blockItem(ModBlocks.CURRENT_PROBE);
     public static final RegistryObject<Item> SIMULATE           = blockItem(ModBlocks.SIMULATE);
     public static final RegistryObject<Item> PARAMETRIC         = blockItem(ModBlocks.PARAMETRIC);
+    public static final RegistryObject<Item> COMMANDS           = blockItem(ModBlocks.COMMANDS);
     public static final RegistryObject<Item> IC_RESISTOR          = blockItem(ModBlocks.IC_RESISTOR);
     public static final RegistryObject<Item> IC_CAPACITOR         = blockItem(ModBlocks.IC_CAPACITOR);
     public static final RegistryObject<Item> IC_NMOS4             = blockItem(ModBlocks.IC_NMOS4);
