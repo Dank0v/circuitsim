@@ -34,7 +34,11 @@ public class ModBlockEntities {
                             ModBlocks.IC_CAPACITOR.get(),
                             ModBlocks.IC_NMOS4.get(),
                             ModBlocks.IC_PMOS4.get(),
-                            ModBlocks.AMPLIFIER.get()
+                            ModBlocks.AMPLIFIER.get(),
+                            ModBlocks.CCVS.get(),
+                            ModBlocks.CCCS.get(),
+                            ModBlocks.VCVS.get(),
+                            ModBlocks.VCCS.get()
                     ).build(null)
             );
 

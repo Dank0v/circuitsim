@@ -104,6 +104,15 @@ public class WireBlock extends Block {
             return outward == dir.getOpposite();
         }
 
+        // VCVS / VCCS 2×3 multi-block: same rule as the amplifier.
+        if (neighbor instanceof Controlled2x3Block) {
+            Controlled2x3Block.CellKind kind = neighborState.getValue(Controlled2x3Block.CELL_KIND);
+            if (!kind.isPin()) return false;
+            Direction facing = neighborState.getValue(Controlled2x3Block.FACING);
+            Direction outward = Controlled2x3Block.rotateDir(kind.defaultOutward(), facing);
+            return outward == dir.getOpposite();
+        }
+
         // All remaining connectable blocks are directional (have FACING)
         if (neighbor instanceof BaseComponentBlock) {
             Direction facing = neighborState.getValue(BaseComponentBlock.FACING);

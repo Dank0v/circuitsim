@@ -47,6 +47,9 @@ public class ComponentEditScreen
     private boolean showNf;
     private boolean showMirror;
     private boolean showNumber;
+    /** True for CCVS/CCCS: show a "Control voltage source (vnam)" text field,
+     *  stored in the BE's modelName slot. */
+    private boolean showControlSource;
 
     private static final int LABEL_H = 10;
     private static final int GAP = 4;
@@ -123,6 +126,8 @@ public class ComponentEditScreen
         boolean isIcCap   = "ic_capacitor2".equals(componentType);
         boolean isNmos4   = "ic_nmos4".equals(componentType);
         boolean isPmos4   = "ic_pmos4".equals(componentType);
+        boolean isCcvs    = "ccvs".equals(componentType);
+        boolean isCccs    = "cccs".equals(componentType);
 
         showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap && !isNmos4 && !isPmos4;
         showSourceType = isVoltSrc;
@@ -133,6 +138,7 @@ public class ComponentEditScreen
         showMirror = isNmos4 || isPmos4;
         // Show the netlist-index field for everything that emits a SPICE element line.
         showNumber = !isProbe && !isCurrentProbe;
+        showControlSource = isCcvs || isCccs;
 
         int rowCount = 0;
         if (showNumber) rowCount++;
@@ -141,6 +147,7 @@ public class ComponentEditScreen
         if (showFrequency) rowCount++;
         if (showLabel) rowCount++;
         if (showSky130) rowCount += 5 + (showNf ? 1 : 0) + (showMirror ? 1 : 0); // pdk, model, W, L, mult [, NF] [, Mirror]
+        if (showControlSource) rowCount++;
 
         this.imageHeight = 10 + 10 + 10 + (rowCount * ROW_H) + 36;
 
@@ -207,6 +214,21 @@ public class ComponentEditScreen
                 fieldW,
                 currentLabel,
                 64
+            );
+            cursorY += ROW_H;
+        }
+
+        if (showControlSource) {
+            modelNameField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                currentModelName,
+                64
+            );
+            modelNameField.setSuggestion(currentModelName.isEmpty() ? "e.g. V1, VSENS" : "");
+            modelNameField.setResponder(
+                t -> modelNameField.setSuggestion(t.isEmpty() ? "e.g. V1, VSENS" : "")
             );
             cursorY += ROW_H;
         }
@@ -441,6 +463,16 @@ public class ComponentEditScreen
             );
             cursorY += ROW_H;
         }
+        if (showControlSource) {
+            g.drawString(
+                Minecraft.getInstance().font,
+                "Control voltage source (vnam):",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+        }
         if (showSky130) {
             // PDK row
             g.drawString(Minecraft.getInstance().font, "PDK:", labelX, cursorY, LABEL_COLOR);
@@ -658,6 +690,9 @@ public class ComponentEditScreen
             l = 1.0,
             mult = 1.0,
             nf = 1.0;
+        if (showControlSource && modelNameField != null) {
+            modelName = modelNameField.getValue().trim();
+        }
         if (showSky130) {
             if (modelNameField != null) modelName = modelNameField
                 .getValue()
@@ -722,6 +757,8 @@ public class ComponentEditScreen
             case "voltage_source" -> "Voltage (V)";
             case "voltage_source_sin" -> "Amplitude (V)";
             case "current_source" -> "Current (A)";
+            case "ccvs" -> "Transresistance (\u03A9)";
+            case "cccs" -> "Current gain";
             default -> "Value";
         };
     }
@@ -737,6 +774,8 @@ public class ComponentEditScreen
             case "current_source"            -> "Netlist index I";
             case "diode"                     -> "Netlist index D";
             case "ic_nmos4", "ic_pmos4"      -> "Netlist index XM";
+            case "ccvs"                      -> "Netlist index H";
+            case "cccs"                      -> "Netlist index F";
             default                          -> "Netlist index";
         };
     }
@@ -756,6 +795,8 @@ public class ComponentEditScreen
             case "ic_capacitor2" -> "IC Capacitor2";
             case "ic_nmos4"      -> "IC NMOS4";
             case "ic_pmos4"      -> "IC PMOS4";
+            case "ccvs"          -> "CCVS (H)";
+            case "cccs"          -> "CCCS (F)";
             default -> "Component";
         };
     }

@@ -29,6 +29,7 @@ public class NetlistBuilder {
 
     private static int rIndexFamily(CircuitComponent c) {
         // returns 0 for none, 1=R, 2=C, 3=L, 4=V, 5=I, 6=D, 7=M, 8=X (subcircuits)
+        // 9=E (VCVS), 10=F (CCCS), 11=G (VCCS), 12=H (CCVS)
         if (c.subcircuitNodes != null) return 8;
         if (c.block instanceof ResistorBlock || c.block instanceof IcResistorBlock) return 1;
         if (c.block instanceof CapacitorBlock || c.block instanceof IcCapacitorBlock) return 2;
@@ -37,6 +38,10 @@ public class NetlistBuilder {
         if (c.block instanceof CurrentSourceBlock) return 5;
         if (c.block instanceof DiodeBlock) return 6;
         if (c.block instanceof IcNmos4Block || c.block instanceof IcPmos4Block) return 7;
+        if (c.block instanceof VcvsBlock) return 9;
+        if (c.block instanceof CccsBlock) return 10;
+        if (c.block instanceof VccsBlock) return 11;
+        if (c.block instanceof CcvsBlock) return 12;
         return 0;
     }
 
@@ -44,22 +49,75 @@ public class NetlistBuilder {
     private static void claimManual(List<CircuitComponent> components,
                                     IndexAssigner r, IndexAssigner c, IndexAssigner l,
                                     IndexAssigner v, IndexAssigner i, IndexAssigner d,
-                                    IndexAssigner m, IndexAssigner x) {
+                                    IndexAssigner m, IndexAssigner x,
+                                    IndexAssigner e, IndexAssigner f,
+                                    IndexAssigner g, IndexAssigner h) {
         for (CircuitComponent comp : components) {
             int n = comp.componentNumber;
             if (n <= 0) continue;
             switch (rIndexFamily(comp)) {
-                case 1 -> r.claim(n);
-                case 2 -> c.claim(n);
-                case 3 -> l.claim(n);
-                case 4 -> v.claim(n);
-                case 5 -> i.claim(n);
-                case 6 -> d.claim(n);
-                case 7 -> m.claim(n);
-                case 8 -> x.claim(n);
+                case 1  -> r.claim(n);
+                case 2  -> c.claim(n);
+                case 3  -> l.claim(n);
+                case 4  -> v.claim(n);
+                case 5  -> i.claim(n);
+                case 6  -> d.claim(n);
+                case 7  -> m.claim(n);
+                case 8  -> x.claim(n);
+                case 9  -> e.claim(n);
+                case 10 -> f.claim(n);
+                case 11 -> g.claim(n);
+                case 12 -> h.claim(n);
                 default -> {}
             }
         }
+    }
+
+    /**
+     * Formats a line for one of the four linear dependent sources. Returns
+     * {@code null} if {@code comp.block} is not a controlled-source block.
+     *
+     * <p>Index assignment uses a separate per-family counter (one of
+     * {@code e/f/g/h}). The voltage-controlled forms (E, G) use 4 explicit
+     * pins; the current-controlled forms (F, H) use 2 pins plus a {@code vnam}
+     * string carried in {@code comp.modelName} that names a voltage source
+     * elsewhere in the netlist whose current sources the dependency.
+     */
+    private static String formatControlledSource(CircuitComponent comp,
+                                                  IndexAssigner eIdx, IndexAssigner fIdx,
+                                                  IndexAssigner gIdx, IndexAssigner hIdx,
+                                                  java.util.Map<Integer, String> aliases) {
+        if (comp.block instanceof VcvsBlock) {
+            return String.format("E%d %s %s %s %s %g",
+                    eIdx.assign(comp.componentNumber),
+                    nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                    nodeRef(comp.nodeC, aliases), nodeRef(comp.nodeD, aliases),
+                    comp.value);
+        }
+        if (comp.block instanceof VccsBlock) {
+            return String.format("G%d %s %s %s %s %g",
+                    gIdx.assign(comp.componentNumber),
+                    nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                    nodeRef(comp.nodeC, aliases), nodeRef(comp.nodeD, aliases),
+                    comp.value);
+        }
+        if (comp.block instanceof CcvsBlock) {
+            String vnam = (comp.modelName == null || comp.modelName.isBlank())
+                    ? "VUNDEFINED" : comp.modelName.trim();
+            return String.format("H%d %s %s %s %g",
+                    hIdx.assign(comp.componentNumber),
+                    nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                    vnam, comp.value);
+        }
+        if (comp.block instanceof CccsBlock) {
+            String vnam = (comp.modelName == null || comp.modelName.isBlank())
+                    ? "VUNDEFINED" : comp.modelName.trim();
+            return String.format("F%d %s %s %s %g",
+                    fIdx.assign(comp.componentNumber),
+                    nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                    vnam, comp.value);
+        }
+        return null;
     }
 
     /**
@@ -128,8 +186,11 @@ public class NetlistBuilder {
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
-                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner();
-        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx);
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
+                      eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
+                eIdx, fIdx, gIdx, hIdx);
         int vmCount = 1;
         boolean hasDiode = false;
 
@@ -165,7 +226,9 @@ public class NetlistBuilder {
                 line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
                 hasDiode = true;
             } else {
-                continue;
+                String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
+                if (controlled == null) continue;
+                line = controlled;
             }
             sb.append(line).append("\n");
         }
@@ -264,8 +327,11 @@ public class NetlistBuilder {
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
-                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner();
-        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx);
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
+                      eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
+                eIdx, fIdx, gIdx, hIdx);
         int vmCount = 1;
         boolean hasDiode    = false;
         boolean hasAcSource = false;
@@ -314,7 +380,9 @@ public class NetlistBuilder {
                 line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
                 hasDiode = true;
             } else {
-                continue;
+                String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
+                if (controlled == null) continue;
+                line = controlled;
             }
             sb.append(line).append("\n");
         }
@@ -425,8 +493,11 @@ public class NetlistBuilder {
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
-                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner();
-        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx);
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
+                      eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
+                eIdx, fIdx, gIdx, hIdx);
         int vmCount = 1;
         boolean hasDiode = false;
 
@@ -460,7 +531,9 @@ public class NetlistBuilder {
                 line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
                 hasDiode = true;
             } else {
-                continue;
+                String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
+                if (controlled == null) continue;
+                line = controlled;
             }
             sb.append(line).append("\n");
         }

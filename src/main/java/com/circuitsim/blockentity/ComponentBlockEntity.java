@@ -73,6 +73,10 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.IC_PMOS4.get())             return "ic_pmos4";
         if (block == ModBlocks.COMMANDS.get())             return "commands";
         if (block == ModBlocks.AMPLIFIER.get())            return "amplifier";
+        if (block == ModBlocks.CCVS.get())                 return "ccvs";
+        if (block == ModBlocks.CCCS.get())                 return "cccs";
+        if (block == ModBlocks.VCVS.get())                 return "vcvs";
+        if (block == ModBlocks.VCCS.get())                 return "vccs";
         return "unknown";
     }
 

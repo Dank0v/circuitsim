@@ -92,6 +92,26 @@ public class ModBlocks {
             () -> new AmplifierBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.METAL).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> CCVS = BLOCKS.register("ccvs",
+            () -> new CcvsBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_YELLOW).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> CCCS = BLOCKS.register("cccs",
+            () -> new CccsBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_PURPLE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> VCVS = BLOCKS.register("vcvs",
+            () -> new VcvsBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_YELLOW).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> VCCS = BLOCKS.register("vccs",
+            () -> new VccsBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_PURPLE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> SIM_LINK = BLOCKS.register("sim_link",
+            () -> new SimLinkBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_MAGENTA).strength(1.0f).pushReaction(PushReaction.BLOCK)));
+
     public static void register(IEventBus eventBus) {
         BLOCKS.register(eventBus);
     }

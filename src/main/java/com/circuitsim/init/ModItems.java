@@ -33,6 +33,11 @@ public class ModItems {
     public static final RegistryObject<Item> IC_NMOS4             = blockItem(ModBlocks.IC_NMOS4);
     public static final RegistryObject<Item> IC_PMOS4             = blockItem(ModBlocks.IC_PMOS4);
     public static final RegistryObject<Item> AMPLIFIER             = blockItem(ModBlocks.AMPLIFIER);
+    public static final RegistryObject<Item> CCVS                  = blockItem(ModBlocks.CCVS);
+    public static final RegistryObject<Item> CCCS                  = blockItem(ModBlocks.CCCS);
+    public static final RegistryObject<Item> VCVS                  = blockItem(ModBlocks.VCVS);
+    public static final RegistryObject<Item> VCCS                  = blockItem(ModBlocks.VCCS);
+    public static final RegistryObject<Item> SIM_LINK              = blockItem(ModBlocks.SIM_LINK);
 
     private static RegistryObject<Item> blockItem(RegistryObject<Block> block) {
         return ITEMS.register(block.getId().getPath(),

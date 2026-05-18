@@ -1,0 +1,7 @@
+{
+    "parent": "minecraft:block/cube_column",
+    "textures": {
+        "end":  "circuitsim:block/sim_link",
+        "side": "circuitsim:block/sim_link_side"
+    }
+}

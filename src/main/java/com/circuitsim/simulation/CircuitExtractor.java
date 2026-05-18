@@ -105,6 +105,22 @@ public class CircuitExtractor {
             }
         }
 
+        // Same idea for VCVS / VCCS 2×3 multi-block pin cells.
+        for (BlockPos pos : visited) {
+            BlockState bs = level.getBlockState(pos);
+            if (!(bs.getBlock() instanceof Controlled2x3Block)) continue;
+            Controlled2x3Block.CellKind kind = bs.getValue(Controlled2x3Block.CELL_KIND);
+            if (!kind.isPin()) continue;
+            Direction outward = Controlled2x3Block.rotateDir(kind.defaultOutward(),
+                    bs.getValue(Controlled2x3Block.FACING));
+            BlockPos wirePos = pos.relative(outward);
+            if (!visited.contains(wirePos)) continue;
+            Block wb = level.getBlockState(wirePos).getBlock();
+            if (wb instanceof WireBlock || wb instanceof GroundBlock) {
+                union(pos, wirePos);
+            }
+        }
+
         BlockPos groundAnchor = new BlockPos(0, Integer.MIN_VALUE, 0);
         boolean hasGround = false;
         for (BlockPos pos : visited) {
@@ -319,6 +335,53 @@ public class CircuitExtractor {
                         0, "DC", 0,
                         modelName, wParam, lParam, multParam, nfParam, compNum));
 
+            } else if (block instanceof CcvsBlock || block instanceof CccsBlock) {
+                Direction facing = state.getValue(BaseComponentBlock.FACING);
+                int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
+                int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
+
+                double value     = 0;
+                int    compNum   = 0;
+                String controlV  = "";
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    value     = be.getValue();
+                    compNum   = be.getComponentNumber();
+                    controlV  = be.getModelName(); // reused: stores the controlling vnam (e.g. "V1")
+                }
+
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, nodeA, nodeB, -1, -1, value, "DC", 0,
+                        controlV == null ? "" : controlV,
+                        1.0, 1.0, 1.0, 1.0, compNum));
+
+            } else if (block instanceof Controlled2x3Block) {
+                // Only emit one component per 2×3 instance — at the anchor cell.
+                Controlled2x3Block.CellKind kind = state.getValue(Controlled2x3Block.CELL_KIND);
+                if (kind != Controlled2x3Block.CellKind.ANCHOR) continue;
+
+                Direction facing = state.getValue(Controlled2x3Block.FACING);
+                double value   = 0;
+                int    compNum = 0;
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    value   = be.getValue();
+                    compNum = be.getComponentNumber();
+                }
+
+                // Pin order in the netlist line: N+ N- NC+ NC-
+                int outP = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.OUT_P, visited, nodeMap, nextNode);
+                int outN = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.OUT_N, visited, nodeMap, nextNode);
+                int ctlP = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.CTRL_P, visited, nodeMap, nextNode);
+                int ctlN = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.CTRL_N, visited, nodeMap, nextNode);
+
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, outP, outN, ctlP, ctlN,
+                        value, "DC", 0,
+                        "", 1.0, 1.0, 1.0, 1.0, compNum));
+
             } else if (block instanceof AmplifierBlock) {
                 // Only emit one component per amp — at the anchor cell. Every
                 // other cell is part of the same structure.
@@ -512,6 +575,24 @@ public class CircuitExtractor {
         return nodes;
     }
 
+    /**
+     * Returns the node id of one specific pin cell of a Controlled2x3Block
+     * instance whose anchor is {@code anchor}. If the pin cell is not in the
+     * visited set (shouldn't normally happen — the instance is atomic), a
+     * fresh node id is allocated.
+     */
+    private int pinNodeOf(Level level, BlockPos anchor, Direction facing,
+                          Controlled2x3Block.CellKind kind,
+                          Set<BlockPos> visited, Map<BlockPos, Integer> nodeMap,
+                          int[] nextNode) {
+        int[] local = Controlled2x3Block.localPosOf(kind);
+        if (local == null) return nextNode[0]++;
+        BlockPos pinPos = Controlled2x3Block.cellAt(anchor, local[0], local[1], facing);
+        return visited.contains(pinPos)
+                ? resolveNode(pinPos, visited, nodeMap, nextNode)
+                : nextNode[0]++;
+    }
+
     private int resolveNode(BlockPos pos, Set<BlockPos> visited,
                              Map<BlockPos, Integer> nodeMap, int[] nextNode) {
         if (visited.contains(pos)) {
@@ -544,7 +625,11 @@ public class CircuitExtractor {
                 || block instanceof SimulateBlock
                 || block instanceof ParametricBlock
                 || block instanceof CommandsBlock
-                || block instanceof AmplifierBlock;
+                || block instanceof AmplifierBlock
+                || block instanceof Controlled2x3Block
+                || block instanceof CcvsBlock
+                || block instanceof CccsBlock
+                || block instanceof SimLinkBlock;
     }
 
     public static class ParametricInfo {

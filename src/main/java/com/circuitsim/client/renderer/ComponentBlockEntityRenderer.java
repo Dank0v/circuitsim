@@ -1,6 +1,7 @@
 package com.circuitsim.client.renderer;
 
 import com.circuitsim.block.AmplifierBlock;
+import com.circuitsim.block.Controlled2x3Block;
 import com.circuitsim.blockentity.ComponentBlockEntity;
 import com.circuitsim.client.KeyBindings;
 import com.circuitsim.init.ModBlocks;
@@ -48,12 +49,28 @@ public class ComponentBlockEntityRenderer
         // float the label over the *centre* of the 5×5 footprint, translate by
         // worldDelta(2,2,facing). Other blocks stay at (0.5, 1.5, 0.5).
         double ox = 0.5, oz = 0.5;
-        if (be.getBlockState().getBlock() == ModBlocks.AMPLIFIER.get()
-                && be.getBlockState().hasProperty(AmplifierBlock.FACING)) {
-            Direction facing = be.getBlockState().getValue(AmplifierBlock.FACING);
+        var state = be.getBlockState();
+        if (state.getBlock() == ModBlocks.AMPLIFIER.get()
+                && state.hasProperty(AmplifierBlock.FACING)) {
+            Direction facing = state.getValue(AmplifierBlock.FACING);
             int[] d = AmplifierBlock.worldDelta(2, 2, facing);
             ox += d[0];
             oz += d[1];
+        } else if (state.getBlock() instanceof Controlled2x3Block
+                && state.hasProperty(Controlled2x3Block.FACING)) {
+            // Anchor is at local (0,1); centre of the 2×3 footprint is (0.5, 1.0).
+            // Delta from anchor to centre is (col=0.5, row=0); apply the same
+            // facing rotation that worldDelta uses.
+            Direction facing = state.getValue(Controlled2x3Block.FACING);
+            double dx, dz;
+            switch (facing) {
+                case EAST  -> { dx =  0.0; dz =  0.5; }
+                case SOUTH -> { dx = -0.5; dz =  0.0; }
+                case WEST  -> { dx =  0.0; dz = -0.5; }
+                default    -> { dx =  0.5; dz =  0.0; } // NORTH
+            }
+            ox += dx;
+            oz += dz;
         }
         poseStack.translate(ox, 1.5, oz);
 
@@ -163,6 +180,24 @@ public class ComponentBlockEntityRenderer
                 : "?");
             String model = be.getModelName();
             lines.add((model == null || model.isEmpty()) ? "cap_mim_m3_1" : model);
+        } else if (block == ModBlocks.VCVS.get()) {
+            lines.add("VCVS");
+            lines.add(val == 0.0 ? "?" : ComponentEditScreen.formatValue(val) + " V/V");
+        } else if (block == ModBlocks.VCCS.get()) {
+            lines.add("VCCS");
+            lines.add(val == 0.0 ? "?" : ComponentEditScreen.formatValue(val) + "S");
+        } else if (block == ModBlocks.CCVS.get()) {
+            lines.add("CCVS");
+            lines.add(val == 0.0
+                ? "?\u03A9"
+                : ComponentEditScreen.formatValue(val) + "\u03A9");
+            String vnam = be.getModelName();
+            if (vnam != null && !vnam.isEmpty()) lines.add("ctl: " + vnam);
+        } else if (block == ModBlocks.CCCS.get()) {
+            lines.add("CCCS");
+            lines.add(val == 0.0 ? "?" : ComponentEditScreen.formatValue(val) + " A/A");
+            String vnam = be.getModelName();
+            if (vnam != null && !vnam.isEmpty()) lines.add("ctl: " + vnam);
         } else if (block == ModBlocks.AMPLIFIER.get()) {
             // Amp BE only exists on the anchor cell; show the subcircuit model name.
             String model = be.getLabel();

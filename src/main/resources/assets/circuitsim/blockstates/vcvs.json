@@ -1,0 +1,28 @@
+{
+    "variants": {
+        "cell_kind=ctrl_p,facing=north,local_x=0,local_z=0": { "model": "circuitsim:block/vcvs_cell_0_0" },
+        "cell_kind=ctrl_p,facing=east,local_x=0,local_z=0": { "model": "circuitsim:block/vcvs_cell_0_0", "y": 90 },
+        "cell_kind=ctrl_p,facing=south,local_x=0,local_z=0": { "model": "circuitsim:block/vcvs_cell_0_0", "y": 180 },
+        "cell_kind=ctrl_p,facing=west,local_x=0,local_z=0": { "model": "circuitsim:block/vcvs_cell_0_0", "y": 270 },
+        "cell_kind=out_p,facing=north,local_x=1,local_z=0": { "model": "circuitsim:block/vcvs_cell_1_0" },
+        "cell_kind=out_p,facing=east,local_x=1,local_z=0": { "model": "circuitsim:block/vcvs_cell_1_0", "y": 90 },
+        "cell_kind=out_p,facing=south,local_x=1,local_z=0": { "model": "circuitsim:block/vcvs_cell_1_0", "y": 180 },
+        "cell_kind=out_p,facing=west,local_x=1,local_z=0": { "model": "circuitsim:block/vcvs_cell_1_0", "y": 270 },
+        "cell_kind=anchor,facing=north,local_x=0,local_z=1": { "model": "circuitsim:block/vcvs_cell_0_1" },
+        "cell_kind=anchor,facing=east,local_x=0,local_z=1": { "model": "circuitsim:block/vcvs_cell_0_1", "y": 90 },
+        "cell_kind=anchor,facing=south,local_x=0,local_z=1": { "model": "circuitsim:block/vcvs_cell_0_1", "y": 180 },
+        "cell_kind=anchor,facing=west,local_x=0,local_z=1": { "model": "circuitsim:block/vcvs_cell_0_1", "y": 270 },
+        "cell_kind=body,facing=north,local_x=1,local_z=1": { "model": "circuitsim:block/vcvs_cell_1_1" },
+        "cell_kind=body,facing=east,local_x=1,local_z=1": { "model": "circuitsim:block/vcvs_cell_1_1", "y": 90 },
+        "cell_kind=body,facing=south,local_x=1,local_z=1": { "model": "circuitsim:block/vcvs_cell_1_1", "y": 180 },
+        "cell_kind=body,facing=west,local_x=1,local_z=1": { "model": "circuitsim:block/vcvs_cell_1_1", "y": 270 },
+        "cell_kind=ctrl_n,facing=north,local_x=0,local_z=2": { "model": "circuitsim:block/vcvs_cell_0_2" },
+        "cell_kind=ctrl_n,facing=east,local_x=0,local_z=2": { "model": "circuitsim:block/vcvs_cell_0_2", "y": 90 },
+        "cell_kind=ctrl_n,facing=south,local_x=0,local_z=2": { "model": "circuitsim:block/vcvs_cell_0_2", "y": 180 },
+        "cell_kind=ctrl_n,facing=west,local_x=0,local_z=2": { "model": "circuitsim:block/vcvs_cell_0_2", "y": 270 },
+        "cell_kind=out_n,facing=north,local_x=1,local_z=2": { "model": "circuitsim:block/vcvs_cell_1_2" },
+        "cell_kind=out_n,facing=east,local_x=1,local_z=2": { "model": "circuitsim:block/vcvs_cell_1_2", "y": 90 },
+        "cell_kind=out_n,facing=south,local_x=1,local_z=2": { "model": "circuitsim:block/vcvs_cell_1_2", "y": 180 },
+        "cell_kind=out_n,facing=west,local_x=1,local_z=2": { "model": "circuitsim:block/vcvs_cell_1_2", "y": 270 }
+    }
+}

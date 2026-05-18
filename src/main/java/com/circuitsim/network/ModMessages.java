@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "6";   // bumped for AmplifierUpdatePacket
+    private static final String PROTOCOL_VERSION = "7";   // bumped for ControlledSourceUpdatePacket
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -54,6 +54,12 @@ public class ModMessages {
                 .encoder(AmplifierUpdatePacket::encode)
                 .decoder(AmplifierUpdatePacket::decode)
                 .consumerMainThread(ModMessages::handleAmplifierUpdate)
+                .add();
+
+        INSTANCE.messageBuilder(ControlledSourceUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(ControlledSourceUpdatePacket::encode)
+                .decoder(ControlledSourceUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleControlledSourceUpdate)
                 .add();
 
         // ── client-bound ──────────────────────────────────────────────────────
@@ -104,6 +110,12 @@ public class ModMessages {
 
     private static void handleAmplifierUpdate(AmplifierUpdatePacket msg,
                                                Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleControlledSourceUpdate(ControlledSourceUpdatePacket msg,
+                                                      Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }
