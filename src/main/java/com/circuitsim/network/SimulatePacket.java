@@ -37,8 +37,9 @@ public class SimulatePacket {
     private final double fStop; // AC: fStop   |  TRAN: tstop
     private final int ptsPerDec; // AC: pts/dec |  TRAN: unused (0)
     private final String pdkName; // "none", "sky130A", "placeholder"
-    private final String pdkLibPath; // path to .lib file
-    private final String ngBehavior; // ngspice compat mode: hsa, ps, hs, lt, ki, va
+    private final String pdkLibPath; // path to .lib file (hsa-style)
+    private final String pdkLibPaths; // newline-separated .INCLUDE paths (psa-style)
+    private final String ngBehavior; // ngspice compat mode: hsa, psa, lt, ki, va
     private final String rawParam1; // raw UI strings preserved for round-trip display
     private final String rawParam2;
     private final String rawParam3;
@@ -51,6 +52,7 @@ public class SimulatePacket {
         int ptsPerDec,
         String pdkName,
         String pdkLibPath,
+        String pdkLibPaths,
         String ngBehavior,
         String rawParam1,
         String rawParam2,
@@ -63,6 +65,7 @@ public class SimulatePacket {
         this.ptsPerDec = ptsPerDec;
         this.pdkName = pdkName;
         this.pdkLibPath = pdkLibPath;
+        this.pdkLibPaths = pdkLibPaths == null ? "" : pdkLibPaths;
         this.ngBehavior = ngBehavior;
         this.rawParam1 = rawParam1;
         this.rawParam2 = rawParam2;
@@ -77,6 +80,7 @@ public class SimulatePacket {
         this.ptsPerDec = buf.readInt();
         this.pdkName = buf.readUtf(32);
         this.pdkLibPath = buf.readUtf(512);
+        this.pdkLibPaths = buf.readUtf(8192);
         this.ngBehavior = buf.readUtf(8);
         this.rawParam1 = buf.readUtf(32);
         this.rawParam2 = buf.readUtf(32);
@@ -91,6 +95,7 @@ public class SimulatePacket {
         buf.writeInt(ptsPerDec);
         buf.writeUtf(pdkName, 32);
         buf.writeUtf(pdkLibPath, 512);
+        buf.writeUtf(pdkLibPaths, 8192);
         buf.writeUtf(ngBehavior, 8);
         buf.writeUtf(rawParam1, 32);
         buf.writeUtf(rawParam2, 32);
@@ -113,6 +118,7 @@ public class SimulatePacket {
         if (simBe instanceof ComponentBlockEntity simCbe) {
             simCbe.setPdkName(pdkName);
             simCbe.setPdkLibPath(pdkLibPath);
+            simCbe.setPdkLibPaths(pdkLibPaths);
             simCbe.setNgBehavior(ngBehavior);
             simCbe.setSimAnalysis(analysis);
             simCbe.setSimParam1(rawParam1);
@@ -251,6 +257,8 @@ public class SimulatePacket {
             extraction.currentProbes,
             pdkName,
             pdkLibPath,
+            pdkLibPaths,
+            ngBehavior,
             extraction.userCommands,
             extraction.userPlots
         );
@@ -334,6 +342,8 @@ public class SimulatePacket {
             ptsPerDec,
             pdkName,
             pdkLibPath,
+            pdkLibPaths,
+            ngBehavior,
             extraction.userCommands,
             extraction.userPlots
         );
@@ -505,6 +515,8 @@ public class SimulatePacket {
             tstop,
             pdkName,
             pdkLibPath,
+            pdkLibPaths,
+            ngBehavior,
             extraction.userCommands,
             extraction.userPlots
         );

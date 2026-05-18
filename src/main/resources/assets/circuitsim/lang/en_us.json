@@ -17,6 +17,7 @@
     "block.circuitsim.ic_capacitor2": "IC Capacitor2",
     "block.circuitsim.ic_nmos4": "IC NMOS4",
     "block.circuitsim.ic_pmos4": "IC PMOS4",
+    "block.circuitsim.amplifier": "Amplifier",
     "gui.circuitsim.title": "Edit Component",
     "gui.circuitsim.value": "Value:",
     "gui.circuitsim.resistance": "Resistance (\u03A9):",

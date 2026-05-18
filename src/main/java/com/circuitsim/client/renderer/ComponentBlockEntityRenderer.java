@@ -1,11 +1,13 @@
 package com.circuitsim.client.renderer;
 
+import com.circuitsim.block.AmplifierBlock;
 import com.circuitsim.blockentity.ComponentBlockEntity;
 import com.circuitsim.client.KeyBindings;
 import com.circuitsim.init.ModBlocks;
 import com.circuitsim.screen.ComponentEditScreen;
 import com.circuitsim.simulation.NetlistBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.core.Direction;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -42,8 +44,18 @@ public class ComponentBlockEntityRenderer
 
         poseStack.pushPose();
 
-        // Centre above the block, floating ~0.15 blocks above the top face
-        poseStack.translate(0.5, 1.5, 0.5);
+        // For the amplifier, the BE sits on the anchor cell at local (0,0). To
+        // float the label over the *centre* of the 5×5 footprint, translate by
+        // worldDelta(2,2,facing). Other blocks stay at (0.5, 1.5, 0.5).
+        double ox = 0.5, oz = 0.5;
+        if (be.getBlockState().getBlock() == ModBlocks.AMPLIFIER.get()
+                && be.getBlockState().hasProperty(AmplifierBlock.FACING)) {
+            Direction facing = be.getBlockState().getValue(AmplifierBlock.FACING);
+            int[] d = AmplifierBlock.worldDelta(2, 2, facing);
+            ox += d[0];
+            oz += d[1];
+        }
+        poseStack.translate(ox, 1.5, oz);
 
         // Rotate to always face the camera
         poseStack.mulPose(camera.cameraOrientation());
@@ -151,6 +163,10 @@ public class ComponentBlockEntityRenderer
                 : "?");
             String model = be.getModelName();
             lines.add((model == null || model.isEmpty()) ? "cap_mim_m3_1" : model);
+        } else if (block == ModBlocks.AMPLIFIER.get()) {
+            // Amp BE only exists on the anchor cell; show the subcircuit model name.
+            String model = be.getLabel();
+            lines.add((model == null || model.isEmpty()) ? "Amplifier" : model);
         } else if (block == ModBlocks.IC_NMOS4.get() || block == ModBlocks.IC_PMOS4.get()) {
             boolean isNmos     = block == ModBlocks.IC_NMOS4.get();
             String defaultModel = isNmos ? "nfet_01v8" : "pfet_01v8";

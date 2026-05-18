@@ -1,11 +1,15 @@
 package com.circuitsim.simulation;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class NgSpiceRunner {
 
@@ -78,13 +82,25 @@ public class NgSpiceRunner {
         try {
             tempDir     = Files.createTempDirectory("circuitsim");
             netlistFile = tempDir.resolve("circuit.cir");
+            // PSpice .lib files often use POLY E/F/G/H sources with comma+paren
+            // controller syntax. ngspice's psa translator turns them into broken
+            // xspice a-elements ("MIF-ERROR - unable to find definition of model
+            // a$poly$e.*"). We sidestep that by reading each .INCLUDE'd file,
+            // rewriting POLY syntax to ngspice-native (commas/parens stripped),
+            // and redirecting the .INCLUDE to the normalized copy.
+            netlist = preprocessIncludes(netlist, tempDir);
             try (BufferedWriter w = Files.newBufferedWriter(netlistFile, StandardCharsets.UTF_8)) {
                 w.write(netlist);
             }
-            // Write .spiceinit with the selected ngbehavior compatibility mode when using a PDK
-            // library. ngspice reads .spiceinit from the working directory at startup, before
-            // parsing the netlist, so this is the only place the setting takes effect.
-            if (netlist.contains(".lib ")) {
+            // Write .spiceinit with the selected ngbehavior compatibility mode when the
+            // netlist pulls in external libraries via .lib OR .INCLUDE. ngspice reads
+            // .spiceinit from the working directory at startup, before parsing the
+            // netlist, so this is the only place the setting takes effect. psa mode
+            // emits .INCLUDE rather than .lib (PSpice has no hierarchical library
+            // resolution), so we trigger on either token.
+            String netlistUpper = netlist.toUpperCase();
+            boolean hasLibDirective = netlistUpper.contains(".LIB ") || netlistUpper.contains(".INCLUDE");
+            if (hasLibDirective) {
                 String mode = (ngBehavior != null && !ngBehavior.isBlank()) ? ngBehavior : "hsa";
                 Path spiceInit = tempDir.resolve(".spiceinit");
                 try (BufferedWriter w = Files.newBufferedWriter(spiceInit, StandardCharsets.UTF_8)) {
@@ -465,6 +481,15 @@ public class NgSpiceRunner {
                 .replaceAll("\\s*,\\s*", ",");
     }
 
+    /**
+     * Parses one token from an AC results column. ngspice prints AC vectors as
+     * complex pairs ({@code re,im}); for true complex voltages/currents we
+     * want the magnitude, but real-valued vectors produced by user expressions
+     * — {@code db()}, {@code phase()}, {@code re()}, {@code im()}, etc. — are
+     * emitted with {@code im == 0} and need to keep their sign. Heuristic:
+     * if the imaginary part is exactly zero, return the real part as-is;
+     * otherwise return the modulus.
+     */
     private static double parseComplexMag(String token) {
         token = token.trim();
         int comma = token.lastIndexOf(',');
@@ -472,11 +497,256 @@ public class NgSpiceRunner {
             try {
                 double re = Double.parseDouble(token.substring(0, comma));
                 double im = Double.parseDouble(token.substring(comma + 1));
+                if (im == 0.0) return re;
                 return Math.sqrt(re * re + im * im);
             } catch (NumberFormatException e) { return Double.NaN; }
         }
-        try { return Math.abs(Double.parseDouble(token)); }
+        try { return Double.parseDouble(token); }
         catch (NumberFormatException e) { return Double.NaN; }
+    }
+
+    // -------------------------------------------------------------------------
+    // PSpice .lib preprocessing
+    // -------------------------------------------------------------------------
+
+    /** Captures the file path inside a {@code .INCLUDE "..."} directive (case-insensitive). */
+    private static final Pattern INCLUDE_PATTERN = Pattern.compile(
+            "(?im)^\\s*\\.include\\s+\"([^\"]+)\"\\s*$");
+
+    /**
+     * Quick detector — true for any line that looks like an E/F/G/H source
+     * with a {@code POLY(N)} controller list. Full parsing happens in
+     * {@link #convertPolyLine}.
+     */
+    private static final Pattern POLY_LINE = Pattern.compile(
+            "^\\s*[EeFfGgHh]\\S*\\s+\\S+\\s+\\S+\\s+[Pp][Oo][Ll][Yy]\\s*\\(",
+            Pattern.DOTALL);
+
+    /**
+     * Walks the netlist, normalizes every {@code .INCLUDE}'d library to remove
+     * PSpice POLY-syntax commas/parens, writes the normalized copies into
+     * {@code tempDir}, and returns a new netlist whose {@code .INCLUDE} paths
+     * point at the temp copies. If a referenced file can't be read, the
+     * original {@code .INCLUDE} is left as-is so ngspice produces its usual
+     * file-not-found error rather than a silent failure.
+     */
+    private static String preprocessIncludes(String netlist, Path tempDir) throws IOException {
+        Matcher m = INCLUDE_PATTERN.matcher(netlist);
+        StringBuilder out = new StringBuilder(netlist.length());
+        int cursor = 0;
+        int seq = 0;
+        while (m.find()) {
+            out.append(netlist, cursor, m.start());
+            String origPath = m.group(1);
+            Path src = Paths.get(origPath);
+            if (Files.isRegularFile(src)) {
+                Path dst = tempDir.resolve("lib_" + (seq++) + ".lib");
+                normalizeLibFile(src, dst);
+                out.append(".INCLUDE \"").append(dst.toAbsolutePath()).append('"');
+            } else {
+                out.append(m.group());
+            }
+            cursor = m.end();
+        }
+        out.append(netlist, cursor, netlist.length());
+        return out.toString();
+    }
+
+    /**
+     * Copies {@code src} → {@code dst}, applying {@link #normalizePspiceLine}
+     * to each line.
+     *
+     * <p>The file is read at byte level and every byte {@code >= 0x80} is
+     * replaced with a space before decoding. OrCAD's original
+     * {@code OPAMP.LIB} (shipped with Cadence PSpice) contains stray
+     * {@code 0x81} bytes left over from old authoring tools, which ngspice's
+     * strict UTF-8 reader rejects outright. Since SPICE netlists are
+     * ASCII-only this byte-level scrub never destroys real content — it just
+     * removes the corrupted control bytes that would otherwise abort the
+     * include. (Same fix as the user's separate {@code regen_opamp.py},
+     * applied transparently each simulation.)
+     */
+    private static void normalizeLibFile(Path src, Path dst) throws IOException {
+        byte[] data = Files.readAllBytes(src);
+        for (int i = 0; i < data.length; i++) {
+            if (data[i] < 0) data[i] = 0x20; // signed-byte < 0 == unsigned byte >= 0x80
+        }
+        String text = new String(data, StandardCharsets.US_ASCII);
+        try (BufferedReader r = new BufferedReader(new java.io.StringReader(text));
+             BufferedWriter w = Files.newBufferedWriter(dst, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                w.write(normalizePspiceLine(line));
+                w.newLine();
+            }
+        }
+    }
+
+    /**
+     * Rewrites a PSpice POLY E/F/G/H source into a ngspice B-source. We have to
+     * do this — and not just normalize syntax — because ngspice's {@code psa}
+     * compatibility mode unconditionally rewrites every POLY source into an
+     * XSPICE {@code a_poly} element whose model definition is never emitted,
+     * producing the {@code MIF-ERROR - unable to find definition of model
+     * a$poly$e.*} that kills the run. B-sources are not touched by psa.
+     *
+     * <p>The polynomial is expanded following PSpice's coefficient ordering
+     * (constant, linear, quadratic with X_i*X_j for i<=j, cubic, ...). Both
+     * linear and higher-order forms are supported; trailing coefficients that
+     * are zero in the source line can be omitted (PSpice convention).
+     *
+     * <p>Source-type mapping:
+     * <ul>
+     *   <li>{@code E} VCVS → {@code B... V = expr(V-diffs)}
+     *   <li>{@code G} VCCS → {@code B... I = expr(V-diffs)}
+     *   <li>{@code F} CCCS → {@code B... I = expr(I(Vname))}
+     *   <li>{@code H} CCVS → {@code B... V = expr(I(Vname))}
+     * </ul>
+     * The B-source name is the original device name prefixed with {@code B}.
+     * If parsing fails the input line is returned unchanged so the failure
+     * surfaces as a normal ngspice error rather than silent corruption.
+     */
+    static String normalizePspiceLine(String line) {
+        if (!POLY_LINE.matcher(line).find()) return line;
+
+        String stripped = line.replace(',', ' ').replace('(', ' ').replace(')', ' ');
+        stripped = stripped.replaceAll("\\s+", " ").trim();
+        String[] t = stripped.split(" ");
+        if (t.length < 6) return line;
+        if (!t[3].equalsIgnoreCase("POLY")) return line;
+
+        char srcType = Character.toUpperCase(t[0].charAt(0));
+        boolean voltageControlled = (srcType == 'E' || srcType == 'G');
+        boolean currentControlled = (srcType == 'F' || srcType == 'H');
+        if (!voltageControlled && !currentControlled) return line;
+
+        int n;
+        try { n = Integer.parseInt(t[4]); }
+        catch (NumberFormatException ignore) { return line; }
+        if (n < 1) return line;
+
+        int ctrlTokens = voltageControlled ? 2 * n : n;
+        int coeffStart = 5 + ctrlTokens;
+        int coeffCount = t.length - coeffStart;
+        if (coeffCount < 1) return line;
+
+        String[] controllerExpr = new String[n];
+        if (voltageControlled) {
+            for (int i = 0; i < n; i++) {
+                controllerExpr[i] = "(V(" + t[5 + 2 * i] + ")-V(" + t[5 + 2 * i + 1] + "))";
+            }
+        } else {
+            for (int i = 0; i < n; i++) {
+                controllerExpr[i] = "I(" + t[5 + i] + ")";
+            }
+        }
+
+        double[] p = new double[coeffCount];
+        for (int i = 0; i < coeffCount; i++) {
+            Double parsed = parseSpiceNumber(t[coeffStart + i]);
+            if (parsed == null) return line;
+            p[i] = parsed;
+        }
+
+        // PSpice term ordering: constant, then for each order ≥ 1 all
+        // multi-indices (i1,...,im) with 1 <= i1 <= ... <= im <= n, lex order.
+        List<int[]> terms = new ArrayList<>();
+        terms.add(new int[0]);
+        int order = 1;
+        while (terms.size() < coeffCount && order <= 10) {
+            generatePolyTerms(terms, n, order, new int[order], 0, 1);
+            order++;
+        }
+        if (terms.size() < coeffCount) return line;
+
+        StringBuilder expr = new StringBuilder();
+        boolean first = true;
+        for (int i = 0; i < coeffCount; i++) {
+            if (p[i] == 0) continue;
+            int[] term = terms.get(i);
+            if (first) {
+                if (p[i] < 0) expr.append("-");
+                first = false;
+            } else {
+                expr.append(p[i] > 0 ? " + " : " - ");
+            }
+            double absC = Math.abs(p[i]);
+            boolean omitOne = (absC == 1.0 && term.length > 0);
+            if (!omitOne) expr.append(absC);
+            for (int j = 0; j < term.length; j++) {
+                if (j > 0 || !omitOne) expr.append('*');
+                expr.append(controllerExpr[term[j] - 1]);
+            }
+        }
+        if (first) expr.append('0');
+
+        String outChannel = (srcType == 'E' || srcType == 'H') ? "V" : "I";
+        return "B" + t[0] + " " + t[1] + " " + t[2] + " " + outChannel + " = " + expr;
+    }
+
+    /**
+     * Parses a SPICE-style number — base value plus an optional SI suffix
+     * (case-insensitive): {@code T G MEG K M U N P F}, with the SPICE
+     * convention that {@code M = milli} (not mega — that is {@code MEG}).
+     * A trailing unit ({@code V/A/F/H/Ohm/...}) is ignored if present.
+     * Returns {@code null} if the token cannot be parsed.
+     */
+    static Double parseSpiceNumber(String s) {
+        if (s == null || s.isEmpty()) return null;
+        int i = 0, len = s.length();
+        if (i < len && (s.charAt(i) == '+' || s.charAt(i) == '-')) i++;
+        boolean sawDigit = false;
+        while (i < len && Character.isDigit(s.charAt(i))) { i++; sawDigit = true; }
+        if (i < len && s.charAt(i) == '.') {
+            i++;
+            while (i < len && Character.isDigit(s.charAt(i))) { i++; sawDigit = true; }
+        }
+        if (!sawDigit) return null;
+        if (i < len && (s.charAt(i) == 'e' || s.charAt(i) == 'E')) {
+            int j = i + 1;
+            if (j < len && (s.charAt(j) == '+' || s.charAt(j) == '-')) j++;
+            int kStart = j;
+            while (j < len && Character.isDigit(s.charAt(j))) j++;
+            if (j > kStart) i = j; // otherwise treat the 'e' as start of an SI suffix
+        }
+        double base;
+        try { base = Double.parseDouble(s.substring(0, i)); }
+        catch (NumberFormatException e) { return null; }
+        String suffix = s.substring(i).toLowerCase();
+        double scale = 1.0;
+        if (suffix.startsWith("meg")) scale = 1e6;
+        else if (suffix.startsWith("mil")) scale = 25.4e-6;
+        else if (!suffix.isEmpty()) {
+            switch (suffix.charAt(0)) {
+                case 't' -> scale = 1e12;
+                case 'g' -> scale = 1e9;
+                case 'k' -> scale = 1e3;
+                case 'm' -> scale = 1e-3;
+                case 'u' -> scale = 1e-6;
+                case 'n' -> scale = 1e-9;
+                case 'p' -> scale = 1e-12;
+                case 'f' -> scale = 1e-15;
+                default  -> scale = 1.0; // unit suffix (V, A, Ohm, …) — ignore
+            }
+        }
+        return base * scale;
+    }
+
+    /**
+     * Appends every multi-index of {@code order} from {@code [minVar..n]} to
+     * {@code out}, in PSpice's lexicographic non-decreasing order. Called once
+     * per polynomial order; the caller seeds the constant term separately.
+     */
+    private static void generatePolyTerms(List<int[]> out, int n, int order,
+                                           int[] buf, int depth, int minVar) {
+        if (depth == order) {
+            out.add(buf.clone());
+            return;
+        }
+        for (int v = minVar; v <= n; v++) {
+            buf[depth] = v;
+            generatePolyTerms(out, n, order, buf, depth + 1, v);
+        }
     }
 
     private static String resolveExecutable() {

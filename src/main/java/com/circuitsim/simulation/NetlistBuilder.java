@@ -28,7 +28,8 @@ public class NetlistBuilder {
     }
 
     private static int rIndexFamily(CircuitComponent c) {
-        // returns 0 for none, 1=R, 2=C, 3=L, 4=V, 5=I, 6=D, 7=M
+        // returns 0 for none, 1=R, 2=C, 3=L, 4=V, 5=I, 6=D, 7=M, 8=X (subcircuits)
+        if (c.subcircuitNodes != null) return 8;
         if (c.block instanceof ResistorBlock || c.block instanceof IcResistorBlock) return 1;
         if (c.block instanceof CapacitorBlock || c.block instanceof IcCapacitorBlock) return 2;
         if (c.block instanceof InductorBlock) return 3;
@@ -43,7 +44,7 @@ public class NetlistBuilder {
     private static void claimManual(List<CircuitComponent> components,
                                     IndexAssigner r, IndexAssigner c, IndexAssigner l,
                                     IndexAssigner v, IndexAssigner i, IndexAssigner d,
-                                    IndexAssigner m) {
+                                    IndexAssigner m, IndexAssigner x) {
         for (CircuitComponent comp : components) {
             int n = comp.componentNumber;
             if (n <= 0) continue;
@@ -55,9 +56,26 @@ public class NetlistBuilder {
                 case 5 -> i.claim(n);
                 case 6 -> d.claim(n);
                 case 7 -> m.claim(n);
+                case 8 -> x.claim(n);
                 default -> {}
             }
         }
+    }
+
+    /**
+     * Builds an {@code X<n> pin0 pin1 ... model} line for a subcircuit
+     * instance, applying any active node aliases.
+     */
+    private static String formatSubcircuit(int idx, CircuitComponent comp,
+                                            java.util.Map<Integer, String> aliases) {
+        StringBuilder sb = new StringBuilder();
+        sb.append('X').append(idx);
+        for (int n : comp.subcircuitNodes) sb.append(' ').append(nodeRef(n, aliases));
+        String model = comp.modelName == null || comp.modelName.isBlank()
+                ? "UNDEFINED_MODEL"
+                : comp.modelName;
+        sb.append(' ').append(model);
+        return sb.toString();
     }
 
     // -------------------------------------------------------------------------
@@ -88,23 +106,38 @@ public class NetlistBuilder {
                                        String                 pdkLibPath,
                                        List<String>           userCommands,
                                        List<UserPlot>         userPlots) {
+        return buildNetlist(components, probes, currentProbes, pdkName, pdkLibPath,
+                "", "hsa", userCommands, userPlots);
+    }
+
+    public static String buildNetlist(List<CircuitComponent> components,
+                                       List<ProbeInfo>        probes,
+                                       List<CurrentProbeInfo> currentProbes,
+                                       String                 pdkName,
+                                       String                 pdkLibPath,
+                                       String                 pdkLibPaths,
+                                       String                 ngBehavior,
+                                       List<String>           userCommands,
+                                       List<UserPlot>         userPlots) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim Netlist\n");
-        appendPdkLib(sb, pdkName, pdkLibPath);
+        appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
-                      mIdx = new IndexAssigner();
-        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx);
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx);
         int vmCount = 1;
         boolean hasDiode = false;
 
         for (CircuitComponent comp : components) {
             String line;
-            if (comp.block instanceof IcResistorBlock) {
+            if (comp.subcircuitNodes != null) {
+                line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcResistorBlock) {
                 line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
                 line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
@@ -210,24 +243,38 @@ public class NetlistBuilder {
                                          String pdkName, String pdkLibPath,
                                          List<String> userCommands,
                                          List<UserPlot> userPlots) {
+        return buildAcNetlist(components, probes, currentProbes, fStart, fStop, ptsPerDec,
+                pdkName, pdkLibPath, "", "hsa", userCommands, userPlots);
+    }
+
+    public static String buildAcNetlist(List<CircuitComponent> components,
+                                         List<ProbeInfo>        probes,
+                                         List<CurrentProbeInfo> currentProbes,
+                                         double fStart, double fStop, int ptsPerDec,
+                                         String pdkName, String pdkLibPath,
+                                         String pdkLibPaths, String ngBehavior,
+                                         List<String> userCommands,
+                                         List<UserPlot> userPlots) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim AC Netlist\n");
-        appendPdkLib(sb, pdkName, pdkLibPath);
+        appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
-                      mIdx = new IndexAssigner();
-        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx);
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx);
         int vmCount = 1;
         boolean hasDiode    = false;
         boolean hasAcSource = false;
 
         for (CircuitComponent comp : components) {
             String line;
-            if (comp.block instanceof IcResistorBlock) {
+            if (comp.subcircuitNodes != null) {
+                line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcResistorBlock) {
                 line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
                 line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
@@ -357,23 +404,37 @@ public class NetlistBuilder {
                                            String pdkName, String pdkLibPath,
                                            List<String> userCommands,
                                            List<UserPlot> userPlots) {
+        return buildTranNetlist(components, probes, currentProbes, tstep, tstop,
+                pdkName, pdkLibPath, "", "hsa", userCommands, userPlots);
+    }
+
+    public static String buildTranNetlist(List<CircuitComponent> components,
+                                           List<ProbeInfo>        probes,
+                                           List<CurrentProbeInfo> currentProbes,
+                                           double tstep, double tstop,
+                                           String pdkName, String pdkLibPath,
+                                           String pdkLibPaths, String ngBehavior,
+                                           List<String> userCommands,
+                                           List<UserPlot> userPlots) {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim TRAN Netlist\n");
-        appendPdkLib(sb, pdkName, pdkLibPath);
+        appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
         IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
                       lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
-                      mIdx = new IndexAssigner();
-        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx);
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx);
         int vmCount = 1;
         boolean hasDiode = false;
 
         for (CircuitComponent comp : components) {
             String line;
-            if (comp.block instanceof IcResistorBlock) {
+            if (comp.subcircuitNodes != null) {
+                line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcResistorBlock) {
                 line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
                 line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
@@ -455,6 +516,38 @@ public class NetlistBuilder {
     // -------------------------------------------------------------------------
 
     private static void appendPdkLib(StringBuilder sb, String pdkName, String pdkLibPath) {
+        appendPdkLib(sb, pdkName, pdkLibPath, "", "hsa");
+    }
+
+    /**
+     * Emits library include directives.
+     *
+     * <p>In PSpice compatibility mode ({@code ngBehavior="psa"}) each non-empty
+     * line of {@code pdkLibPaths} becomes a separate {@code .INCLUDE "..."}
+     * directive — psa collapses {@code .lib} to {@code .include} anyway and
+     * has no hierarchical section support, so we emit .INCLUDE directly.
+     *
+     * <p>In any other mode (the sky130A HSPICE path) we emit a single
+     * {@code .lib <path>} line as before; this preserves section lookup
+     * required by HSPICE-style PDKs.
+     */
+    private static void appendPdkLib(StringBuilder sb, String pdkName, String pdkLibPath,
+                                     String pdkLibPaths, String ngBehavior) {
+        if ("psa".equals(ngBehavior)) {
+            if (pdkLibPaths == null || pdkLibPaths.isBlank()) return;
+            for (String raw : pdkLibPaths.split("\\r?\\n")) {
+                String line = raw.strip();
+                if (line.isEmpty()) continue;
+                // Quote the path so spaces work, but don't double-quote if the
+                // user already typed quotes.
+                if (line.startsWith("\"") && line.endsWith("\"")) {
+                    sb.append(".INCLUDE ").append(line).append("\n");
+                } else {
+                    sb.append(".INCLUDE \"").append(line).append("\"\n");
+                }
+            }
+            return;
+        }
         if (!"none".equals(pdkName) && pdkLibPath != null && !pdkLibPath.isBlank()) {
             sb.append(".lib ").append(pdkLibPath).append("\n");
         }
@@ -704,6 +797,13 @@ public class NetlistBuilder {
         public final double   nfParam;
         // user-chosen index in the netlist (e.g. R5). 0 = auto-assigned.
         public final int      componentNumber;
+        /**
+         * Variable-arity pins for subcircuit-instance components (X-prefix in
+         * SPICE). When non-null the netlist builder emits
+         * {@code X<n> pin0 pin1 ... <modelName>} instead of the device-family
+         * line. Currently used by the amplifier block (5 or 7 pins).
+         */
+        public final int[]    subcircuitNodes;
 
         public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB,
                                 double value, String sourceType, double frequency) {
@@ -736,6 +836,14 @@ public class NetlistBuilder {
                                 double value, String sourceType, double frequency,
                                 String modelName, double wParam, double lParam, double multParam,
                                 double nfParam, int componentNumber) {
+            this(block, pos, nodeA, nodeB, nodeC, nodeD, value, sourceType, frequency,
+                    modelName, wParam, lParam, multParam, nfParam, componentNumber, null);
+        }
+
+        public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB, int nodeC, int nodeD,
+                                double value, String sourceType, double frequency,
+                                String modelName, double wParam, double lParam, double multParam,
+                                double nfParam, int componentNumber, int[] subcircuitNodes) {
             this.block           = block;
             this.pos             = pos;
             this.nodeA           = nodeA;
@@ -751,6 +859,15 @@ public class NetlistBuilder {
             this.multParam       = multParam;
             this.nfParam         = nfParam;
             this.componentNumber = Math.max(0, componentNumber);
+            this.subcircuitNodes = subcircuitNodes;
+        }
+
+        /** Convenience constructor for subcircuit-instance components (X-prefix). */
+        public static CircuitComponent subcircuit(Block block, BlockPos pos,
+                                                   int[] pinNodes, String modelName, int componentNumber) {
+            return new CircuitComponent(block, pos, 0, 0, -1, -1, 0, "DC", 0,
+                    modelName == null ? "" : modelName,
+                    1.0, 1.0, 1.0, 1.0, componentNumber, pinNodes);
         }
     }
 

@@ -32,6 +32,7 @@ public class ModItems {
     public static final RegistryObject<Item> IC_CAPACITOR         = blockItem(ModBlocks.IC_CAPACITOR);
     public static final RegistryObject<Item> IC_NMOS4             = blockItem(ModBlocks.IC_NMOS4);
     public static final RegistryObject<Item> IC_PMOS4             = blockItem(ModBlocks.IC_PMOS4);
+    public static final RegistryObject<Item> AMPLIFIER             = blockItem(ModBlocks.AMPLIFIER);
 
     private static RegistryObject<Item> blockItem(RegistryObject<Block> block) {
         return ITEMS.register(block.getId().getPath(),

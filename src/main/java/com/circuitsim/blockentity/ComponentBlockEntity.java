@@ -31,6 +31,10 @@ public class ComponentBlockEntity extends BlockEntity {
     // simulate block PDK settings
     private String pdkName    = "none";
     private String pdkLibPath = "";
+    // PSpice (psa) compatibility mode uses .INCLUDE for libraries, and supports
+    // multiple library files. Each line is one library path. Stored separately
+    // from pdkLibPath so switching between psa and hsa preserves both.
+    private String pdkLibPaths = "";
     private String ngBehavior = "hsa";
 
     // simulate block dialog state
@@ -41,6 +45,11 @@ public class ComponentBlockEntity extends BlockEntity {
 
     // commands block: free-form ngspice control commands, one per line
     private String commands    = "";
+
+    // amplifier block: when true, the 7-pin variant (with offset pins) is active.
+    // Drives both the netlist subcircuit pin count and the visual model of the
+    // OFF1/OFF2 cells.
+    private boolean offsetEnabled = false;
 
     public ComponentBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.COMPONENT_BE.get(), pos, state);
@@ -63,6 +72,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.IC_NMOS4.get())             return "ic_nmos4";
         if (block == ModBlocks.IC_PMOS4.get())             return "ic_pmos4";
         if (block == ModBlocks.COMMANDS.get())             return "commands";
+        if (block == ModBlocks.AMPLIFIER.get())            return "amplifier";
         return "unknown";
     }
 
@@ -93,6 +103,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setPdkName(String name)      { this.pdkName = name; setChanged(); }
     public String getPdkLibPath()            { return pdkLibPath; }
     public void setPdkLibPath(String path)   { this.pdkLibPath = path; setChanged(); }
+    public String getPdkLibPaths()           { return pdkLibPaths; }
+    public void setPdkLibPaths(String paths) { this.pdkLibPaths = paths == null ? "" : paths; setChanged(); }
     public String getNgBehavior()            { return ngBehavior; }
     public void setNgBehavior(String mode)   { this.ngBehavior = mode; setChanged(); }
     public String getSimAnalysis()           { return simAnalysis; }
@@ -105,6 +117,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setSimParam3(String v)       { this.simParam3 = v; setChanged(); }
     public String getCommands()              { return commands; }
     public void setCommands(String c)        { this.commands = c == null ? "" : c; setChanged(); }
+    public boolean isOffsetEnabled()         { return offsetEnabled; }
+    public void setOffsetEnabled(boolean e)  { this.offsetEnabled = e; setChanged(); }
 
     @Override
     protected void saveAdditional(CompoundTag tag) {
@@ -121,12 +135,14 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("nfParam",    nfParam);
         tag.putString("pdkName",    pdkName);
         tag.putString("pdkLibPath", pdkLibPath);
+        tag.putString("pdkLibPaths", pdkLibPaths);
         tag.putString("ngBehavior", ngBehavior);
         tag.putString("simAnalysis", simAnalysis);
         tag.putString("simParam1",   simParam1);
         tag.putString("simParam2",   simParam2);
         tag.putString("simParam3",   simParam3);
         tag.putString("commands",    commands);
+        tag.putBoolean("offsetEnabled", offsetEnabled);
     }
 
     @Override
@@ -144,12 +160,14 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("nfParam"))    nfParam    = tag.getDouble("nfParam");
         if (tag.contains("pdkName"))     pdkName    = tag.getString("pdkName");
         if (tag.contains("pdkLibPath"))  pdkLibPath = tag.getString("pdkLibPath");
+        if (tag.contains("pdkLibPaths")) pdkLibPaths = tag.getString("pdkLibPaths");
         if (tag.contains("ngBehavior"))  ngBehavior = tag.getString("ngBehavior");
         if (tag.contains("simAnalysis")) simAnalysis = tag.getString("simAnalysis");
         if (tag.contains("simParam1"))   simParam1   = tag.getString("simParam1");
         if (tag.contains("simParam2"))   simParam2   = tag.getString("simParam2");
         if (tag.contains("simParam3"))   simParam3   = tag.getString("simParam3");
         if (tag.contains("commands"))    commands    = tag.getString("commands");
+        if (tag.contains("offsetEnabled")) offsetEnabled = tag.getBoolean("offsetEnabled");
     }
 
     @Override
@@ -167,12 +185,14 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("nfParam",    nfParam);
         tag.putString("pdkName",    pdkName);
         tag.putString("pdkLibPath", pdkLibPath);
+        tag.putString("pdkLibPaths", pdkLibPaths);
         tag.putString("ngBehavior", ngBehavior);
         tag.putString("simAnalysis", simAnalysis);
         tag.putString("simParam1",   simParam1);
         tag.putString("simParam2",   simParam2);
         tag.putString("simParam3",   simParam3);
         tag.putString("commands",    commands);
+        tag.putBoolean("offsetEnabled", offsetEnabled);
         return tag;
     }
 

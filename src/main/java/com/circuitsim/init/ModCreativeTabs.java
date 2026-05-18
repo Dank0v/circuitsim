@@ -38,6 +38,7 @@ public class ModCreativeTabs {
                                 output.accept(ModItems.IC_CAPACITOR.get());
                                 output.accept(ModItems.IC_NMOS4.get());
                                 output.accept(ModItems.IC_PMOS4.get());
+                                output.accept(ModItems.AMPLIFIER.get());
                             })
                             .build()
             );

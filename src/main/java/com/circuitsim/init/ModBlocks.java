@@ -88,6 +88,10 @@ public class ModBlocks {
             () -> new IcPmos4Block(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.TERRACOTTA_RED).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> AMPLIFIER = BLOCKS.register("amplifier",
+            () -> new AmplifierBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.METAL).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static void register(IEventBus eventBus) {
         BLOCKS.register(eventBus);
     }

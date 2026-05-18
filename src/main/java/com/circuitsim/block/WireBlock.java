@@ -91,6 +91,19 @@ public class WireBlock extends Block {
         // Simulate block: connect from any horizontal side
         if (neighbor instanceof SimulateBlock) return true;
 
+        // Amplifier: pin cells connect only on their outward face; body and
+        // anchor cells never connect to wires.
+        if (neighbor instanceof AmplifierBlock) {
+            AmplifierBlock.CellKind kind = neighborState.getValue(AmplifierBlock.CELL_KIND);
+            if (!kind.isPin()) return false;
+            Direction facing = neighborState.getValue(AmplifierBlock.FACING);
+            Direction outward = AmplifierBlock.rotateDir(kind.defaultOutward(), facing);
+            // dir = from this wire toward the neighbor; outward = from the
+            // neighbor pin toward where its wire should be. They match when
+            // outward == -dir.
+            return outward == dir.getOpposite();
+        }
+
         // All remaining connectable blocks are directional (have FACING)
         if (neighbor instanceof BaseComponentBlock) {
             Direction facing = neighborState.getValue(BaseComponentBlock.FACING);

@@ -85,6 +85,26 @@ public class CircuitExtractor {
             }
         }
 
+        // Amplifier pin cells share a node with their adjacent outward wire.
+        // (Body cells deliberately don't union — wires next to body cells must
+        // remain separate nodes.) Doing this in the union phase means later
+        // resolveNode(pinPos) returns the same node as resolveNode(wirePos),
+        // so probes can target either side.
+        for (BlockPos pos : visited) {
+            BlockState bs = level.getBlockState(pos);
+            if (!(bs.getBlock() instanceof AmplifierBlock)) continue;
+            AmplifierBlock.CellKind kind = bs.getValue(AmplifierBlock.CELL_KIND);
+            if (!kind.isPin()) continue;
+            Direction outward = AmplifierBlock.rotateDir(kind.defaultOutward(),
+                    bs.getValue(AmplifierBlock.FACING));
+            BlockPos wirePos = pos.relative(outward);
+            if (!visited.contains(wirePos)) continue;
+            Block wb = level.getBlockState(wirePos).getBlock();
+            if (wb instanceof WireBlock || wb instanceof GroundBlock) {
+                union(pos, wirePos);
+            }
+        }
+
         BlockPos groundAnchor = new BlockPos(0, Integer.MIN_VALUE, 0);
         boolean hasGround = false;
         for (BlockPos pos : visited) {
@@ -299,6 +319,27 @@ public class CircuitExtractor {
                         0, "DC", 0,
                         modelName, wParam, lParam, multParam, nfParam, compNum));
 
+            } else if (block instanceof AmplifierBlock) {
+                // Only emit one component per amp — at the anchor cell. Every
+                // other cell is part of the same structure.
+                AmplifierBlock.CellKind kind = state.getValue(AmplifierBlock.CELL_KIND);
+                if (kind != AmplifierBlock.CellKind.ANCHOR) continue;
+
+                Direction facing = state.getValue(AmplifierBlock.FACING);
+                String modelName = "";
+                int    compNum   = 0;
+                boolean offsetEnabled = false;
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    modelName     = be.getLabel();
+                    compNum       = be.getComponentNumber();
+                    offsetEnabled = be.isOffsetEnabled();
+                }
+
+                int[] pinNodes = resolveAmpPinNodes(level, pos, facing, offsetEnabled,
+                        visited, nodeMap, nextNode);
+                components.add(NetlistBuilder.CircuitComponent.subcircuit(
+                        block, pos, pinNodes, modelName, compNum));
+
             } else if (block instanceof BaseComponentBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
@@ -440,6 +481,37 @@ public class CircuitExtractor {
         return s;
     }
 
+    /**
+     * Resolves the five (or seven) pin nodes of an amplifier instance in the
+     * canonical SPICE subcircuit pin order:
+     * {@code vinp vinn vcc vee vout [off1 off2]}. Each pin's node comes from
+     * the pin cell itself — because pin cells are unioned with their adjacent
+     * outward wire during the union phase, this yields the wire's node.
+     */
+    private int[] resolveAmpPinNodes(Level level, BlockPos anchor, Direction facing,
+                                      boolean offsetEnabled, Set<BlockPos> visited,
+                                      Map<BlockPos, Integer> nodeMap, int[] nextNode) {
+        AmplifierBlock.CellKind[] order = offsetEnabled
+                ? new AmplifierBlock.CellKind[]{
+                        AmplifierBlock.CellKind.VINP, AmplifierBlock.CellKind.VINN,
+                        AmplifierBlock.CellKind.VCC,  AmplifierBlock.CellKind.VEE,
+                        AmplifierBlock.CellKind.VOUT,
+                        AmplifierBlock.CellKind.OFF1, AmplifierBlock.CellKind.OFF2}
+                : new AmplifierBlock.CellKind[]{
+                        AmplifierBlock.CellKind.VINP, AmplifierBlock.CellKind.VINN,
+                        AmplifierBlock.CellKind.VCC,  AmplifierBlock.CellKind.VEE,
+                        AmplifierBlock.CellKind.VOUT};
+        int[] nodes = new int[order.length];
+        for (int i = 0; i < order.length; i++) {
+            int[] local = AmplifierBlock.localPosOf(order[i]);
+            BlockPos pinPos = AmplifierBlock.cellAt(anchor, local[0], local[1], facing);
+            nodes[i] = visited.contains(pinPos)
+                    ? resolveNode(pinPos, visited, nodeMap, nextNode)
+                    : nextNode[0]++;
+        }
+        return nodes;
+    }
+
     private int resolveNode(BlockPos pos, Set<BlockPos> visited,
                              Map<BlockPos, Integer> nodeMap, int[] nextNode) {
         if (visited.contains(pos)) {
@@ -471,7 +543,8 @@ public class CircuitExtractor {
                 || block instanceof CurrentProbeBlock
                 || block instanceof SimulateBlock
                 || block instanceof ParametricBlock
-                || block instanceof CommandsBlock;
+                || block instanceof CommandsBlock
+                || block instanceof AmplifierBlock;
     }
 
     public static class ParametricInfo {

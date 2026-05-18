@@ -33,7 +33,8 @@ public class ModBlockEntities {
                             ModBlocks.IC_RESISTOR.get(),
                             ModBlocks.IC_CAPACITOR.get(),
                             ModBlocks.IC_NMOS4.get(),
-                            ModBlocks.IC_PMOS4.get()
+                            ModBlocks.IC_PMOS4.get(),
+                            ModBlocks.AMPLIFIER.get()
                     ).build(null)
             );
 

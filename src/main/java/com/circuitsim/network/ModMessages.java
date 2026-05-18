@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "5";   // bumped for CommandsUpdatePacket
+    private static final String PROTOCOL_VERSION = "6";   // bumped for AmplifierUpdatePacket
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -48,6 +48,12 @@ public class ModMessages {
                 .encoder(CommandsUpdatePacket::encode)
                 .decoder(CommandsUpdatePacket::decode)
                 .consumerMainThread(ModMessages::handleCommandsUpdate)
+                .add();
+
+        INSTANCE.messageBuilder(AmplifierUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(AmplifierUpdatePacket::encode)
+                .decoder(AmplifierUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleAmplifierUpdate)
                 .add();
 
         // ── client-bound ──────────────────────────────────────────────────────
@@ -92,6 +98,12 @@ public class ModMessages {
 
     private static void handleCommandsUpdate(CommandsUpdatePacket msg,
                                               Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleAmplifierUpdate(AmplifierUpdatePacket msg,
+                                               Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }
