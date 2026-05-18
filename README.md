@@ -51,7 +51,7 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
    # Linux / Mac
    ./gradlew build
    ```
-5. Find the compiled `.jar` in `build/libs/` — it will be named something like `circuitsim-1.0.0.jar`.
+5. Find the compiled `.jar` in `build/libs/` — it will be named something like `circuitsim-x.x.x.jar`.
 6. Drop that `.jar` into your Minecraft `mods/` folder.
 7. Launch the game.
 ---
