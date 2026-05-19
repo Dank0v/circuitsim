@@ -12,6 +12,13 @@ base {
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
+// Force UTF-8 source decoding. Without this, javac falls back to the platform
+// default (Windows-1252 on Windows hosts), which mojibakes any non-ASCII byte
+// in a string literal — e.g. "°" (UTF-8 0xC2 0xB0) renders as "Â°" in-game.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
 minecraft {
     mappings channel: 'official', version: '1.20.1'
 

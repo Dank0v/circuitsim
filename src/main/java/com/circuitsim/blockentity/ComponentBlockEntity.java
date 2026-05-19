@@ -42,6 +42,11 @@ public class ComponentBlockEntity extends BlockEntity {
     private String simParam1   = "10";
     private String simParam2   = "1Meg";
     private String simParam3   = "10";
+    // Temperature override for the simulate block. Single value ("27") sets
+    // the circuit temperature; a sweep spec ("20:40:5" or "20,30,40")
+    // triggers a multi-run pass — OP gives a 1D probe-vs-temperature plot,
+    // AC/TRAN overlay one curve per temperature on top of their natural axis.
+    private String simTemp     = "27";
 
     // commands block: free-form ngspice control commands, one per line
     private String commands    = "";
@@ -119,6 +124,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setSimParam2(String v)       { this.simParam2 = v; setChanged(); }
     public String getSimParam3()             { return simParam3; }
     public void setSimParam3(String v)       { this.simParam3 = v; setChanged(); }
+    public String getSimTemp()               { return simTemp; }
+    public void setSimTemp(String t)         { this.simTemp = (t == null || t.isEmpty()) ? "27" : t; setChanged(); }
     public String getCommands()              { return commands; }
     public void setCommands(String c)        { this.commands = c == null ? "" : c; setChanged(); }
     public boolean isOffsetEnabled()         { return offsetEnabled; }
@@ -145,6 +152,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simParam1",   simParam1);
         tag.putString("simParam2",   simParam2);
         tag.putString("simParam3",   simParam3);
+        tag.putString("simTemp",     simTemp);
         tag.putString("commands",    commands);
         tag.putBoolean("offsetEnabled", offsetEnabled);
     }
@@ -170,6 +178,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("simParam1"))   simParam1   = tag.getString("simParam1");
         if (tag.contains("simParam2"))   simParam2   = tag.getString("simParam2");
         if (tag.contains("simParam3"))   simParam3   = tag.getString("simParam3");
+        if (tag.contains("simTemp"))     simTemp     = tag.getString("simTemp");
         if (tag.contains("commands"))    commands    = tag.getString("commands");
         if (tag.contains("offsetEnabled")) offsetEnabled = tag.getBoolean("offsetEnabled");
     }
@@ -195,6 +204,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simParam1",   simParam1);
         tag.putString("simParam2",   simParam2);
         tag.putString("simParam3",   simParam3);
+        tag.putString("simTemp",     simTemp);
         tag.putString("commands",    commands);
         tag.putBoolean("offsetEnabled", offsetEnabled);
         return tag;

@@ -43,6 +43,15 @@ public class SimulatePacket {
     private final String rawParam1; // raw UI strings preserved for round-trip display
     private final String rawParam2;
     private final String rawParam3;
+    /**
+     * Either a single value ("27") which sets the circuit temperature for
+     * one run, or a sweep spec ("20:40:5" / "20,30,40") which triggers a
+     * multi-run pass. For OP the result is a 1D probe-vs-temperature plot;
+     * for AC/TRAN each temperature contributes one extra curve per probe
+     * (series name suffixed "@<T>C") overlaid on the analysis's natural
+     * axis (frequency / time).
+     */
+    private final String simTemp;
 
     public SimulatePacket(
         BlockPos pos,
@@ -56,7 +65,8 @@ public class SimulatePacket {
         String ngBehavior,
         String rawParam1,
         String rawParam2,
-        String rawParam3
+        String rawParam3,
+        String simTemp
     ) {
         this.pos = pos;
         this.analysis = analysis;
@@ -70,6 +80,7 @@ public class SimulatePacket {
         this.rawParam1 = rawParam1;
         this.rawParam2 = rawParam2;
         this.rawParam3 = rawParam3;
+        this.simTemp = simTemp == null ? "27" : simTemp;
     }
 
     public SimulatePacket(FriendlyByteBuf buf) {
@@ -85,6 +96,7 @@ public class SimulatePacket {
         this.rawParam1 = buf.readUtf(32);
         this.rawParam2 = buf.readUtf(32);
         this.rawParam3 = buf.readUtf(32);
+        this.simTemp = buf.readUtf(64);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -100,6 +112,7 @@ public class SimulatePacket {
         buf.writeUtf(rawParam1, 32);
         buf.writeUtf(rawParam2, 32);
         buf.writeUtf(rawParam3, 32);
+        buf.writeUtf(simTemp, 64);
     }
 
     public static SimulatePacket decode(FriendlyByteBuf buf) {
@@ -124,6 +137,7 @@ public class SimulatePacket {
             simCbe.setSimParam1(rawParam1);
             simCbe.setSimParam2(rawParam2);
             simCbe.setSimParam3(rawParam3);
+            simCbe.setSimTemp(simTemp);
             simCbe.setChanged();
             simCbe.syncToClient();
         }
@@ -185,31 +199,52 @@ public class SimulatePacket {
             bookLines.add(timestamp);
             bookLines.add("---");
 
+            // Parse the temperature override. A single value sets the circuit
+            // temperature for one run; a sweep spec ("20:40:5" / "20,30,40")
+            // triggers a multi-run pass — see the dispatch below.
+            List<Double> tempValues = parseTempValues(simTemp);
+
             if (!extraction.parametricBlocks.isEmpty()) {
+                // 2D sweep when both parametric and multi-temp are active —
+                // user explicitly opted in to M*N series.
                 for (CircuitExtractor.ParametricInfo param : extraction.parametricBlocks) {
                     runParametricSweep(
                         player,
                         extraction,
                         param,
+                        tempValues,
                         bookLines,
                         graphPageComponents
                     );
                 }
+            } else if (tempValues.size() > 1 && "OP".equals(analysis)) {
+                // OP + multi-temp produces a 1D probe-vs-temperature plot.
+                runTempSweep(player, extraction, tempValues, bookLines, graphPageComponents);
+            } else if (tempValues.size() > 1) {
+                // AC / TRAN with multi-temp: overlay one curve per temperature.
+                switch (analysis) {
+                    case "AC"   -> runMultiTempAcSweep(player, extraction, tempValues, bookLines, graphPageComponents);
+                    case "TRAN" -> runMultiTempTranSweep(player, extraction, tempValues, bookLines, graphPageComponents);
+                    default     -> runTempSweep(player, extraction, tempValues, bookLines, graphPageComponents);
+                }
             } else {
+                double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
                 switch (analysis) {
                     case "AC" -> runAcSimulation(
                         player,
                         extraction,
                         bookLines,
-                        graphPageComponents
+                        graphPageComponents,
+                        tempC
                     );
                     case "TRAN" -> runTranSimulation(
                         player,
                         extraction,
                         bookLines,
-                        graphPageComponents
+                        graphPageComponents,
+                        tempC
                     );
-                    default -> runOpSimulation(player, extraction, bookLines);
+                    default -> runOpSimulation(player, extraction, bookLines, tempC);
                 }
             }
 
@@ -249,7 +284,8 @@ public class SimulatePacket {
     private void runOpSimulation(
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
-        List<String> bookLines
+        List<String> bookLines,
+        double tempC
     ) {
         String netlist = NetlistBuilder.buildNetlist(
             extraction.components,
@@ -262,6 +298,7 @@ public class SimulatePacket {
             extraction.userCommands,
             extraction.userPlots
         );
+        netlist = injectTemp(netlist, tempC);
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
@@ -327,7 +364,8 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<String> bookLines,
-        List<Component> graphPageComponents
+        List<Component> graphPageComponents,
+        double tempC
     ) {
         List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(
             extraction
@@ -347,6 +385,7 @@ public class SimulatePacket {
             extraction.userCommands,
             extraction.userPlots
         );
+        netlist = injectTemp(netlist, tempC);
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
@@ -498,7 +537,8 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<String> bookLines,
-        List<Component> graphPageComponents
+        List<Component> graphPageComponents,
+        double tempC
     ) {
         List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(
             extraction
@@ -520,6 +560,7 @@ public class SimulatePacket {
             extraction.userCommands,
             extraction.userPlots
         );
+        netlist = injectTemp(netlist, tempC);
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
@@ -645,6 +686,7 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         CircuitExtractor.ParametricInfo param,
+        List<Double> tempValues,
         List<String> bookLines,
         List<Component> graphPageComponents
     ) {
@@ -708,12 +750,14 @@ public class SimulatePacket {
         );
         List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
 
+        boolean multiTemp = tempValues.size() > 1;
+        String tempPart = multiTemp ? (" x " + tempValues.size() + " temps") : "";
         String header =
             "=== Parametric: " +
             displayName(targetBlock) +
             " (" + paramName + ") sweep (" +
             sweepValues.size() +
-            " pts, " +
+            " pts" + tempPart + ", " +
             analysis +
             ") ===";
         msg(player, header, ChatFormatting.GOLD);
@@ -727,6 +771,7 @@ public class SimulatePacket {
                 targetBlock,
                 paramName,
                 sweepValues,
+                tempValues,
                 effectiveProbes,
                 cpList,
                 bookLines,
@@ -739,6 +784,7 @@ public class SimulatePacket {
                 targetBlock,
                 paramName,
                 sweepValues,
+                tempValues,
                 effectiveProbes,
                 cpList,
                 bookLines,
@@ -751,6 +797,7 @@ public class SimulatePacket {
                 targetBlock,
                 paramName,
                 sweepValues,
+                tempValues,
                 effectiveProbes,
                 cpList,
                 bookLines,
@@ -768,22 +815,30 @@ public class SimulatePacket {
         Block targetBlock,
         String paramName,
         List<Double> sweepValues,
+        List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
         List<String> bookLines,
         List<Component> graphPageComponents
     ) {
+        boolean multiTemp = tempValues.size() > 1;
         List<Double> validSweep = new ArrayList<>();
         Map<String, List<Double>> voltData   = new LinkedHashMap<>();
         Map<String, List<Double>> currData   = new LinkedHashMap<>();
         Map<String, String>       probeUnits = new LinkedHashMap<>();
-        for (NetlistBuilder.ProbeInfo p : effectiveProbes)
-            voltData.put(p.label, new ArrayList<>());
-        for (NetlistBuilder.CurrentProbeInfo c : cpList)
-            currData.put(c.label, new ArrayList<>());
-        for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
-            voltData.put(plot.label, new ArrayList<>());
-            probeUnits.put(plot.label, plot.unit);
+        // Pre-create one series per (probe, temp) combination. Even when only
+        // one temperature is set the suffix is "" so the keys match the old
+        // single-temp behaviour.
+        for (double T : tempValues) {
+            String suffix = tempSuffix(T, multiTemp);
+            for (NetlistBuilder.ProbeInfo p : effectiveProbes)
+                voltData.put(p.label + suffix, new ArrayList<>());
+            for (NetlistBuilder.CurrentProbeInfo c : cpList)
+                currData.put(c.label + suffix, new ArrayList<>());
+            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                voltData.put(plot.label + suffix, new ArrayList<>());
+                probeUnits.put(plot.label + suffix, plot.unit);
+            }
         }
 
         boolean firstIteration = true;
@@ -796,70 +851,83 @@ public class SimulatePacket {
             msg(player, secHdr, ChatFormatting.YELLOW);
             bookLines.add(secHdr);
 
-            String netlist = NetlistBuilder.buildNetlist(
-                swapParam(extraction.components, targetPos, paramName, val),
-                effectiveProbes,
-                cpList,
-                pdkName,
-                pdkLibPath,
-                extraction.userCommands,
-                extraction.userPlots
-            );
-            if (firstIteration) {
-                appendNetlistToBook(bookLines, netlist,
-                        "Netlist (iter 1 of " + sweepValues.size() + ", "
-                                + paramName + "=" + ComponentEditScreen.formatValue(val)
-                                + unit(targetBlock, paramName) + ")");
-                firstIteration = false;
-            }
-            NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
-
-            if (result.error != null) {
-                String first = result.error
-                    .lines()
-                    .filter(l -> !l.isBlank())
-                    .findFirst()
-                    .orElse("unknown error");
-                msg(player, "  Error: " + first, ChatFormatting.RED);
-                bookLines.add("  Error: " + first);
-                continue;
-            }
-            if (result.values.isEmpty()) {
-                msg(
-                    player,
-                    "  (no results — verify Ground block)",
-                    ChatFormatting.GRAY
+            // Run every temperature for this param value first, so the per-
+            // value lockstep append below keeps all series the same length.
+            Map<Double, NgSpiceRunner.Result> resultsPerTemp = new LinkedHashMap<>();
+            boolean anyOk = false;
+            for (double T : tempValues) {
+                String netlist = NetlistBuilder.buildNetlist(
+                    swapParam(extraction.components, targetPos, paramName, val),
+                    effectiveProbes,
+                    cpList,
+                    pdkName,
+                    pdkLibPath,
+                    extraction.userCommands,
+                    extraction.userPlots
                 );
+                netlist = injectTemp(netlist, T);
+                if (firstIteration) {
+                    appendNetlistToBook(bookLines, netlist,
+                            "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
+                                    + paramName + "=" + ComponentEditScreen.formatValue(val)
+                                    + unit(targetBlock, paramName)
+                                    + (multiTemp ? (", T=" + ComponentEditScreen.formatValue(T) + "C") : "")
+                                    + ")");
+                    firstIteration = false;
+                }
+                NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
+                if (result.error != null) {
+                    String first = result.error
+                        .lines()
+                        .filter(l -> !l.isBlank())
+                        .findFirst()
+                        .orElse("unknown error");
+                    String label = multiTemp ? ("  Error @T=" + ComponentEditScreen.formatValue(T) + "C: ") : "  Error: ";
+                    msg(player, label + first, ChatFormatting.RED);
+                    bookLines.add(label + first);
+                    resultsPerTemp.put(T, null);
+                    continue;
+                }
+                if (result.values.isEmpty()) {
+                    resultsPerTemp.put(T, null);
+                    continue;
+                }
+                resultsPerTemp.put(T, result);
+                anyOk = true;
+            }
+            if (!anyOk) {
                 bookLines.add("  (no results)");
                 continue;
             }
 
             validSweep.add(val);
-            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
-                String line =
-                    "  [" +
-                    probe.label +
-                    "]: " +
-                    result.getNodeVoltage(probe.netName);
-                msg(player, line, ChatFormatting.AQUA);
-                bookLines.add(line);
-                Double v = result.values.get("v(" + probe.netName + ")");
-                voltData.get(probe.label).add(v != null ? v : 0.0);
-            }
-            for (int k = 0; k < cpList.size(); k++) {
-                String line =
-                    "  [" +
-                    cpList.get(k).label +
-                    "]: " +
-                    result.getBranchCurrent("vm" + (k + 1));
-                msg(player, line, ChatFormatting.LIGHT_PURPLE);
-                bookLines.add(line);
-                Double i = result.values.get("i(vm" + (k + 1) + ")");
-                currData.get(cpList.get(k).label).add(i != null ? i : 0.0);
-            }
-            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
-                Double v = result.extrasByName.get(plot.name);
-                voltData.get(plot.label).add(v != null ? v : 0.0);
+            for (double T : tempValues) {
+                NgSpiceRunner.Result result = resultsPerTemp.get(T);
+                String suffix = tempSuffix(T, multiTemp);
+                for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                    Double v = result != null ? result.values.get("v(" + probe.netName + ")") : null;
+                    voltData.get(probe.label + suffix).add(v != null ? v : 0.0);
+                    if (result != null) {
+                        String tag = multiTemp ? ("@" + ComponentEditScreen.formatValue(T) + "C") : "";
+                        String line = "  [" + probe.label + tag + "]: " + result.getNodeVoltage(probe.netName);
+                        msg(player, line, ChatFormatting.AQUA);
+                        bookLines.add(line);
+                    }
+                }
+                for (int k = 0; k < cpList.size(); k++) {
+                    Double i = result != null ? result.values.get("i(vm" + (k + 1) + ")") : null;
+                    currData.get(cpList.get(k).label + suffix).add(i != null ? i : 0.0);
+                    if (result != null) {
+                        String tag = multiTemp ? ("@" + ComponentEditScreen.formatValue(T) + "C") : "";
+                        String line = "  [" + cpList.get(k).label + tag + "]: " + result.getBranchCurrent("vm" + (k + 1));
+                        msg(player, line, ChatFormatting.LIGHT_PURPLE);
+                        bookLines.add(line);
+                    }
+                }
+                for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                    Double v = result != null ? result.extrasByName.get(plot.name) : null;
+                    voltData.get(plot.label + suffix).add(v != null ? v : 0.0);
+                }
             }
         }
 
@@ -896,11 +964,13 @@ public class SimulatePacket {
         Block targetBlock,
         String paramName,
         List<Double> sweepValues,
+        List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
         List<String> bookLines,
         List<Component> graphPageComponents
     ) {
+        boolean multiTemp = tempValues.size() > 1;
         List<Double> freqAxis = null;
         Map<String, List<Double>> voltData   = new LinkedHashMap<>();
         Map<String, List<Double>> currData   = new LinkedHashMap<>();
@@ -908,101 +978,106 @@ public class SimulatePacket {
 
         boolean firstIteration = true;
         for (double val : sweepValues) {
-            String secHdr =
-                "--- " +
-                ComponentEditScreen.formatValue(val) +
-                unit(targetBlock, paramName) +
-                " (AC) ---";
-            msg(player, secHdr, ChatFormatting.YELLOW);
-            bookLines.add(secHdr);
+            for (double T : tempValues) {
+                String tempLbl = multiTemp ? (", T=" + ComponentEditScreen.formatValue(T) + "C") : "";
+                String secHdr =
+                    "--- " +
+                    ComponentEditScreen.formatValue(val) +
+                    unit(targetBlock, paramName) + tempLbl +
+                    " (AC) ---";
+                msg(player, secHdr, ChatFormatting.YELLOW);
+                bookLines.add(secHdr);
 
-            String netlist = NetlistBuilder.buildAcNetlist(
-                swapParam(extraction.components, targetPos, paramName, val),
-                effectiveProbes,
-                cpList,
-                fStart,
-                fStop,
-                ptsPerDec,
-                pdkName,
-                pdkLibPath,
-                extraction.userCommands,
-                extraction.userPlots
-            );
-            if (firstIteration) {
-                appendNetlistToBook(bookLines, netlist,
-                        "Netlist (iter 1 of " + sweepValues.size() + ", "
-                                + paramName + "=" + ComponentEditScreen.formatValue(val)
-                                + unit(targetBlock, paramName) + ")");
-                firstIteration = false;
-            }
-
-            NgSpiceRunner.Result result = NgSpiceRunner.run(
-                netlist,
-                ngBehavior
-            );
-            if (result.error != null) {
-                String first = result.error
-                    .lines()
-                    .filter(l -> !l.isBlank())
-                    .findFirst()
-                    .orElse("unknown error");
-                msg(player, "  Error: " + first, ChatFormatting.RED);
-                bookLines.add("  Error: " + first);
-                continue;
-            }
-            if (result.acData.isEmpty()) {
-                msg(player, "  (no AC results)", ChatFormatting.GRAY);
-                bookLines.add("  (no AC results)");
-                continue;
-            }
-
-            List<Double> sortedFreqs = new ArrayList<>(result.acData.keySet());
-            Collections.sort(sortedFreqs);
-            if (freqAxis == null) freqAxis = sortedFreqs;
-
-            String stepSuffix =
-                "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName);
-            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
-                String seriesName = probe.label + stepSuffix;
-                String vKey = "v(" + probe.netName + ")_mag";
-                List<Double> mags = new ArrayList<>();
-                for (double f : sortedFreqs) {
-                    Map<String, Double> vals = result.acData.get(f);
-                    Double m = vals != null ? vals.get(vKey) : null;
-                    mags.add(m != null ? m : 0.0);
+                String netlist = NetlistBuilder.buildAcNetlist(
+                    swapParam(extraction.components, targetPos, paramName, val),
+                    effectiveProbes,
+                    cpList,
+                    fStart,
+                    fStop,
+                    ptsPerDec,
+                    pdkName,
+                    pdkLibPath,
+                    extraction.userCommands,
+                    extraction.userPlots
+                );
+                netlist = injectTemp(netlist, T);
+                if (firstIteration) {
+                    appendNetlistToBook(bookLines, netlist,
+                            "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
+                                    + paramName + "=" + ComponentEditScreen.formatValue(val)
+                                    + unit(targetBlock, paramName) + tempLbl + ")");
+                    firstIteration = false;
                 }
-                voltData.put(seriesName, mags);
-            }
-            for (int k = 0; k < cpList.size(); k++) {
-                String seriesName = cpList.get(k).label + stepSuffix;
-                String iKey = "i(vm" + (k + 1) + ")_mag";
-                List<Double> mags = new ArrayList<>();
-                for (double f : sortedFreqs) {
-                    Map<String, Double> vals = result.acData.get(f);
-                    Double m = vals != null ? vals.get(iKey) : null;
-                    mags.add(m != null ? m : 0.0);
+
+                NgSpiceRunner.Result result = NgSpiceRunner.run(
+                    netlist,
+                    ngBehavior
+                );
+                if (result.error != null) {
+                    String first = result.error
+                        .lines()
+                        .filter(l -> !l.isBlank())
+                        .findFirst()
+                        .orElse("unknown error");
+                    msg(player, "  Error: " + first, ChatFormatting.RED);
+                    bookLines.add("  Error: " + first);
+                    continue;
                 }
-                currData.put(seriesName, mags);
-            }
-            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
-                String seriesName = plot.label + stepSuffix;
-                String key = plot.name + "_mag";
-                List<Double> mags = new ArrayList<>();
-                for (double f : sortedFreqs) {
-                    Map<String, Double> vals = result.acData.get(f);
-                    Double m = vals != null ? vals.get(key) : null;
-                    mags.add(m != null ? m : 0.0);
+                if (result.acData.isEmpty()) {
+                    msg(player, "  (no AC results)", ChatFormatting.GRAY);
+                    bookLines.add("  (no AC results)");
+                    continue;
                 }
-                voltData.put(seriesName, mags);
-                probeUnits.put(seriesName, plot.unit);
-            }
-            // Per-iteration scalar measurements (.meas dc_gain / gbw / pm).
-            if (!result.extras.isEmpty()) {
-                bookLines.add("  Measurements:");
-                for (String extra : result.extras) {
-                    String line = "    " + extra;
-                    msg(player, line, ChatFormatting.LIGHT_PURPLE);
-                    bookLines.add(line);
+
+                List<Double> sortedFreqs = new ArrayList<>(result.acData.keySet());
+                Collections.sort(sortedFreqs);
+                if (freqAxis == null) freqAxis = sortedFreqs;
+
+                String stepSuffix =
+                    "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName)
+                    + tempSuffix(T, multiTemp);
+                for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                    String seriesName = probe.label + stepSuffix;
+                    String vKey = "v(" + probe.netName + ")_mag";
+                    List<Double> mags = new ArrayList<>();
+                    for (double f : sortedFreqs) {
+                        Map<String, Double> vals = result.acData.get(f);
+                        Double m = vals != null ? vals.get(vKey) : null;
+                        mags.add(m != null ? m : 0.0);
+                    }
+                    voltData.put(seriesName, mags);
+                }
+                for (int k = 0; k < cpList.size(); k++) {
+                    String seriesName = cpList.get(k).label + stepSuffix;
+                    String iKey = "i(vm" + (k + 1) + ")_mag";
+                    List<Double> mags = new ArrayList<>();
+                    for (double f : sortedFreqs) {
+                        Map<String, Double> vals = result.acData.get(f);
+                        Double m = vals != null ? vals.get(iKey) : null;
+                        mags.add(m != null ? m : 0.0);
+                    }
+                    currData.put(seriesName, mags);
+                }
+                for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                    String seriesName = plot.label + stepSuffix;
+                    String key = plot.name + "_mag";
+                    List<Double> mags = new ArrayList<>();
+                    for (double f : sortedFreqs) {
+                        Map<String, Double> vals = result.acData.get(f);
+                        Double m = vals != null ? vals.get(key) : null;
+                        mags.add(m != null ? m : 0.0);
+                    }
+                    voltData.put(seriesName, mags);
+                    probeUnits.put(seriesName, plot.unit);
+                }
+                // Per-iteration scalar measurements (.meas dc_gain / gbw / pm).
+                if (!result.extras.isEmpty()) {
+                    bookLines.add("  Measurements:");
+                    for (String extra : result.extras) {
+                        String line = "    " + extra;
+                        msg(player, line, ChatFormatting.LIGHT_PURPLE);
+                        bookLines.add(line);
+                    }
                 }
             }
         }
@@ -1045,11 +1120,13 @@ public class SimulatePacket {
         Block targetBlock,
         String paramName,
         List<Double> sweepValues,
+        List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
         List<String> bookLines,
         List<Component> graphPageComponents
     ) {
+        boolean multiTemp = tempValues.size() > 1;
         double tstep = fStart;
         double tstop = fStop;
 
@@ -1060,93 +1137,98 @@ public class SimulatePacket {
 
         boolean firstIteration = true;
         for (double val : sweepValues) {
-            String secHdr =
-                "--- " +
-                ComponentEditScreen.formatValue(val) +
-                unit(targetBlock, paramName) +
-                " (TRAN) ---";
-            msg(player, secHdr, ChatFormatting.YELLOW);
-            bookLines.add(secHdr);
+            for (double T : tempValues) {
+                String tempLbl = multiTemp ? (", T=" + ComponentEditScreen.formatValue(T) + "C") : "";
+                String secHdr =
+                    "--- " +
+                    ComponentEditScreen.formatValue(val) +
+                    unit(targetBlock, paramName) + tempLbl +
+                    " (TRAN) ---";
+                msg(player, secHdr, ChatFormatting.YELLOW);
+                bookLines.add(secHdr);
 
-            String netlist = NetlistBuilder.buildTranNetlist(
-                swapParam(extraction.components, targetPos, paramName, val),
-                effectiveProbes,
-                cpList,
-                tstep,
-                tstop,
-                pdkName,
-                pdkLibPath,
-                extraction.userCommands,
-                extraction.userPlots
-            );
-            if (firstIteration) {
-                appendNetlistToBook(bookLines, netlist,
-                        "Netlist (iter 1 of " + sweepValues.size() + ", "
-                                + paramName + "=" + ComponentEditScreen.formatValue(val)
-                                + unit(targetBlock, paramName) + ")");
-                firstIteration = false;
-            }
-
-            NgSpiceRunner.Result result = NgSpiceRunner.run(
-                netlist,
-                ngBehavior
-            );
-            if (result.error != null) {
-                String first = result.error
-                    .lines()
-                    .filter(l -> !l.isBlank())
-                    .findFirst()
-                    .orElse("unknown error");
-                msg(player, "  Error: " + first, ChatFormatting.RED);
-                bookLines.add("  Error: " + first);
-                continue;
-            }
-            if (result.tranData.isEmpty()) {
-                msg(player, "  (no TRAN results)", ChatFormatting.GRAY);
-                bookLines.add("  (no TRAN results)");
-                continue;
-            }
-
-            List<Double> sortedTimes = new ArrayList<>(
-                result.tranData.keySet()
-            );
-            Collections.sort(sortedTimes);
-            if (timeAxis == null) timeAxis = sortedTimes;
-
-            String stepSuffix =
-                "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName);
-            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
-                String seriesName = probe.label + stepSuffix;
-                String vKey = "v(" + probe.netName + ")";
-                List<Double> vals = new ArrayList<>();
-                for (double t : sortedTimes) {
-                    Map<String, Double> row = result.tranData.get(t);
-                    Double v = row != null ? row.get(vKey) : null;
-                    vals.add(v != null ? v : 0.0);
+                String netlist = NetlistBuilder.buildTranNetlist(
+                    swapParam(extraction.components, targetPos, paramName, val),
+                    effectiveProbes,
+                    cpList,
+                    tstep,
+                    tstop,
+                    pdkName,
+                    pdkLibPath,
+                    extraction.userCommands,
+                    extraction.userPlots
+                );
+                netlist = injectTemp(netlist, T);
+                if (firstIteration) {
+                    appendNetlistToBook(bookLines, netlist,
+                            "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
+                                    + paramName + "=" + ComponentEditScreen.formatValue(val)
+                                    + unit(targetBlock, paramName) + tempLbl + ")");
+                    firstIteration = false;
                 }
-                voltData.put(seriesName, vals);
-            }
-            for (int k = 0; k < cpList.size(); k++) {
-                String seriesName = cpList.get(k).label + stepSuffix;
-                String iKey = "i(vm" + (k + 1) + ")";
-                List<Double> vals = new ArrayList<>();
-                for (double t : sortedTimes) {
-                    Map<String, Double> row = result.tranData.get(t);
-                    Double v = row != null ? row.get(iKey) : null;
-                    vals.add(v != null ? v : 0.0);
+
+                NgSpiceRunner.Result result = NgSpiceRunner.run(
+                    netlist,
+                    ngBehavior
+                );
+                if (result.error != null) {
+                    String first = result.error
+                        .lines()
+                        .filter(l -> !l.isBlank())
+                        .findFirst()
+                        .orElse("unknown error");
+                    msg(player, "  Error: " + first, ChatFormatting.RED);
+                    bookLines.add("  Error: " + first);
+                    continue;
                 }
-                currData.put(seriesName, vals);
-            }
-            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
-                String seriesName = plot.label + stepSuffix;
-                List<Double> vals = new ArrayList<>();
-                for (double t : sortedTimes) {
-                    Map<String, Double> row = result.tranData.get(t);
-                    Double v = row != null ? row.get(plot.name) : null;
-                    vals.add(v != null ? v : 0.0);
+                if (result.tranData.isEmpty()) {
+                    msg(player, "  (no TRAN results)", ChatFormatting.GRAY);
+                    bookLines.add("  (no TRAN results)");
+                    continue;
                 }
-                voltData.put(seriesName, vals);
-                probeUnits.put(seriesName, plot.unit);
+
+                List<Double> sortedTimes = new ArrayList<>(
+                    result.tranData.keySet()
+                );
+                Collections.sort(sortedTimes);
+                if (timeAxis == null) timeAxis = sortedTimes;
+
+                String stepSuffix =
+                    "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName)
+                    + tempSuffix(T, multiTemp);
+                for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                    String seriesName = probe.label + stepSuffix;
+                    String vKey = "v(" + probe.netName + ")";
+                    List<Double> vals = new ArrayList<>();
+                    for (double t : sortedTimes) {
+                        Map<String, Double> row = result.tranData.get(t);
+                        Double v = row != null ? row.get(vKey) : null;
+                        vals.add(v != null ? v : 0.0);
+                    }
+                    voltData.put(seriesName, vals);
+                }
+                for (int k = 0; k < cpList.size(); k++) {
+                    String seriesName = cpList.get(k).label + stepSuffix;
+                    String iKey = "i(vm" + (k + 1) + ")";
+                    List<Double> vals = new ArrayList<>();
+                    for (double t : sortedTimes) {
+                        Map<String, Double> row = result.tranData.get(t);
+                        Double v = row != null ? row.get(iKey) : null;
+                        vals.add(v != null ? v : 0.0);
+                    }
+                    currData.put(seriesName, vals);
+                }
+                for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                    String seriesName = plot.label + stepSuffix;
+                    List<Double> vals = new ArrayList<>();
+                    for (double t : sortedTimes) {
+                        Map<String, Double> row = result.tranData.get(t);
+                        Double v = row != null ? row.get(plot.name) : null;
+                        vals.add(v != null ? v : 0.0);
+                    }
+                    voltData.put(seriesName, vals);
+                    probeUnits.put(seriesName, plot.unit);
+                }
             }
         }
 
@@ -1177,6 +1259,416 @@ public class SimulatePacket {
         );
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (parametric " + analysis + ")");
+    }
+
+    // -------------------------------------------------------------------------
+    // .DC TEMP sweep — 1D, X-axis = temperature, one .op run per step.
+    // Reused for OP + multi-temp (same shape, just different source of the
+    // temperature list).
+    // -------------------------------------------------------------------------
+
+    private void runTempSweep(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        List<Double> sweepTemps,
+        List<String> bookLines,
+        List<Component> graphPageComponents
+    ) {
+        if (sweepTemps.isEmpty()) {
+            msg(player, "No temperatures to sweep.", ChatFormatting.RED);
+            return;
+        }
+        if (sweepTemps.size() > 50) {
+            msg(player, "Too many temperature points (" + sweepTemps.size() + "); max 50.",
+                ChatFormatting.RED);
+            return;
+        }
+
+        // Use ONLY the user-placed probes. effectiveProbes() auto-fabricates
+        // a "Node N" probe for every node in the circuit when there are none,
+        // which drowns the output in "Node 2: N/A" entries for disconnected
+        // pins and pollutes the .control block with spurious `print v(N)`
+        // lines that fight the user's own `print` commands.
+        List<NetlistBuilder.ProbeInfo> probes = extraction.probes;
+        List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
+
+        String header = "=== Temperature Sweep (" + sweepTemps.size() + " pts) ===";
+        msg(player, header, ChatFormatting.GOLD);
+        bookLines.add(header);
+
+        List<Double> validSweep = new ArrayList<>();
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
+        for (NetlistBuilder.ProbeInfo p : probes)
+            voltData.put(p.label, new ArrayList<>());
+        for (NetlistBuilder.CurrentProbeInfo c : cpList)
+            currData.put(c.label, new ArrayList<>());
+        for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+            voltData.put(plot.label, new ArrayList<>());
+            probeUnits.put(plot.label, plot.unit);
+        }
+        // Names already declared via `plot NAME = ...` directives; the raw
+        // `print` output for these would land in extrasByName under the same
+        // key, so skip them when auto-graphing to avoid double-creating a
+        // series.
+        java.util.Set<String> userPlotNames = new java.util.HashSet<>();
+        for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+            if (plot.name != null) userPlotNames.add(plot.name.toLowerCase(java.util.Locale.ROOT));
+        }
+        // Series grown lazily from raw `print` scalars in the Commands block.
+        // Each unique key encountered in result.extrasByName gets one series;
+        // entries are padded with zeros for iterations where ngspice didn't
+        // emit the key so all series stay aligned with validSweep.
+        Map<String, List<Double>> extraSeries = new LinkedHashMap<>();
+
+        boolean firstIteration = true;
+        for (double T : sweepTemps) {
+            String secHdr = "--- " + ComponentEditScreen.formatValue(T) + "C ---";
+            msg(player, secHdr, ChatFormatting.YELLOW);
+            bookLines.add(secHdr);
+
+            String netlist = NetlistBuilder.buildNetlist(
+                extraction.components,
+                probes,
+                cpList,
+                pdkName,
+                pdkLibPath,
+                pdkLibPaths,
+                ngBehavior,
+                extraction.userCommands,
+                extraction.userPlots
+            );
+            netlist = injectTemp(netlist, T);
+            if (firstIteration) {
+                appendNetlistToBook(bookLines, netlist,
+                        "Netlist (iter 1 of " + sweepTemps.size() + ", T="
+                                + ComponentEditScreen.formatValue(T) + "C)");
+                firstIteration = false;
+            }
+            NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
+            if (result.error != null) {
+                String first = result.error
+                    .lines()
+                    .filter(l -> !l.isBlank())
+                    .findFirst()
+                    .orElse("unknown error");
+                msg(player, "  Error: " + first, ChatFormatting.RED);
+                bookLines.add("  Error: " + first);
+                continue;
+            }
+            // result.values is empty for circuits driven purely through user
+            // `print` commands (no probes, no v/i bucket). Don't abort on
+            // that — extrasByName may still have content.
+            if (result.values.isEmpty() && result.extrasByName.isEmpty()) {
+                msg(player, "  (no results)", ChatFormatting.GRAY);
+                bookLines.add("  (no results)");
+                continue;
+            }
+
+            validSweep.add(T);
+            for (NetlistBuilder.ProbeInfo probe : probes) {
+                Double v = result.values.get("v(" + probe.netName + ")");
+                voltData.get(probe.label).add(v != null ? v : 0.0);
+                String line = "  [" + probe.label + "]: " + result.getNodeVoltage(probe.netName);
+                msg(player, line, ChatFormatting.AQUA);
+                bookLines.add(line);
+            }
+            for (int k = 0; k < cpList.size(); k++) {
+                Double i = result.values.get("i(vm" + (k + 1) + ")");
+                currData.get(cpList.get(k).label).add(i != null ? i : 0.0);
+                String line = "  [" + cpList.get(k).label + "]: " + result.getBranchCurrent("vm" + (k + 1));
+                msg(player, line, ChatFormatting.LIGHT_PURPLE);
+                bookLines.add(line);
+            }
+            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                Double v = result.extrasByName.get(plot.name);
+                voltData.get(plot.label).add(v != null ? v : 0.0);
+            }
+            // Display raw `print` scalars (e.g. @m.xm1...[gm]) per iteration —
+            // the single-shot runOpSimulation already does this; the temp
+            // sweep needs to too, otherwise the user's scalar output is
+            // silently dropped.
+            for (String extra : result.extras) {
+                String line = "  " + extra;
+                msg(player, line, ChatFormatting.AQUA);
+                bookLines.add(line);
+            }
+            // ... and auto-grow a series per print key so each scalar can be
+            // plotted against temperature.
+            for (Map.Entry<String, Double> e : result.extrasByName.entrySet()) {
+                String key = e.getKey();
+                if (key == null) continue;
+                if (userPlotNames.contains(key.toLowerCase(java.util.Locale.ROOT))) continue;
+                List<Double> series = extraSeries.get(key);
+                if (series == null) {
+                    series = new ArrayList<>();
+                    // Pad past validSweep entries that didn't emit this key.
+                    int prior = validSweep.size() - 1;
+                    for (int i = 0; i < prior; i++) series.add(0.0);
+                    extraSeries.put(key, series);
+                }
+                series.add(e.getValue());
+            }
+            // Pad any series that existed but didn't appear this iteration
+            // so every series stays exactly validSweep.size() long.
+            for (List<Double> series : extraSeries.values()) {
+                while (series.size() < validSweep.size()) series.add(0.0);
+            }
+        }
+
+        if (validSweep.isEmpty()) return;
+        // Merge auto-discovered print series into voltData with an empty
+        // unit (we don't know whether gm is in A/V, fT is in Hz, etc.).
+        for (Map.Entry<String, List<Double>> e : extraSeries.entrySet()) {
+            voltData.put(e.getKey(), e.getValue());
+            probeUnits.put(e.getKey(), "");
+        }
+        int sessionId = ParametricResultCache.store(
+            new ParametricResultCache.ResultSet(
+                "Temperature",
+                "C",
+                validSweep,
+                voltData,
+                currData,
+                probeUnits,
+                false
+            )
+        );
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (Temp Sweep)");
+    }
+
+    // -------------------------------------------------------------------------
+    // Multi-temperature .AC — same X axis (frequency) but one curve per
+    // temperature, stacked into a single ResultSet with @<T>C suffix.
+    // -------------------------------------------------------------------------
+
+    private void runMultiTempAcSweep(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        List<Double> tempValues,
+        List<String> bookLines,
+        List<Component> graphPageComponents
+    ) {
+        List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
+        List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
+
+        String header = "=== AC + Temp Sweep (" + tempValues.size() + " temps) ===";
+        msg(player, header, ChatFormatting.GOLD);
+        bookLines.add(header);
+
+        List<Double> freqAxis = null;
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
+
+        boolean firstIteration = true;
+        for (double T : tempValues) {
+            String secHdr = "--- " + ComponentEditScreen.formatValue(T) + "C (AC) ---";
+            msg(player, secHdr, ChatFormatting.YELLOW);
+            bookLines.add(secHdr);
+
+            String netlist = NetlistBuilder.buildAcNetlist(
+                extraction.components,
+                effectiveProbes,
+                cpList,
+                fStart, fStop, ptsPerDec,
+                pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                extraction.userCommands, extraction.userPlots
+            );
+            netlist = injectTemp(netlist, T);
+            if (firstIteration) {
+                appendNetlistToBook(bookLines, netlist,
+                        "Netlist (iter 1 of " + tempValues.size() + ", T="
+                                + ComponentEditScreen.formatValue(T) + "C)");
+                firstIteration = false;
+            }
+            NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
+            if (result.error != null) {
+                String first = result.error
+                    .lines()
+                    .filter(l -> !l.isBlank())
+                    .findFirst()
+                    .orElse("unknown error");
+                msg(player, "  Error: " + first, ChatFormatting.RED);
+                bookLines.add("  Error: " + first);
+                continue;
+            }
+            if (result.acData.isEmpty()) {
+                msg(player, "  (no AC results)", ChatFormatting.GRAY);
+                bookLines.add("  (no AC results)");
+                continue;
+            }
+
+            List<Double> sortedFreqs = new ArrayList<>(result.acData.keySet());
+            Collections.sort(sortedFreqs);
+            if (freqAxis == null) freqAxis = sortedFreqs;
+
+            String suffix = tempSuffix(T, true);
+            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                String seriesName = probe.label + suffix;
+                String vKey = "v(" + probe.netName + ")_mag";
+                List<Double> mags = new ArrayList<>();
+                for (double f : sortedFreqs) {
+                    Map<String, Double> vals = result.acData.get(f);
+                    Double m = vals != null ? vals.get(vKey) : null;
+                    mags.add(m != null ? m : 0.0);
+                }
+                voltData.put(seriesName, mags);
+            }
+            for (int k = 0; k < cpList.size(); k++) {
+                String seriesName = cpList.get(k).label + suffix;
+                String iKey = "i(vm" + (k + 1) + ")_mag";
+                List<Double> mags = new ArrayList<>();
+                for (double f : sortedFreqs) {
+                    Map<String, Double> vals = result.acData.get(f);
+                    Double m = vals != null ? vals.get(iKey) : null;
+                    mags.add(m != null ? m : 0.0);
+                }
+                currData.put(seriesName, mags);
+            }
+            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                String seriesName = plot.label + suffix;
+                String key = plot.name + "_mag";
+                List<Double> mags = new ArrayList<>();
+                for (double f : sortedFreqs) {
+                    Map<String, Double> vals = result.acData.get(f);
+                    Double m = vals != null ? vals.get(key) : null;
+                    mags.add(m != null ? m : 0.0);
+                }
+                voltData.put(seriesName, mags);
+                probeUnits.put(seriesName, plot.unit);
+            }
+        }
+
+        if (freqAxis == null || freqAxis.isEmpty()) return;
+        int sessionId = ParametricResultCache.store(
+            new ParametricResultCache.ResultSet(
+                "Frequency", "Hz", freqAxis,
+                voltData, currData, probeUnits, true
+            )
+        );
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (AC + Temp Sweep)");
+    }
+
+    // -------------------------------------------------------------------------
+    // Multi-temperature .TRAN — like AC variant but the X axis is time.
+    // -------------------------------------------------------------------------
+
+    private void runMultiTempTranSweep(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        List<Double> tempValues,
+        List<String> bookLines,
+        List<Component> graphPageComponents
+    ) {
+        List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
+        List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
+
+        double tstep = fStart;
+        double tstop = fStop;
+
+        String header = "=== TRAN + Temp Sweep (" + tempValues.size() + " temps) ===";
+        msg(player, header, ChatFormatting.GOLD);
+        bookLines.add(header);
+
+        List<Double> timeAxis = null;
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
+
+        boolean firstIteration = true;
+        for (double T : tempValues) {
+            String secHdr = "--- " + ComponentEditScreen.formatValue(T) + "C (TRAN) ---";
+            msg(player, secHdr, ChatFormatting.YELLOW);
+            bookLines.add(secHdr);
+
+            String netlist = NetlistBuilder.buildTranNetlist(
+                extraction.components,
+                effectiveProbes,
+                cpList,
+                tstep, tstop,
+                pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                extraction.userCommands, extraction.userPlots
+            );
+            netlist = injectTemp(netlist, T);
+            if (firstIteration) {
+                appendNetlistToBook(bookLines, netlist,
+                        "Netlist (iter 1 of " + tempValues.size() + ", T="
+                                + ComponentEditScreen.formatValue(T) + "C)");
+                firstIteration = false;
+            }
+            NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
+            if (result.error != null) {
+                String first = result.error
+                    .lines()
+                    .filter(l -> !l.isBlank())
+                    .findFirst()
+                    .orElse("unknown error");
+                msg(player, "  Error: " + first, ChatFormatting.RED);
+                bookLines.add("  Error: " + first);
+                continue;
+            }
+            if (result.tranData.isEmpty()) {
+                msg(player, "  (no TRAN results)", ChatFormatting.GRAY);
+                bookLines.add("  (no TRAN results)");
+                continue;
+            }
+
+            List<Double> sortedTimes = new ArrayList<>(result.tranData.keySet());
+            Collections.sort(sortedTimes);
+            if (timeAxis == null) timeAxis = sortedTimes;
+
+            String suffix = tempSuffix(T, true);
+            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                String seriesName = probe.label + suffix;
+                String vKey = "v(" + probe.netName + ")";
+                List<Double> vals = new ArrayList<>();
+                for (double t : sortedTimes) {
+                    Map<String, Double> row = result.tranData.get(t);
+                    Double v = row != null ? row.get(vKey) : null;
+                    vals.add(v != null ? v : 0.0);
+                }
+                voltData.put(seriesName, vals);
+            }
+            for (int k = 0; k < cpList.size(); k++) {
+                String seriesName = cpList.get(k).label + suffix;
+                String iKey = "i(vm" + (k + 1) + ")";
+                List<Double> vals = new ArrayList<>();
+                for (double t : sortedTimes) {
+                    Map<String, Double> row = result.tranData.get(t);
+                    Double v = row != null ? row.get(iKey) : null;
+                    vals.add(v != null ? v : 0.0);
+                }
+                currData.put(seriesName, vals);
+            }
+            for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                String seriesName = plot.label + suffix;
+                List<Double> vals = new ArrayList<>();
+                for (double t : sortedTimes) {
+                    Map<String, Double> row = result.tranData.get(t);
+                    Double v = row != null ? row.get(plot.name) : null;
+                    vals.add(v != null ? v : 0.0);
+                }
+                voltData.put(seriesName, vals);
+                probeUnits.put(seriesName, plot.unit);
+            }
+        }
+
+        if (timeAxis == null || timeAxis.isEmpty()) return;
+        int sessionId = ParametricResultCache.store(
+            new ParametricResultCache.ResultSet(
+                "Time", "s", timeAxis,
+                voltData, currData, probeUnits, false
+            )
+        );
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (TRAN + Temp Sweep)");
     }
 
     // -------------------------------------------------------------------------
@@ -1542,5 +2034,100 @@ public class SimulatePacket {
                 }
             })
             .collect(Collectors.toList());
+    }
+
+    // -------------------------------------------------------------------------
+    // Temperature helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Parses the {@code simTemp} string from the UI. Plain numbers only — no
+     * SI suffixes, so "20m" is rejected rather than silently meaning 0.02°C.
+     *
+     * <ul>
+     *   <li>empty / unparseable → {@code [27.0]} (the ngspice default)</li>
+     *   <li>{@code "27.5"} → {@code [27.5]} (single run)</li>
+     *   <li>{@code "20:40:5"} → expanded inclusive range, max 50 values</li>
+     *   <li>{@code "20,30,40"} → comma list</li>
+     * </ul>
+     */
+    private static List<Double> parseTempValues(String spec) {
+        if (spec == null) return java.util.List.of(27.0);
+        String s = spec.trim();
+        if (s.isEmpty()) return java.util.List.of(27.0);
+        try {
+            if (s.contains(":")) {
+                String[] parts = s.split(":");
+                if (parts.length != 3) return java.util.List.of(27.0);
+                double start = Double.parseDouble(parts[0].trim());
+                double stop  = Double.parseDouble(parts[1].trim());
+                double step  = Double.parseDouble(parts[2].trim());
+                if (step == 0) return java.util.List.of(27.0);
+                List<Double> vals = new ArrayList<>();
+                double eps = 1e-10 * Math.abs(step);
+                if (step > 0) {
+                    for (double v = start; v <= stop + eps && vals.size() < 50; v += step) vals.add(v);
+                } else {
+                    for (double v = start; v >= stop - eps && vals.size() < 50; v += step) vals.add(v);
+                }
+                return vals.isEmpty() ? java.util.List.of(27.0) : vals;
+            }
+            if (s.contains(",")) {
+                List<Double> vals = new ArrayList<>();
+                for (String t : s.split(",")) {
+                    String tt = t.trim();
+                    if (tt.isEmpty()) continue;
+                    vals.add(Double.parseDouble(tt));
+                    if (vals.size() >= 50) break;
+                }
+                return vals.isEmpty() ? java.util.List.of(27.0) : vals;
+            }
+            return java.util.List.of(Double.parseDouble(s));
+        } catch (NumberFormatException e) {
+            return java.util.List.of(27.0);
+        }
+    }
+
+    /**
+     * Suffix appended to series names when more than one temperature is being
+     * swept. Single-temp runs return {@code ""} so series names stay identical
+     * to the pre-temperature-sweep code paths.
+     */
+    private static String tempSuffix(double tempC, boolean multiTemp) {
+        if (!multiTemp) return "";
+        String t;
+        if (tempC == (long) tempC) t = Long.toString((long) tempC);
+        else                       t = String.format(java.util.Locale.ROOT, "%g", tempC);
+        return "@" + t + "C";
+    }
+
+    /**
+     * Splices a {@code .temp <tempC>} directive into a netlist immediately
+     * before the first {@code .op}/{@code .ac}/{@code .tran}/{@code .dc}
+     * analysis line. ngspice requires {@code .temp} at the netlist (not
+     * control) level, so this can't go inside the {@code .control} block we
+     * already build. If no analysis directive is found the netlist is
+     * returned unchanged.
+     */
+    private static String injectTemp(String netlist, double tempC) {
+        String[] lines = netlist.split("\\r?\\n", -1);
+        StringBuilder out = new StringBuilder(netlist.length() + 32);
+        boolean injected = false;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (!injected) {
+                String trimmed = line.trim().toLowerCase(java.util.Locale.ROOT);
+                if (trimmed.startsWith(".op")
+                        || trimmed.startsWith(".ac ")
+                        || trimmed.startsWith(".tran ")
+                        || trimmed.startsWith(".dc ")) {
+                    out.append(String.format(java.util.Locale.ROOT, ".temp %g%n", tempC));
+                    injected = true;
+                }
+            }
+            out.append(line);
+            if (i < lines.length - 1) out.append('\n');
+        }
+        return out.toString();
     }
 }
