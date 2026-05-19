@@ -87,18 +87,27 @@ public class ModCommands {
                                     return 0;
                                 }
 
-                                String       probeName   = names.get(probeIndex);
-                                List<Double> probeValues = rs.getValues(probeName);
-                                String       yUnit       = rs.getUnit(probeName);
-
+                                // Pack every probe in the session so the new
+                                // GraphScreen can let the player toggle Top /
+                                // Bottom plots client-side without another
+                                // round trip. probeIndex picks the initial
+                                // slot-1 selection so chat-link click still
+                                // opens the same plot the player asked for.
+                                List<java.util.List<Double>> allData = new java.util.ArrayList<>(names.size());
+                                List<String>                  allUnits = new java.util.ArrayList<>(names.size());
+                                for (String n : names) {
+                                    allData.add(rs.getValues(n));
+                                    allUnits.add(rs.getUnit(n));
+                                }
                                 ModMessages.sendToPlayer(player, new GraphDataPacket(
-                                        probeName,
                                         rs.sweepComponentName,
                                         rs.sweepUnit,
+                                        rs.isLogFrequency,
                                         rs.sweepValues,
-                                        probeValues,
-                                        yUnit,
-                                        rs.isLogFrequency));
+                                        names,
+                                        allData,
+                                        allUnits,
+                                        probeIndex));
                                 return 1;
                             })
                         )
