@@ -10,13 +10,48 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
 ---
  
 ## Features
- 
-- **Component blocks:** Resistor, Capacitor, Inductor, Voltage Source, Current Source, Diode, Wire, Ground
-- **Measurement blocks:** Voltage Probe, Current Probe
-- **SPICE simulation** via ngspice running as a subprocess — real node voltages and branch currents
-- **In-game GUI** to configure component values (resistance, capacitance, voltage, etc.)
-- **AC support** for voltage sources (SINE waveform)
-- Results printed directly to the in-game chat
+
+### Passive & basic components
+- **Resistor, Capacitor, Inductor**
+- **Voltage sources:** DC, sinusoidal (SIN), pulse (PULSE)
+- **Current source**
+- **Diode**
+- **Wire** and **Ground**
+
+### Controlled (dependent) sources
+- **VCVS** — voltage-controlled voltage source (E)
+- **VCCS** — voltage-controlled current source (G)
+- **CCVS** — current-controlled voltage source (H)
+- **CCCS** — current-controlled current source (F)
+
+### IC / PDK components
+- **IC Resistor**, **IC Capacitor**
+- **IC NMOS4**, **IC PMOS4** (4-terminal MOSFETs)
+- **SKY130A** PDK support with `.lib` path configuration, plus a generic placeholder PDK and a free-form `.include` mode for custom libraries
+
+### Multi-cell blocks
+- **Amplifier** — 5×5 op-amp subcircuit with selectable 5-pin or 7-pin (offset-null) variants and a vertical-mirror toggle for swapping inverting/non-inverting inputs and supply rails
+
+### Measurement
+- **Voltage Probe** — labelled, measures node voltage
+- **Current Probe** — placed in series to measure branch current
+
+### Simulation control
+- **Simulate Block** — runs the analysis. Supported types:
+  - `.OP` — DC operating point
+  - `.AC` — frequency sweep (start/stop/points-per-decade, log-frequency axis)
+  - `.TRAN` — transient analysis (time step, stop time)
+- **Temperature** — single value (e.g. `27`) or sweep spec (e.g. `20:40:5` or `20,30,40`) for one run per temperature
+- **ngspice compat modes:** `hsa`, `psa`, `lt`, `ki`, `va`
+- **Parametric Block** — sweeps a target component's parameter (value, W, L, mult, nf) across runs
+- **Commands Block** — multi-line block of raw ngspice commands injected verbatim into the netlist `.control` section
+- **Sim Link Block** — bridges two physically-disconnected sub-circuits into the same netlist without unioning their nodes (useful for routing a CCVS/CCCS controlling source from a remote region)
+
+### Output
+- **Graph screen** — plot up to two probes simultaneously (stacked), with hover tooltips showing exact values; log10 X axis for AC sweeps
+- **SPICE simulation** via ngspice as a subprocess — real node voltages and branch currents
+- `.OP` results printed to the in-game chat
+- **In-game GUI** for every component to configure values with SI-suffix parsing (k, M, u, n, p, …)
 ---
  
 ## Requirements
