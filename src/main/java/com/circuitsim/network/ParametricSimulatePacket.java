@@ -210,6 +210,7 @@ public class ParametricSimulatePacket {
                 || b instanceof InductorBlock
                 || b instanceof VoltageSourceBlock
                 || b instanceof VoltageSourceSinBlock
+                || b instanceof VoltageSourcePulseBlock
                 || b instanceof CurrentSourceBlock
                 || b instanceof IcResistorBlock
                 || b instanceof IcCapacitorBlock
@@ -223,6 +224,7 @@ public class ParametricSimulatePacket {
         if (b instanceof InductorBlock)         return "Inductor";
         if (b instanceof VoltageSourceBlock)    return "Voltage Source";
         if (b instanceof VoltageSourceSinBlock) return "SIN Voltage Source";
+        if (b instanceof VoltageSourcePulseBlock) return "Pulse Voltage Source";
         if (b instanceof CurrentSourceBlock)    return "Current Source";
         if (b instanceof IcResistorBlock)       return "IC Resistor";
         if (b instanceof IcCapacitorBlock)      return "IC Capacitor";
@@ -239,6 +241,7 @@ public class ParametricSimulatePacket {
         if (b instanceof InductorBlock)         return "H";
         if (b instanceof VoltageSourceBlock)    return "V";
         if (b instanceof VoltageSourceSinBlock) return "V";
+        if (b instanceof VoltageSourcePulseBlock) return "V";
         if (b instanceof CurrentSourceBlock)    return "A";
         return "";
     }

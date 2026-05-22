@@ -56,6 +56,14 @@ public class ComponentBlockEntity extends BlockEntity {
     // OFF1/OFF2 cells.
     private boolean offsetEnabled = false;
 
+    // PULSE voltage source parameters. value reuses the existing field for V2
+    // (high voltage) and frequency reuses for PER (period); the rest live
+    // here. Defaults model a typical 5 V / 500 kHz digital pulse train.
+    private double pulseVLow = 0.0;     // V1 (initial / low voltage)
+    private double pulseTr   = 1e-9;    // rise time   (1 ns)
+    private double pulseTf   = 1e-9;    // fall time   (1 ns)
+    private double pulsePw   = 1e-6;    // pulse width / time-high (1 us)
+
     public ComponentBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.COMPONENT_BE.get(), pos, state);
     }
@@ -67,6 +75,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.INDUCTOR.get())           return "inductor";
         if (block == ModBlocks.VOLTAGE_SOURCE.get())     return "voltage_source";
         if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) return "voltage_source_sin";
+        if (block == ModBlocks.VOLTAGE_SOURCE_PULSE.get()) return "voltage_source_pulse";
         if (block == ModBlocks.CURRENT_SOURCE.get())     return "current_source";
         if (block == ModBlocks.DIODE.get())              return "diode";
         if (block == ModBlocks.PROBE.get())              return "probe";
@@ -131,6 +140,15 @@ public class ComponentBlockEntity extends BlockEntity {
     public boolean isOffsetEnabled()         { return offsetEnabled; }
     public void setOffsetEnabled(boolean e)  { this.offsetEnabled = e; setChanged(); }
 
+    public double getPulseVLow()             { return pulseVLow; }
+    public void setPulseVLow(double v)       { this.pulseVLow = v; setChanged(); }
+    public double getPulseTr()               { return pulseTr; }
+    public void setPulseTr(double v)         { this.pulseTr = v; setChanged(); }
+    public double getPulseTf()               { return pulseTf; }
+    public void setPulseTf(double v)         { this.pulseTf = v; setChanged(); }
+    public double getPulsePw()               { return pulsePw; }
+    public void setPulsePw(double v)         { this.pulsePw = v; setChanged(); }
+
     @Override
     protected void saveAdditional(CompoundTag tag) {
         super.saveAdditional(tag);
@@ -155,6 +173,10 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simTemp",     simTemp);
         tag.putString("commands",    commands);
         tag.putBoolean("offsetEnabled", offsetEnabled);
+        tag.putDouble("pulseVLow", pulseVLow);
+        tag.putDouble("pulseTr",   pulseTr);
+        tag.putDouble("pulseTf",   pulseTf);
+        tag.putDouble("pulsePw",   pulsePw);
     }
 
     @Override
@@ -181,6 +203,10 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("simTemp"))     simTemp     = tag.getString("simTemp");
         if (tag.contains("commands"))    commands    = tag.getString("commands");
         if (tag.contains("offsetEnabled")) offsetEnabled = tag.getBoolean("offsetEnabled");
+        if (tag.contains("pulseVLow"))   pulseVLow   = tag.getDouble("pulseVLow");
+        if (tag.contains("pulseTr"))     pulseTr     = tag.getDouble("pulseTr");
+        if (tag.contains("pulseTf"))     pulseTf     = tag.getDouble("pulseTf");
+        if (tag.contains("pulsePw"))     pulsePw     = tag.getDouble("pulsePw");
     }
 
     @Override
@@ -207,6 +233,10 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simTemp",     simTemp);
         tag.putString("commands",    commands);
         tag.putBoolean("offsetEnabled", offsetEnabled);
+        tag.putDouble("pulseVLow", pulseVLow);
+        tag.putDouble("pulseTr",   pulseTr);
+        tag.putDouble("pulseTf",   pulseTf);
+        tag.putDouble("pulsePw",   pulsePw);
         return tag;
     }
 

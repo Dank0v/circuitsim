@@ -4,6 +4,7 @@
     "block.circuitsim.inductor": "Inductor",
     "block.circuitsim.voltage_source": "Voltage Source",
     "block.circuitsim.voltage_source_sin": "SIN Voltage Source",
+    "block.circuitsim.voltage_source_pulse": "Pulse Voltage Source",
     "block.circuitsim.current_source": "Current Source",
     "block.circuitsim.diode": "Diode",
     "block.circuitsim.wire": "Wire",

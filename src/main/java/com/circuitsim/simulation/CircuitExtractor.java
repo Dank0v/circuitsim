@@ -95,7 +95,14 @@ public class CircuitExtractor {
             if (!(bs.getBlock() instanceof AmplifierBlock)) continue;
             AmplifierBlock.CellKind kind = bs.getValue(AmplifierBlock.CELL_KIND);
             if (!kind.isPin()) continue;
-            Direction outward = AmplifierBlock.rotateDir(kind.defaultOutward(),
+            // Outward is purely positional — see AmplifierBlock.outwardOf —
+            // because under MIRRORED the CellKind alone no longer determines
+            // which edge of the structure the cell sits on (VCC can be at the
+            // south edge when mirrored).
+            int col = bs.getValue(AmplifierBlock.LOCAL_X);
+            int row = bs.getValue(AmplifierBlock.LOCAL_Z);
+            Direction outward = AmplifierBlock.rotateDir(
+                    AmplifierBlock.outwardOf(col, row),
                     bs.getValue(AmplifierBlock.FACING));
             BlockPos wirePos = pos.relative(outward);
             if (!visited.contains(wirePos)) continue;
@@ -389,6 +396,7 @@ public class CircuitExtractor {
                 if (kind != AmplifierBlock.CellKind.ANCHOR) continue;
 
                 Direction facing = state.getValue(AmplifierBlock.FACING);
+                boolean   mirrored = state.getValue(AmplifierBlock.MIRRORED);
                 String modelName = "";
                 int    compNum   = 0;
                 boolean offsetEnabled = false;
@@ -398,7 +406,7 @@ public class CircuitExtractor {
                     offsetEnabled = be.isOffsetEnabled();
                 }
 
-                int[] pinNodes = resolveAmpPinNodes(level, pos, facing, offsetEnabled,
+                int[] pinNodes = resolveAmpPinNodes(level, pos, facing, offsetEnabled, mirrored,
                         visited, nodeMap, nextNode);
                 components.add(NetlistBuilder.CircuitComponent.subcircuit(
                         block, pos, pinNodes, modelName, compNum));
@@ -412,17 +420,34 @@ public class CircuitExtractor {
                 String sourceType = "DC";
                 double frequency  = 0;
                 int    compNum    = 0;
+                // Pulse-source-only — see NetlistBuilder pulse branch for the
+                // exact slot meanings. For every other component these stay 1.0
+                // and are ignored downstream.
+                double wSlot = 1.0, lSlot = 1.0, multSlot = 1.0, nfSlot = 1.0;
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     value      = be.getValue();
                     sourceType = be.getSourceType();
                     frequency  = be.getFrequency();
                     compNum    = be.getComponentNumber();
+                    if (block instanceof VoltageSourcePulseBlock) {
+                        // Repurpose the otherwise-idle sky130 carrier slots so
+                        // we don't need to widen CircuitComponent for pulse:
+                        //   wParam    -> V1 (low / initial voltage)
+                        //   lParam    -> TR (rise time)
+                        //   multParam -> TF (fall time)
+                        //   nfParam   -> PW (pulse width / time-high)
+                        // value already carries V2; frequency carries PER.
+                        wSlot    = be.getPulseVLow();
+                        lSlot    = be.getPulseTr();
+                        multSlot = be.getPulseTf();
+                        nfSlot   = be.getPulsePw();
+                    }
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, -1, -1, value, sourceType, frequency,
-                        "", 1.0, 1.0, 1.0, 1.0, compNum));
+                        "", wSlot, lSlot, multSlot, nfSlot, compNum));
             }
         }
 
@@ -552,8 +577,13 @@ public class CircuitExtractor {
      * outward wire during the union phase, this yields the wire's node.
      */
     private int[] resolveAmpPinNodes(Level level, BlockPos anchor, Direction facing,
-                                      boolean offsetEnabled, Set<BlockPos> visited,
+                                      boolean offsetEnabled, boolean mirrored,
+                                      Set<BlockPos> visited,
                                       Map<BlockPos, Integer> nodeMap, int[] nextNode) {
+        // The subcircuit definition's pin order is fixed (VINP, VINN, VCC,
+        // VEE, VOUT [, OFF1, OFF2]). We just need to find which world cell
+        // *currently* holds each kind — when mirrored that's the row-flipped
+        // position, which localPosOf(kind, true) already accounts for.
         AmplifierBlock.CellKind[] order = offsetEnabled
                 ? new AmplifierBlock.CellKind[]{
                         AmplifierBlock.CellKind.VINP, AmplifierBlock.CellKind.VINN,
@@ -566,7 +596,7 @@ public class CircuitExtractor {
                         AmplifierBlock.CellKind.VOUT};
         int[] nodes = new int[order.length];
         for (int i = 0; i < order.length; i++) {
-            int[] local = AmplifierBlock.localPosOf(order[i]);
+            int[] local = AmplifierBlock.localPosOf(order[i], mirrored);
             BlockPos pinPos = AmplifierBlock.cellAt(anchor, local[0], local[1], facing);
             nodes[i] = visited.contains(pinPos)
                     ? resolveNode(pinPos, visited, nodeMap, nextNode)
@@ -616,6 +646,7 @@ public class CircuitExtractor {
                 || block instanceof InductorBlock
                 || block instanceof VoltageSourceBlock
                 || block instanceof VoltageSourceSinBlock
+                || block instanceof VoltageSourcePulseBlock
                 || block instanceof CurrentSourceBlock
                 || block instanceof DiodeBlock
                 || block instanceof WireBlock

@@ -28,12 +28,20 @@ public class AmplifierUpdatePacket {
     private final String   modelName;
     private final int      componentNumber;
     private final boolean  offsetEnabled;
+    /** Vertical mirror — input and supply pins swap rails. */
+    private final boolean  mirrored;
 
     public AmplifierUpdatePacket(BlockPos pos, String modelName, int componentNumber, boolean offsetEnabled) {
+        this(pos, modelName, componentNumber, offsetEnabled, false);
+    }
+
+    public AmplifierUpdatePacket(BlockPos pos, String modelName, int componentNumber,
+                                  boolean offsetEnabled, boolean mirrored) {
         this.pos             = pos;
         this.modelName       = modelName == null ? "" : modelName;
         this.componentNumber = componentNumber;
         this.offsetEnabled   = offsetEnabled;
+        this.mirrored        = mirrored;
     }
 
     public AmplifierUpdatePacket(FriendlyByteBuf buf) {
@@ -41,6 +49,7 @@ public class AmplifierUpdatePacket {
         this.modelName       = buf.readUtf(64);
         this.componentNumber = buf.readInt();
         this.offsetEnabled   = buf.readBoolean();
+        this.mirrored        = buf.readBoolean();
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -48,6 +57,7 @@ public class AmplifierUpdatePacket {
         buf.writeUtf(modelName, 64);
         buf.writeInt(componentNumber);
         buf.writeBoolean(offsetEnabled);
+        buf.writeBoolean(mirrored);
     }
 
     public static AmplifierUpdatePacket decode(FriendlyByteBuf buf) {
@@ -75,6 +85,9 @@ public class AmplifierUpdatePacket {
         }
 
         Direction facing = state.getValue(AmplifierBlock.FACING);
+        // Apply mirror first so the kindFor lookup inside applyOffsetToggle
+        // sees the post-mirror layout when deciding OFF1/OFF2 placement.
+        AmplifierBlock.applyMirrorToggle(level, pos, facing, mirrored);
         AmplifierBlock.applyOffsetToggle(level, pos, facing, offsetEnabled);
     }
 }

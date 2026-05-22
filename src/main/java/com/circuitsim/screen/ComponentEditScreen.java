@@ -24,6 +24,12 @@ public class ComponentEditScreen
     private EditBox labelField;
     private EditBox frequencyField;
     private EditBox numberField;
+    // Pulse-source-only fields. valueField doubles as V1; frequencyField
+    // is reused for the pulse period (stored in the BE's frequency slot).
+    private EditBox pulseVLowField;
+    private EditBox pulsePwField;
+    private EditBox pulseTrField;
+    private EditBox pulseTfField;
     private Button doneButton;
     private Button cancelButton;
     private String componentType;
@@ -43,6 +49,7 @@ public class ComponentEditScreen
     private boolean showSourceType;
     private boolean showLabel;
     private boolean showFrequency;
+    private boolean showPulse;
     private boolean showSky130;
     private boolean showNf;
     private boolean showMirror;
@@ -88,6 +95,10 @@ public class ComponentEditScreen
         String currentLabel = "";
         double currentFrequency = 1000.0;
         String currentModelName = "";
+        double currentPulseVLow = 0.0;
+        double currentPulseTr   = 1e-9;
+        double currentPulseTf   = 1e-9;
+        double currentPulsePw   = 1e-6;
         double currentW = 1.0;
         double currentL = 1.0;
         double currentMult = 1.0;
@@ -106,6 +117,16 @@ public class ComponentEditScreen
             currentMult = cbe.getMultParam();
             currentNf = cbe.getNfParam();
             currentNumber = cbe.getComponentNumber();
+            currentPulseVLow = cbe.getPulseVLow();
+            currentPulseTr   = cbe.getPulseTr();
+            currentPulseTf   = cbe.getPulseTf();
+            currentPulsePw   = cbe.getPulsePw();
+            // For pulse sources the period lives in the BE's frequency slot;
+            // pre-fill the editor with a sensible default (matches the BE
+            // default) if the player just placed the block.
+            if ("voltage_source_pulse".equals(cbe.getComponentType()) && currentFrequency <= 0) {
+                currentFrequency = 2e-6;
+            }
             icPdkName = cbe.getPdkName() != null ? cbe.getPdkName() : "none";
             var bs = cbe.getBlockState();
             if (bs.hasProperty(BaseComponentBlock.MIRRORED)) {
@@ -121,6 +142,7 @@ public class ComponentEditScreen
         boolean isCurrentProbe = "current_probe".equals(componentType);
         boolean isVoltSrc = "voltage_source".equals(componentType);
         boolean isSinSrc = "voltage_source_sin".equals(componentType);
+        boolean isPulseSrc = "voltage_source_pulse".equals(componentType);
         boolean isDiode = "diode".equals(componentType);
         boolean isSky130  = "ic_resistor3".equals(componentType);
         boolean isIcCap   = "ic_capacitor2".equals(componentType);
@@ -131,7 +153,11 @@ public class ComponentEditScreen
 
         showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap && !isNmos4 && !isPmos4;
         showSourceType = isVoltSrc;
+        // Pulse and sine sources both reuse the BE.frequency slot — sine
+        // stores Hz there, pulse stores the period in seconds — but the
+        // labelling and surrounding rows are different.
         showFrequency = isSinSrc;
+        showPulse     = isPulseSrc;
         showLabel = isProbe || isCurrentProbe;
         showSky130 = isSky130 || isIcCap || isNmos4 || isPmos4;
         showNf = isNmos4 || isPmos4;
@@ -145,6 +171,7 @@ public class ComponentEditScreen
         if (showValue) rowCount++;
         if (showSourceType) rowCount++;
         if (showFrequency) rowCount++;
+        if (showPulse) rowCount += 5;        // V_2, Period, Time-high, TR, TF (V1 reuses valueField)
         if (showLabel) rowCount++;
         if (showSky130) rowCount += 5 + (showNf ? 1 : 0) + (showMirror ? 1 : 0); // pdk, model, W, L, mult [, NF] [, Mirror]
         if (showControlSource) rowCount++;
@@ -202,6 +229,54 @@ public class ComponentEditScreen
                 cursorY + LABEL_H + GAP,
                 fieldW,
                 formatValue(currentFrequency),
+                32
+            );
+            cursorY += ROW_H;
+        }
+
+        if (showPulse) {
+            // V1 is the existing valueField above; layout the remaining
+            // five params in the order V_2, Period, Pulse Width, TR, TF so
+            // the most-edited (voltage levels + period) sit at the top.
+            pulseVLowField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                formatValue(currentPulseVLow),
+                32
+            );
+            cursorY += ROW_H;
+            // Period reuses the frequencyField slot in the data model — but
+            // we use a separate widget here so the label can be tailored.
+            frequencyField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                formatValue(currentFrequency),
+                32
+            );
+            cursorY += ROW_H;
+            pulsePwField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                formatValue(currentPulsePw),
+                32
+            );
+            cursorY += ROW_H;
+            pulseTrField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                formatValue(currentPulseTr),
+                32
+            );
+            cursorY += ROW_H;
+            pulseTfField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                formatValue(currentPulseTf),
                 32
             );
             cursorY += ROW_H;
@@ -441,6 +516,23 @@ public class ComponentEditScreen
                 cursorY,
                 LABEL_COLOR
             );
+            cursorY += ROW_H;
+        }
+        if (showPulse) {
+            g.drawString(Minecraft.getInstance().font,
+                    "V_2 (V):",      labelX, cursorY, LABEL_COLOR);
+            cursorY += ROW_H;
+            g.drawString(Minecraft.getInstance().font,
+                    "Period (s):",     labelX, cursorY, LABEL_COLOR);
+            cursorY += ROW_H;
+            g.drawString(Minecraft.getInstance().font,
+                    "Pulse Width (s):",  labelX, cursorY, LABEL_COLOR);
+            cursorY += ROW_H;
+            g.drawString(Minecraft.getInstance().font,
+                    "Rise time (s):",  labelX, cursorY, LABEL_COLOR);
+            cursorY += ROW_H;
+            g.drawString(Minecraft.getInstance().font,
+                    "Fall time (s):",  labelX, cursorY, LABEL_COLOR);
             cursorY += ROW_H;
         }
         if (showFrequency) {
@@ -730,6 +822,29 @@ public class ComponentEditScreen
             }
         }
 
+        // Pulse-source extra params (only meaningful when showPulse is set,
+        // but always sent so the packet shape is constant). Defaults match
+        // the BE defaults so non-pulse blocks don't accidentally wipe them.
+        double pulseVLow = 0.0, pulseTr = 1e-9, pulseTf = 1e-9, pulsePw = 1e-6;
+        if (showPulse) {
+            if (pulseVLowField != null) {
+                try { pulseVLow = parseSI(pulseVLowField.getValue()); }
+                catch (NumberFormatException ignored) {}
+            }
+            if (pulsePwField != null) {
+                try { pulsePw = parseSI(pulsePwField.getValue()); }
+                catch (NumberFormatException ignored) {}
+            }
+            if (pulseTrField != null) {
+                try { pulseTr = parseSI(pulseTrField.getValue()); }
+                catch (NumberFormatException ignored) {}
+            }
+            if (pulseTfField != null) {
+                try { pulseTf = parseSI(pulseTfField.getValue()); }
+                catch (NumberFormatException ignored) {}
+            }
+        }
+
         ModMessages.sendToServer(
             new ComponentUpdatePacket(
                 pos,
@@ -744,7 +859,11 @@ public class ComponentEditScreen
                 nf,
                 icPdkName,
                 number,
-                icMirrored
+                icMirrored,
+                pulseVLow,
+                pulseTr,
+                pulseTf,
+                pulsePw
             )
         );
     }
@@ -756,6 +875,7 @@ public class ComponentEditScreen
             case "inductor" -> "Inductance (H)";
             case "voltage_source" -> "Voltage (V)";
             case "voltage_source_sin" -> "Amplitude (V)";
+            case "voltage_source_pulse" -> "V1 (V)";
             case "current_source" -> "Current (A)";
             case "ccvs" -> "Transresistance (\u03A9)";
             case "cccs" -> "Current gain";
@@ -770,7 +890,8 @@ public class ComponentEditScreen
             case "capacitor", "ic_capacitor2"-> "Netlist index C";
             case "inductor"                  -> "Netlist index L";
             case "voltage_source",
-                 "voltage_source_sin"        -> "Netlist index V";
+                 "voltage_source_sin",
+                 "voltage_source_pulse"      -> "Netlist index V";
             case "current_source"            -> "Netlist index I";
             case "diode"                     -> "Netlist index D";
             case "ic_nmos4", "ic_pmos4"      -> "Netlist index XM";
@@ -787,6 +908,7 @@ public class ComponentEditScreen
             case "inductor" -> "Inductor";
             case "voltage_source" -> "Voltage Source";
             case "voltage_source_sin" -> "SIN Voltage Source";
+            case "voltage_source_pulse" -> "Pulse Voltage Source";
             case "current_source" -> "Current Source";
             case "diode" -> "Diode";
             case "probe" -> "Voltage Probe";

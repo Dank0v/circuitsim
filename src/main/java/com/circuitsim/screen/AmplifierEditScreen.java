@@ -29,8 +29,9 @@ public class AmplifierEditScreen extends Screen {
     private EditBox modelField;
     private EditBox numberField;
     private boolean offsetEnabled = false;
+    private boolean mirrored      = false;
 
-    private static final int W = 260, H = 200;
+    private static final int W = 260, H = 224;
 
     private static final int BG     = 0xFF1E1E1E;
     private static final int BORDER = 0xFF4A90D9;
@@ -45,6 +46,7 @@ public class AmplifierEditScreen extends Screen {
     private static final int Y_NUMBER_LABEL = 76;
     private static final int Y_NUMBER_FIELD = 90;
     private static final int Y_OFFSET_CHK   = 124;
+    private static final int Y_MIRROR_CHK   = 148;
 
     public AmplifierEditScreen(BlockPos pos) {
         super(Component.literal("Amplifier"));
@@ -64,6 +66,12 @@ public class AmplifierEditScreen extends Screen {
             savedModel    = cbe.getLabel();
             savedNumber   = cbe.getComponentNumber();
             offsetEnabled = cbe.isOffsetEnabled();
+        }
+        // Mirror lives on the anchor cell's blockstate, not the BE — read it
+        // there so the dialog re-opens with the current visual state.
+        var bs = Minecraft.getInstance().level.getBlockState(pos);
+        if (bs.hasProperty(com.circuitsim.block.AmplifierBlock.MIRRORED)) {
+            mirrored = bs.getValue(com.circuitsim.block.AmplifierBlock.MIRRORED);
         }
 
         modelField = makeBox(px + 16, py + Y_MODEL_FIELD, W - 32, savedModel);
@@ -101,6 +109,10 @@ public class AmplifierEditScreen extends Screen {
             offsetEnabled = !offsetEnabled;
             return true;
         }
+        if (hit(mx, my, px + 16, py + Y_MIRROR_CHK, W - 32, 14)) {
+            mirrored = !mirrored;
+            return true;
+        }
         return super.mouseClicked(mx, my, btn);
     }
 
@@ -134,6 +146,18 @@ public class AmplifierEditScreen extends Screen {
                               : "5-pin variant",
                 cx + 16, py + Y_OFFSET_CHK + 1,
                 offsetEnabled ? CHK_ON : DIM);
+
+        // mirror toggle row
+        int mx2 = px + 16;
+        int my2 = py + Y_MIRROR_CHK + 2;
+        g.fill(mx2, my2, mx2 + 10, my2 + 10, 0xFF888888);
+        g.fill(mx2 + 1, my2 + 1, mx2 + 9, my2 + 9, BG);
+        if (mirrored) g.fill(mx2 + 2, my2 + 2, mx2 + 8, my2 + 8, CHK_ON);
+        g.drawString(f,
+                mirrored ? "mirrored (+/- swapped, VCC/VEE swapped)"
+                         : "default orientation",
+                mx2 + 16, py + Y_MIRROR_CHK + 1,
+                mirrored ? CHK_ON : DIM);
     }
 
     private void drawBackground(GuiGraphics g) {
@@ -155,7 +179,7 @@ public class AmplifierEditScreen extends Screen {
         catch (NumberFormatException e) { num = 0; }
         if (num < 0) num = 0;
         ModMessages.sendToServer(new AmplifierUpdatePacket(
-                pos, modelField.getValue().trim(), num, offsetEnabled));
+                pos, modelField.getValue().trim(), num, offsetEnabled, mirrored));
     }
 
     @Override

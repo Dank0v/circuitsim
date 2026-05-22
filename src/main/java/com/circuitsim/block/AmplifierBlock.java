@@ -93,6 +93,15 @@ public class AmplifierBlock extends Block implements EntityBlock {
      * lookup is uniform.
      */
     public static final BooleanProperty OFFSET_PIN = BooleanProperty.create("offset_pin");
+    /**
+     * Vertical mirror. When true the structure is reflected across row=2:
+     * (0,1) holds the inverting input instead of the non-inverting one,
+     * the supplies swap rails, and the offset pins flip. Stamped on every
+     * cell so blockstate variants can render the right texture region for
+     * its world position (each mirrored variant points at the model
+     * normally drawn at the geometrically opposite row).
+     */
+    public static final BooleanProperty MIRRORED = BooleanProperty.create("mirrored");
 
     /** Guards against recursive break propagation when removing all 25 cells. */
     private static final ThreadLocal<Boolean> BREAKING = ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -104,12 +113,13 @@ public class AmplifierBlock extends Block implements EntityBlock {
                 .setValue(CELL_KIND, CellKind.BODY)
                 .setValue(LOCAL_X, 0)
                 .setValue(LOCAL_Z, 0)
-                .setValue(OFFSET_PIN, false));
+                .setValue(OFFSET_PIN, false)
+                .setValue(MIRRORED, false));
     }
 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-        builder.add(FACING, CELL_KIND, LOCAL_X, LOCAL_Z, OFFSET_PIN);
+        builder.add(FACING, CELL_KIND, LOCAL_X, LOCAL_Z, OFFSET_PIN, MIRRORED);
     }
 
     // -------------------------------------------------------------------------
@@ -146,9 +156,19 @@ public class AmplifierBlock extends Block implements EntityBlock {
         return d;
     }
 
-    /** Local (col, row) of each pin kind. Anchor is (0,0). */
+    /** Local (col, row) of each pin kind in the non-mirrored layout. Anchor is (0,0). */
     public static int[] localPosOf(CellKind kind) {
-        return switch (kind) {
+        return localPosOf(kind, false);
+    }
+
+    /**
+     * Local (col, row) of a pin kind. When {@code mirrored} is true, pin
+     * kinds (other than the anchor) sit at the row reflected across row=2,
+     * so e.g. VINP moves from (0,1) to (0,3). Used by the extractor when
+     * walking from the anchor out to each pin cell.
+     */
+    public static int[] localPosOf(CellKind kind, boolean mirrored) {
+        int[] base = switch (kind) {
             case ANCHOR -> new int[]{0, 0};
             case VINP   -> new int[]{0, 1};
             case VINN   -> new int[]{0, 3};
@@ -159,19 +179,49 @@ public class AmplifierBlock extends Block implements EntityBlock {
             case VOUT   -> new int[]{4, 2};
             default     -> null; // BODY has many possible positions
         };
+        if (base == null || !mirrored || kind == CellKind.ANCHOR) return base;
+        return new int[]{base[0], 4 - base[1]};
     }
 
     /** What kind should the cell at local (col, row) be, given the offset-pin toggle? */
     public static CellKind kindFor(int col, int row, boolean offsetEnabled) {
+        return kindFor(col, row, offsetEnabled, false);
+    }
+
+    /**
+     * What kind belongs at local {@code (col, row)} given both toggles.
+     * Anchor always at (0,0) (a logical handle, not affected by mirroring).
+     * Everything else is determined by an effective row {@code 4-row} when
+     * mirrored — so the cell that's physically at the top of the structure
+     * (row 0) becomes VEE instead of VCC when mirrored, etc.
+     */
+    public static CellKind kindFor(int col, int row, boolean offsetEnabled, boolean mirrored) {
         if (col == 0 && row == 0) return CellKind.ANCHOR;
-        if (col == 0 && row == 1) return CellKind.VINP;
-        if (col == 0 && row == 3) return CellKind.VINN;
-        if (col == 1 && row == 0) return CellKind.VCC;
-        if (col == 1 && row == 4) return CellKind.VEE;
-        if (col == 4 && row == 2) return CellKind.VOUT;
-        if (col == 3 && row == 0) return offsetEnabled ? CellKind.OFF1 : CellKind.BODY;
-        if (col == 3 && row == 4) return offsetEnabled ? CellKind.OFF2 : CellKind.BODY;
+        int effRow = mirrored ? (4 - row) : row;
+        if (col == 0 && effRow == 1) return CellKind.VINP;
+        if (col == 0 && effRow == 3) return CellKind.VINN;
+        if (col == 1 && effRow == 0) return CellKind.VCC;
+        if (col == 1 && effRow == 4) return CellKind.VEE;
+        if (col == 4 && effRow == 2) return CellKind.VOUT;
+        if (col == 3 && effRow == 0) return offsetEnabled ? CellKind.OFF1 : CellKind.BODY;
+        if (col == 3 && effRow == 4) return offsetEnabled ? CellKind.OFF2 : CellKind.BODY;
         return CellKind.BODY;
+    }
+
+    /**
+     * Outward direction of a pin cell from the body, computed purely from
+     * its (col, row) position. The CellKind enum's {@link CellKind#defaultOutward}
+     * encodes a non-mirrored assumption (VCC always points NORTH) which
+     * breaks for mirrored amps — the cell physically at the south edge
+     * holds VCC when mirrored and must point SOUTH. Use this from the
+     * extractor instead.
+     */
+    public static Direction outwardOf(int col, int row) {
+        if (col == 0) return Direction.WEST;
+        if (col == 4) return Direction.EAST;
+        if (row == 0) return Direction.NORTH;
+        if (row == 4) return Direction.SOUTH;
+        return Direction.NORTH; // body cell — shouldn't be queried for an outward
     }
 
     // -------------------------------------------------------------------------
@@ -253,7 +303,8 @@ public class AmplifierBlock extends Block implements EntityBlock {
                 .setValue(CELL_KIND, CellKind.BODY)
                 .setValue(LOCAL_X, 2)
                 .setValue(LOCAL_Z, 2)
-                .setValue(OFFSET_PIN, false);
+                .setValue(OFFSET_PIN, false)
+                .setValue(MIRRORED, false);
     }
 
     @Override
@@ -272,13 +323,14 @@ public class AmplifierBlock extends Block implements EntityBlock {
             for (int col = 0; col < 5; col++) {
                 for (int row = 0; row < 5; row++) {
                     BlockPos target = cellAt(anchor, col, row, facing);
-                    CellKind kind = kindFor(col, row, /*offsetEnabled=*/false);
+                    CellKind kind = kindFor(col, row, /*offsetEnabled=*/false, /*mirrored=*/false);
                     BlockState cellState = defaultBlockState()
                             .setValue(FACING, facing)
                             .setValue(CELL_KIND, kind)
                             .setValue(LOCAL_X, col)
                             .setValue(LOCAL_Z, row)
-                            .setValue(OFFSET_PIN, false);
+                            .setValue(OFFSET_PIN, false)
+                            .setValue(MIRRORED, false);
                     level.setBlock(target, cellState, Block.UPDATE_CLIENTS);
                 }
             }
@@ -362,6 +414,9 @@ public class AmplifierBlock extends Block implements EntityBlock {
      *       5pin vs 7pin top-texture model variant — that's what makes the
      *       whole top face change appearance.
      * </ul>
+     *
+     * <p>Preserves each cell's current {@code MIRRORED} state — toggling
+     * offset never inadvertently un-mirrors the amp.
      */
     public static void applyOffsetToggle(Level level, BlockPos anchor, Direction facing, boolean offsetEnabled) {
         BREAKING.set(Boolean.TRUE);
@@ -371,10 +426,53 @@ public class AmplifierBlock extends Block implements EntityBlock {
                     BlockPos cellPos = cellAt(anchor, col, row, facing);
                     BlockState cur = level.getBlockState(cellPos);
                     if (!(cur.getBlock() instanceof AmplifierBlock)) continue;
+                    boolean mirrored = cur.getValue(MIRRORED);
                     BlockState next = cur.setValue(OFFSET_PIN, offsetEnabled);
-                    if ((col == 3 && row == 0) || (col == 3 && row == 4)) {
-                        next = next.setValue(CELL_KIND, kindFor(col, row, offsetEnabled));
+                    // Offset toggle only affects the (3, effRow=0) / (3, effRow=4)
+                    // positions; with mirror those correspond to (3,0)/(3,4)
+                    // and (3,4)/(3,0) respectively (same physical cells), so
+                    // just re-evaluate kindFor for the entire row 0 / row 4 of
+                    // column 3 with the current mirror state.
+                    if (col == 3 && (row == 0 || row == 4)) {
+                        next = next.setValue(CELL_KIND, kindFor(col, row, offsetEnabled, mirrored));
                     }
+                    if (!next.equals(cur)) {
+                        level.setBlock(cellPos, next, Block.UPDATE_CLIENTS);
+                    }
+                }
+            }
+        } finally {
+            BREAKING.set(Boolean.FALSE);
+        }
+    }
+
+    /**
+     * Applies the vertical-mirror toggle to the entire 5×5. Every cell:
+     * <ul>
+     *   <li>Has its {@code MIRRORED} property updated so blockstate variants
+     *       pick the row-flipped model and the player sees the texture
+     *       physically swap.
+     *   <li>Has its {@code CELL_KIND} recomputed via {@link #kindFor} so
+     *       e.g. the cell physically at (0,1) becomes VINN when mirrored.
+     *       This is what the netlist extractor reads to decide which input /
+     *       supply rail each pin represents.
+     * </ul>
+     *
+     * <p>Preserves the existing {@code OFFSET_PIN} state — mirroring an
+     * already-7-pin amp keeps it 7-pin, just with OFF1/OFF2 swapped.
+     */
+    public static void applyMirrorToggle(Level level, BlockPos anchor, Direction facing, boolean mirrored) {
+        BREAKING.set(Boolean.TRUE);
+        try {
+            for (int col = 0; col < 5; col++) {
+                for (int row = 0; row < 5; row++) {
+                    BlockPos cellPos = cellAt(anchor, col, row, facing);
+                    BlockState cur = level.getBlockState(cellPos);
+                    if (!(cur.getBlock() instanceof AmplifierBlock)) continue;
+                    boolean offsetEnabled = cur.getValue(OFFSET_PIN);
+                    BlockState next = cur
+                            .setValue(MIRRORED, mirrored)
+                            .setValue(CELL_KIND, kindFor(col, row, offsetEnabled, mirrored));
                     if (!next.equals(cur)) {
                         level.setBlock(cellPos, next, Block.UPDATE_CLIENTS);
                     }

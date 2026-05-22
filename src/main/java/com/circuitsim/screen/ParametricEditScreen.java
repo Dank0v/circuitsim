@@ -165,6 +165,12 @@ public class ParametricEditScreen extends AbstractContainerScreen<ParametricEdit
             fields.add(new ParamField("value", "Inductance (H):"));
         } else if (b instanceof VoltageSourceBlock || b instanceof VoltageSourceSinBlock) {
             fields.add(new ParamField("value", "Voltage (V):"));
+        } else if (b instanceof VoltageSourcePulseBlock) {
+            // Pulse sources sweep V1 (V2); the rest of the spec stays
+            // fixed for the duration of the sweep. If the player needs to
+            // sweep V_2 or the period they can use multiple parametric
+            // blocks or edit per-iteration via the .control commands.
+            fields.add(new ParamField("value", "V1 (V):"));
         } else if (b instanceof CurrentSourceBlock) {
             fields.add(new ParamField("value", "Current (A):"));
         }
@@ -306,6 +312,7 @@ public class ParametricEditScreen extends AbstractContainerScreen<ParametricEdit
         if (block instanceof InductorBlock)         return "Inductor";
         if (block instanceof VoltageSourceBlock)    return "Voltage Source";
         if (block instanceof VoltageSourceSinBlock) return "SIN Voltage Source";
+        if (block instanceof VoltageSourcePulseBlock) return "Pulse Voltage Source";
         if (block instanceof CurrentSourceBlock)    return "Current Source";
         if (block instanceof IcResistorBlock)       return "IC Resistor";
         if (block instanceof IcCapacitorBlock)      return "IC Capacitor";

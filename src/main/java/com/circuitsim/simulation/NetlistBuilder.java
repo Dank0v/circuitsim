@@ -34,7 +34,9 @@ public class NetlistBuilder {
         if (c.block instanceof ResistorBlock || c.block instanceof IcResistorBlock) return 1;
         if (c.block instanceof CapacitorBlock || c.block instanceof IcCapacitorBlock) return 2;
         if (c.block instanceof InductorBlock) return 3;
-        if (c.block instanceof VoltageSourceBlock || c.block instanceof VoltageSourceSinBlock) return 4;
+        if (c.block instanceof VoltageSourceBlock
+                || c.block instanceof VoltageSourceSinBlock
+                || c.block instanceof VoltageSourcePulseBlock) return 4;
         if (c.block instanceof CurrentSourceBlock) return 5;
         if (c.block instanceof DiodeBlock) return 6;
         if (c.block instanceof IcNmos4Block || c.block instanceof IcPmos4Block) return 7;
@@ -220,6 +222,15 @@ public class NetlistBuilder {
                 }
             } else if (comp.block instanceof VoltageSourceSinBlock) {
                 line = String.format("V%d %s %s DC 0", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
+            } else if (comp.block instanceof VoltageSourcePulseBlock) {
+                // Pulse source's "initial value" V1 is the steady-state DC
+                // ngspice uses during the bias-point calculation. For .op
+                // this is the only meaningful number; the rest of the spec
+                // is irrelevant until .tran.
+                line = String.format("V%d %s %s DC %g",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        comp.wParam);
             } else if (comp.block instanceof CurrentSourceBlock) {
                 line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof DiodeBlock) {
@@ -367,6 +378,15 @@ public class NetlistBuilder {
                 line = String.format("V%d %s %s DC 0 AC %g",
                         vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                 hasAcSource = true;
+            } else if (comp.block instanceof VoltageSourcePulseBlock) {
+                // A pulse train has no defined small-signal AC component; we
+                // hold the source at V1 (the .op operating point) with AC=0
+                // so the bias is correct and the source doesn't perturb the
+                // small-signal response.
+                line = String.format("V%d %s %s DC %g AC 0",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        comp.wParam);
             } else if (comp.block instanceof CurrentSourceBlock) {
                 if ("AC".equalsIgnoreCase(comp.sourceType)) {
                     line = String.format("I%d %s %s DC 0 AC %g",
@@ -525,6 +545,25 @@ public class NetlistBuilder {
                 double freq = (comp.frequency > 0) ? comp.frequency : 1.0;
                 line = String.format("V%d %s %s SIN(0 %g %g)",
                         vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value, freq);
+            } else if (comp.block instanceof VoltageSourcePulseBlock) {
+                // PULSE(V1 V2 TD TR TF PW PER) — TD fixed at 0, NP omitted
+                // (unlimited repeats). Slot map (set in CircuitExtractor):
+                //   comp.value  = V2 (pulsed / high voltage)
+                //   comp.frequency = PER (period)
+                //   comp.wParam = V1 (initial / low voltage)
+                //   comp.lParam = TR (rise time)
+                //   comp.multParam = TF (fall time)
+                //   comp.nfParam = PW (pulse width / time-high)
+                double v1  = comp.wParam;
+                double v2  = comp.value;
+                double tr  = comp.lParam   > 0 ? comp.lParam   : 1e-9;
+                double tf  = comp.multParam > 0 ? comp.multParam : 1e-9;
+                double pw  = comp.nfParam   > 0 ? comp.nfParam   : 1e-6;
+                double per = comp.frequency > 0 ? comp.frequency : 2e-6;
+                line = String.format("V%d %s %s PULSE(%g %g 0 %g %g %g %g)",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        v1, v2, tr, tf, pw, per);
             } else if (comp.block instanceof CurrentSourceBlock) {
                 line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof DiodeBlock) {

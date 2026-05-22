@@ -25,6 +25,7 @@ public class ModCreativeTabs {
                                 output.accept(ModItems.INDUCTOR.get());
                                 output.accept(ModItems.VOLTAGE_SOURCE.get());
                                 output.accept(ModItems.VOLTAGE_SOURCE_SIN.get());
+                                output.accept(ModItems.VOLTAGE_SOURCE_PULSE.get());
                                 output.accept(ModItems.CURRENT_SOURCE.get());
                                 output.accept(ModItems.DIODE.get());
                                 output.accept(ModItems.WIRE.get());

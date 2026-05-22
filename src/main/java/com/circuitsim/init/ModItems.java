@@ -19,6 +19,7 @@ public class ModItems {
     public static final RegistryObject<Item> INDUCTOR           = blockItem(ModBlocks.INDUCTOR);
     public static final RegistryObject<Item> VOLTAGE_SOURCE     = blockItem(ModBlocks.VOLTAGE_SOURCE);
     public static final RegistryObject<Item> VOLTAGE_SOURCE_SIN = blockItem(ModBlocks.VOLTAGE_SOURCE_SIN);
+    public static final RegistryObject<Item> VOLTAGE_SOURCE_PULSE = blockItem(ModBlocks.VOLTAGE_SOURCE_PULSE);
     public static final RegistryObject<Item> CURRENT_SOURCE     = blockItem(ModBlocks.CURRENT_SOURCE);
     public static final RegistryObject<Item> DIODE              = blockItem(ModBlocks.DIODE);
     public static final RegistryObject<Item> WIRE               = blockItem(ModBlocks.WIRE);

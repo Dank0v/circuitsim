@@ -26,6 +26,13 @@ public class ComponentUpdatePacket {
     private final double   nfParam;
     private final String   pdkName;
     private final boolean  mirrored;
+    // Pulse-source parameters. Other component types simply pass through the
+    // BE's existing values unchanged — the editor only sends meaningful pulse
+    // numbers when the open block is a VoltageSourcePulseBlock.
+    private final double   pulseVLow;
+    private final double   pulseTr;
+    private final double   pulseTf;
+    private final double   pulsePw;
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label) {
@@ -57,6 +64,18 @@ public class ComponentUpdatePacket {
                                   double frequency, String label,
                                   String modelName, double wParam, double lParam, double multParam,
                                   double nfParam, String pdkName, int componentNumber, boolean mirrored) {
+        // Forwards to the full-pulse constructor with neutral pulse defaults
+        // (V1=0, TR=TF=1 ns, PW=1 us). Pulse-source edits use the full ctor
+        // directly so these are only seen when the BE is something else.
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam,
+                nfParam, pdkName, componentNumber, mirrored, 0.0, 1e-9, 1e-9, 1e-6);
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  double nfParam, String pdkName, int componentNumber, boolean mirrored,
+                                  double pulseVLow, double pulseTr, double pulseTf, double pulsePw) {
         this.pos             = pos;
         this.value           = value;
         this.sourceType      = sourceType;
@@ -70,6 +89,10 @@ public class ComponentUpdatePacket {
         this.pdkName         = pdkName;
         this.componentNumber = Math.max(0, componentNumber);
         this.mirrored        = mirrored;
+        this.pulseVLow       = pulseVLow;
+        this.pulseTr         = pulseTr;
+        this.pulseTf         = pulseTf;
+        this.pulsePw         = pulsePw;
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
@@ -86,6 +109,10 @@ public class ComponentUpdatePacket {
         this.pdkName         = buf.readUtf(32);
         this.componentNumber = buf.readVarInt();
         this.mirrored        = buf.readBoolean();
+        this.pulseVLow       = buf.readDouble();
+        this.pulseTr         = buf.readDouble();
+        this.pulseTf         = buf.readDouble();
+        this.pulsePw         = buf.readDouble();
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -102,6 +129,10 @@ public class ComponentUpdatePacket {
         buf.writeUtf(pdkName, 32);
         buf.writeVarInt(componentNumber);
         buf.writeBoolean(mirrored);
+        buf.writeDouble(pulseVLow);
+        buf.writeDouble(pulseTr);
+        buf.writeDouble(pulseTf);
+        buf.writeDouble(pulsePw);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -126,6 +157,10 @@ public class ComponentUpdatePacket {
             cbe.setNfParam(nfParam);
             cbe.setPdkName(pdkName);
             cbe.setComponentNumber(componentNumber);
+            cbe.setPulseVLow(pulseVLow);
+            cbe.setPulseTr(pulseTr);
+            cbe.setPulseTf(pulseTf);
+            cbe.setPulsePw(pulsePw);
             cbe.setChanged();
 
             BlockState curState = level.getBlockState(pos);
