@@ -32,12 +32,6 @@ public class ModMessages {
                 .consumerMainThread(ModMessages::handleComponentUpdate)
                 .add();
 
-        INSTANCE.messageBuilder(ParametricSimulatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
-                .encoder(ParametricSimulatePacket::encode)
-                .decoder(ParametricSimulatePacket::decode)
-                .consumerMainThread(ModMessages::handleParametricSimulate)
-                .add();
-
         INSTANCE.messageBuilder(SimulatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
                 .encoder(SimulatePacket::encode)
                 .decoder(SimulatePacket::decode)
@@ -86,12 +80,6 @@ public class ModMessages {
 
     private static void handleComponentUpdate(ComponentUpdatePacket msg,
                                                Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
-        ctx.get().setPacketHandled(true);
-    }
-
-    private static void handleParametricSimulate(ParametricSimulatePacket msg,
-                                                  Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }

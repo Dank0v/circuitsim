@@ -172,18 +172,17 @@ public class CircuitExtractor {
             BlockState state = level.getBlockState(pos);
 
             if (block instanceof ParametricBlock) {
-                Direction facing = state.getValue(BaseComponentBlock.FACING);
-                BlockPos targetPos = pos.relative(facing);
-                String sweepString = "";
+                String spec = "";
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
-                    sweepString = be.getLabel();
+                    spec = be.getLabel();
                 }
-                // Skip unconfigured parametric blocks. An empty sweep would otherwise
-                // hijack every simulation in the circuit with the "No sweep values"
-                // error, even when the user just wants a regular OP/AC/TRAN run.
-                if (hasSweepValues(sweepString)) {
-                    Block targetBlock = level.getBlockState(targetPos).getBlock();
-                    parametricBlocks.add(new ParametricInfo(pos, targetPos, targetBlock, sweepString));
+                // Spec is "name=values" - skip when either side is empty so an
+                // unconfigured Parametric block doesn't hijack regular sims.
+                String[] parsed = com.circuitsim.screen.ParametricEditScreen.parseSpec(spec);
+                String varName  = parsed[0];
+                String values   = parsed[1];
+                if (!varName.isEmpty() && !values.isEmpty()) {
+                    parametricBlocks.add(new ParametricInfo(pos, varName, values));
                 }
 
             } else if (block instanceof CommandsBlock) {
@@ -264,6 +263,7 @@ public class CircuitExtractor {
                 double lParam    = 1.0;
                 double multParam = 1.0;
                 int    compNum   = 0;
+                String wExpr = "", lExpr = "", multExpr = "";
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     modelName = be.getModelName();
@@ -271,11 +271,15 @@ public class CircuitExtractor {
                     lParam    = be.getLParam();
                     multParam = be.getMultParam();
                     compNum   = be.getComponentNumber();
+                    wExpr     = be.getWExpr();
+                    lExpr     = be.getLExpr();
+                    multExpr  = be.getMultExpr();
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, nodeC, -1, 0, "DC", 0,
-                        modelName, wParam, lParam, multParam, 1.0, compNum));
+                        modelName, wParam, lParam, multParam, 1.0, compNum,
+                        null, "", wExpr, lExpr, multExpr, ""));
 
             } else if (block instanceof IcCapacitorBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
@@ -287,6 +291,7 @@ public class CircuitExtractor {
                 double lParam    = 1.0;
                 double multParam = 1.0;
                 int    compNum   = 0;
+                String wExpr = "", lExpr = "", multExpr = "";
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     modelName = be.getModelName();
@@ -294,11 +299,15 @@ public class CircuitExtractor {
                     lParam    = be.getLParam();
                     multParam = be.getMultParam();
                     compNum   = be.getComponentNumber();
+                    wExpr     = be.getWExpr();
+                    lExpr     = be.getLExpr();
+                    multExpr  = be.getMultExpr();
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, -1, -1, 0, "DC", 0,
-                        modelName, wParam, lParam, multParam, 1.0, compNum));
+                        modelName, wParam, lParam, multParam, 1.0, compNum,
+                        null, "", wExpr, lExpr, multExpr, ""));
 
             } else if (block instanceof IcNmos4Block || block instanceof IcPmos4Block) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
@@ -327,6 +336,7 @@ public class CircuitExtractor {
                 double multParam = 1.0;
                 double nfParam   = 1.0;
                 int    compNum   = 0;
+                String wExpr = "", lExpr = "", multExpr = "", nfExpr = "";
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     modelName = be.getModelName();
@@ -335,12 +345,17 @@ public class CircuitExtractor {
                     multParam = be.getMultParam();
                     nfParam   = be.getNfParam();
                     compNum   = be.getComponentNumber();
+                    wExpr     = be.getWExpr();
+                    lExpr     = be.getLExpr();
+                    multExpr  = be.getMultExpr();
+                    nfExpr    = be.getNfExpr();
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, nodeC, nodeD,
                         0, "DC", 0,
-                        modelName, wParam, lParam, multParam, nfParam, compNum));
+                        modelName, wParam, lParam, multParam, nfParam, compNum,
+                        null, "", wExpr, lExpr, multExpr, nfExpr));
 
             } else if (block instanceof CcvsBlock || block instanceof CccsBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
@@ -350,16 +365,18 @@ public class CircuitExtractor {
                 double value     = 0;
                 int    compNum   = 0;
                 String controlV  = "";
+                String valueExpr = "";
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     value     = be.getValue();
                     compNum   = be.getComponentNumber();
                     controlV  = be.getModelName(); // reused: stores the controlling vnam (e.g. "V1")
+                    valueExpr = be.getValueExpr();
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, -1, -1, value, "DC", 0,
                         controlV == null ? "" : controlV,
-                        1.0, 1.0, 1.0, 1.0, compNum));
+                        1.0, 1.0, 1.0, 1.0, compNum, null, valueExpr));
 
             } else if (block instanceof Controlled2x3Block) {
                 // Only emit one component per 2×3 instance — at the anchor cell.
@@ -369,9 +386,11 @@ public class CircuitExtractor {
                 Direction facing = state.getValue(Controlled2x3Block.FACING);
                 double value   = 0;
                 int    compNum = 0;
+                String valueExpr = "";
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
-                    value   = be.getValue();
-                    compNum = be.getComponentNumber();
+                    value     = be.getValue();
+                    compNum   = be.getComponentNumber();
+                    valueExpr = be.getValueExpr();
                 }
 
                 // Pin order in the netlist line: N+ N- NC+ NC-
@@ -387,7 +406,7 @@ public class CircuitExtractor {
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, outP, outN, ctlP, ctlN,
                         value, "DC", 0,
-                        "", 1.0, 1.0, 1.0, 1.0, compNum));
+                        "", 1.0, 1.0, 1.0, 1.0, compNum, null, valueExpr));
 
             } else if (block instanceof AmplifierBlock) {
                 // Only emit one component per amp — at the anchor cell. Every
@@ -420,6 +439,7 @@ public class CircuitExtractor {
                 String sourceType = "DC";
                 double frequency  = 0;
                 int    compNum    = 0;
+                String valueExpr  = "";
                 // Pulse-source-only — see NetlistBuilder pulse branch for the
                 // exact slot meanings. For every other component these stay 1.0
                 // and are ignored downstream.
@@ -430,6 +450,7 @@ public class CircuitExtractor {
                     sourceType = be.getSourceType();
                     frequency  = be.getFrequency();
                     compNum    = be.getComponentNumber();
+                    valueExpr  = be.getValueExpr();
                     if (block instanceof VoltageSourcePulseBlock) {
                         // Repurpose the otherwise-idle sky130 carrier slots so
                         // we don't need to widen CircuitComponent for pulse:
@@ -447,7 +468,7 @@ public class CircuitExtractor {
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, -1, -1, value, sourceType, frequency,
-                        "", wSlot, lSlot, multSlot, nfSlot, compNum));
+                        "", wSlot, lSlot, multSlot, nfSlot, compNum, null, valueExpr));
             }
         }
 
@@ -478,21 +499,6 @@ public class CircuitExtractor {
         }
 
         return new ExtractionResult(true, "", components, aliasedProbes, currentProbes, probeLabels, parametricBlocks, userCommands, userPlots);
-    }
-
-    /**
-     * True iff {@code raw} contains an actual sweep specification, i.e. is
-     * non-blank and (when it has a {@code paramName=} prefix) has a non-blank
-     * portion after the {@code =}. Used to filter out unconfigured Parametric
-     * blocks so they don't block normal simulations.
-     */
-    private static boolean hasSweepValues(String raw) {
-        if (raw == null) return false;
-        String s = raw.trim();
-        if (s.isEmpty()) return false;
-        int eq = s.indexOf('=');
-        if (eq < 0) return true;
-        return !s.substring(eq + 1).trim().isEmpty();
     }
 
     /**
@@ -665,20 +671,15 @@ public class CircuitExtractor {
 
     public static class ParametricInfo {
         public final BlockPos pos;
-        public final BlockPos targetPos;
-        /**
-         * Cached at extraction time so downstream sim code (which now runs on a
-         * background thread) does not have to call {@code Level.getBlockState}.
-         * Off-thread world reads are unsafe.
-         */
-        public final Block    targetBlock;
-        public final String   sweepString;
+        /** Variable name the block declares (e.g. {@code "Rs"}). */
+        public final String   varName;
+        /** Raw values string (single value, comma list, or {@code start:stop:step} range). */
+        public final String   valuesString;
 
-        public ParametricInfo(BlockPos pos, BlockPos targetPos, Block targetBlock, String sweepString) {
-            this.pos         = pos;
-            this.targetPos   = targetPos;
-            this.targetBlock = targetBlock;
-            this.sweepString = sweepString;
+        public ParametricInfo(BlockPos pos, String varName, String valuesString) {
+            this.pos          = pos;
+            this.varName      = varName;
+            this.valuesString = valuesString;
         }
     }
 

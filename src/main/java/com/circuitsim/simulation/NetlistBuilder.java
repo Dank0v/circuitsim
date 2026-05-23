@@ -916,6 +916,18 @@ public class NetlistBuilder {
          * line. Currently used by the amplifier block (5 or 7 pins).
          */
         public final int[]    subcircuitNodes;
+        /**
+         * Variable name from the Parametric block system. When non-empty the
+         * component's effective value is looked up from a Parametric block
+         * defining this name. Empty means use the numeric {@link #value}.
+         */
+        public final String   valueExpr;
+        // Same idea, one per IC numeric slot. Each is empty when the
+        // corresponding numeric slot should be used directly.
+        public final String   wExpr;
+        public final String   lExpr;
+        public final String   multExpr;
+        public final String   nfExpr;
 
         public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB,
                                 double value, String sourceType, double frequency) {
@@ -949,13 +961,33 @@ public class NetlistBuilder {
                                 String modelName, double wParam, double lParam, double multParam,
                                 double nfParam, int componentNumber) {
             this(block, pos, nodeA, nodeB, nodeC, nodeD, value, sourceType, frequency,
-                    modelName, wParam, lParam, multParam, nfParam, componentNumber, null);
+                    modelName, wParam, lParam, multParam, nfParam, componentNumber, null, "");
         }
 
         public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB, int nodeC, int nodeD,
                                 double value, String sourceType, double frequency,
                                 String modelName, double wParam, double lParam, double multParam,
                                 double nfParam, int componentNumber, int[] subcircuitNodes) {
+            this(block, pos, nodeA, nodeB, nodeC, nodeD, value, sourceType, frequency,
+                    modelName, wParam, lParam, multParam, nfParam, componentNumber, subcircuitNodes, "");
+        }
+
+        public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB, int nodeC, int nodeD,
+                                double value, String sourceType, double frequency,
+                                String modelName, double wParam, double lParam, double multParam,
+                                double nfParam, int componentNumber, int[] subcircuitNodes,
+                                String valueExpr) {
+            this(block, pos, nodeA, nodeB, nodeC, nodeD, value, sourceType, frequency,
+                    modelName, wParam, lParam, multParam, nfParam, componentNumber,
+                    subcircuitNodes, valueExpr, "", "", "", "");
+        }
+
+        public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB, int nodeC, int nodeD,
+                                double value, String sourceType, double frequency,
+                                String modelName, double wParam, double lParam, double multParam,
+                                double nfParam, int componentNumber, int[] subcircuitNodes,
+                                String valueExpr,
+                                String wExpr, String lExpr, String multExpr, String nfExpr) {
             this.block           = block;
             this.pos             = pos;
             this.nodeA           = nodeA;
@@ -972,6 +1004,11 @@ public class NetlistBuilder {
             this.nfParam         = nfParam;
             this.componentNumber = Math.max(0, componentNumber);
             this.subcircuitNodes = subcircuitNodes;
+            this.valueExpr       = valueExpr == null ? "" : valueExpr;
+            this.wExpr           = wExpr     == null ? "" : wExpr;
+            this.lExpr           = lExpr     == null ? "" : lExpr;
+            this.multExpr        = multExpr  == null ? "" : multExpr;
+            this.nfExpr          = nfExpr    == null ? "" : nfExpr;
         }
 
         /** Convenience constructor for subcircuit-instance components (X-prefix). */
@@ -980,6 +1017,53 @@ public class NetlistBuilder {
             return new CircuitComponent(block, pos, 0, 0, -1, -1, 0, "DC", 0,
                     modelName == null ? "" : modelName,
                     1.0, 1.0, 1.0, 1.0, componentNumber, pinNodes);
+        }
+
+        /** Copy of {@code base} with the numeric {@link #value} replaced. Used by parametric sweep substitution. */
+        public CircuitComponent withValue(double newValue) {
+            return new CircuitComponent(block, pos, nodeA, nodeB, nodeC, nodeD,
+                    newValue, sourceType, frequency,
+                    modelName, wParam, lParam, multParam, nfParam,
+                    componentNumber, subcircuitNodes, "",
+                    wExpr, lExpr, multExpr, nfExpr);
+        }
+
+        /** True if any expression slot references {@code varName}. */
+        public boolean referencesVariable(String varName) {
+            return varName.equals(valueExpr) || varName.equals(wExpr)
+                    || varName.equals(lExpr) || varName.equals(multExpr)
+                    || varName.equals(nfExpr);
+        }
+
+        /**
+         * Returns a copy with every slot referencing {@code varName} replaced
+         * by {@code newVal}. Slots not referencing the variable keep their
+         * existing numeric value and expression (so multiple sequential
+         * substitutions can compose).
+         */
+        public CircuitComponent substituteVariable(String varName, double newVal) {
+            double v = value, w = wParam, l = lParam, m = multParam, n = nfParam;
+            String ve = valueExpr, we = wExpr, le = lExpr, me = multExpr, ne = nfExpr;
+            if (varName.equals(valueExpr)) { v = newVal; ve = ""; }
+            if (varName.equals(wExpr))     { w = newVal; we = ""; }
+            if (varName.equals(lExpr))     { l = newVal; le = ""; }
+            if (varName.equals(multExpr))  { m = newVal; me = ""; }
+            if (varName.equals(nfExpr))    { n = newVal; ne = ""; }
+            return new CircuitComponent(block, pos, nodeA, nodeB, nodeC, nodeD,
+                    v, sourceType, frequency,
+                    modelName, w, l, m, n,
+                    componentNumber, subcircuitNodes, ve,
+                    we, le, me, ne);
+        }
+
+        /** Which slot of this component references {@code varName}, or null. */
+        public String slotFor(String varName) {
+            if (varName.equals(valueExpr)) return "value";
+            if (varName.equals(wExpr))     return "W";
+            if (varName.equals(lExpr))     return "L";
+            if (varName.equals(multExpr))  return "mult";
+            if (varName.equals(nfExpr))    return "nf";
+            return null;
         }
     }
 

@@ -204,19 +204,36 @@ public class SimulatePacket {
             // triggers a multi-run pass — see the dispatch below.
             List<Double> tempValues = parseTempValues(simTemp);
 
+            // ── Parametric block resolution ─────────────────────────────────
+            // Each Parametric block declares a variable name + a values spec.
+            // - 1 value  → "constant define" (substitute everywhere matching)
+            // - >1 values → "sweep" (only one sweep allowed per simulation)
+            // Every declared variable must be referenced by at least one
+            // component, otherwise it's an authoring mistake.
+            CircuitExtractor.ParametricInfo sweepParam = null;
+            List<Double> sweepValues = Collections.emptyList();
             if (!extraction.parametricBlocks.isEmpty()) {
-                // 2D sweep when both parametric and multi-temp are active —
-                // user explicitly opted in to M*N series.
-                for (CircuitExtractor.ParametricInfo param : extraction.parametricBlocks) {
-                    runParametricSweep(
-                        player,
-                        extraction,
-                        param,
-                        tempValues,
-                        bookLines,
-                        graphPageComponents
-                    );
-                }
+                ApplyResult applied = applyParametricConstants(
+                    player, extraction);
+                if (applied == null) return;        // error already reported
+                extraction = applied.extraction;
+                sweepParam = applied.sweepParam;
+                sweepValues = applied.sweepValues;
+            } else if (!checkAllVariablesDefined(player, extraction,
+                    Collections.emptySet())) {
+                return;       // a component references a variable with no Parametric block
+            }
+
+            if (sweepParam != null) {
+                runParametricSweep(
+                    player,
+                    extraction,
+                    sweepParam,
+                    sweepValues,
+                    tempValues,
+                    bookLines,
+                    graphPageComponents
+                );
             } else if (tempValues.size() > 1 && "OP".equals(analysis)) {
                 // OP + multi-temp produces a 1D probe-vs-temperature plot.
                 runTempSweep(player, extraction, tempValues, bookLines, graphPageComponents);
@@ -682,80 +699,161 @@ public class SimulatePacket {
     // Parametric dispatcher
     // -------------------------------------------------------------------------
 
+    /** Outcome of {@link #applyParametricConstants}. */
+    private static final class ApplyResult {
+        final CircuitExtractor.ExtractionResult extraction;
+        /** The one sweep variable to drive, or null when all parametric blocks are constants. */
+        final CircuitExtractor.ParametricInfo  sweepParam;
+        final List<Double>                     sweepValues;
+        ApplyResult(CircuitExtractor.ExtractionResult e,
+                    CircuitExtractor.ParametricInfo s, List<Double> v) {
+            this.extraction = e; this.sweepParam = s; this.sweepValues = v;
+        }
+    }
+
+    /**
+     * Validates every Parametric block in {@code extraction}, substitutes the
+     * single-value ones directly into the component list, and returns the
+     * remaining (at most one) multi-value sweep. Reports user errors via chat
+     * and returns null on validation failure.
+     */
+    /**
+     * Verifies every variable referenced by a component's value/W/L/mult/nf
+     * slot is in {@code defined}. Reports the first violation to chat and
+     * returns false; returns true when the circuit is clean.
+     */
+    private boolean checkAllVariablesDefined(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        Set<String> defined
+    ) {
+        for (NetlistBuilder.CircuitComponent c : extraction.components) {
+            for (String ref : new String[]{c.valueExpr, c.wExpr, c.lExpr, c.multExpr, c.nfExpr}) {
+                if (ref.isEmpty()) continue;
+                if (defined.contains(ref)) continue;
+                msg(player,
+                        "Component at " + c.pos.toShortString() + " references undefined variable '"
+                                + ref + "' (no Parametric block defines it).",
+                        ChatFormatting.RED);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private ApplyResult applyParametricConstants(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction
+    ) {
+        // Parse + validate each Parametric block
+        List<CircuitExtractor.ParametricInfo> constants = new ArrayList<>();
+        Map<String, Double>                   constMap  = new LinkedHashMap<>();
+        CircuitExtractor.ParametricInfo       sweep     = null;
+        List<Double>                          sweepVals = Collections.emptyList();
+
+        for (CircuitExtractor.ParametricInfo p : extraction.parametricBlocks) {
+            boolean used = extraction.components.stream()
+                    .anyMatch(c -> c.referencesVariable(p.varName));
+            if (!used) {
+                msg(player,
+                        "Parametric variable '" + p.varName + "' is not used by any component.",
+                        ChatFormatting.RED);
+                return null;
+            }
+
+            List<Double> vals;
+            try {
+                vals = parseSweepString(p.valuesString);
+            } catch (IllegalArgumentException e) {
+                msg(player, "Invalid values for '" + p.varName + "': " + e.getMessage(),
+                        ChatFormatting.RED);
+                return null;
+            }
+            if (vals.isEmpty()) {
+                msg(player, "No values for parametric variable '" + p.varName + "'.",
+                        ChatFormatting.RED);
+                return null;
+            }
+            if (vals.size() > 50) {
+                msg(player, "Too many values for '" + p.varName + "' ("
+                        + vals.size() + "); max 50.", ChatFormatting.RED);
+                return null;
+            }
+
+            if (vals.size() == 1) {
+                constants.add(p);
+                constMap.put(p.varName, vals.get(0));
+            } else {
+                if (sweep != null) {
+                    msg(player,
+                            "Only one Parametric block can sweep at a time ('"
+                                    + sweep.varName + "' and '" + p.varName + "').",
+                            ChatFormatting.RED);
+                    return null;
+                }
+                sweep = p;
+                sweepVals = vals;
+            }
+        }
+
+        // Components referencing an undefined variable: also an error.
+        Set<String> defined = new LinkedHashSet<>(constMap.keySet());
+        if (sweep != null) defined.add(sweep.varName);
+        if (!checkAllVariablesDefined(player, extraction, defined)) return null;
+
+        if (constMap.isEmpty()) {
+            return new ApplyResult(extraction, sweep, sweepVals);
+        }
+
+        // Apply constants: rebuild the components list with single-value
+        // variables substituted. Each constant variable substitutes into any
+        // slot that references it; components carrying the sweep variable
+        // keep that expression so swapVariable() can find them later.
+        List<NetlistBuilder.CircuitComponent> rewritten = extraction.components.stream()
+                .map(c -> {
+                    NetlistBuilder.CircuitComponent cur = c;
+                    for (Map.Entry<String, Double> e : constMap.entrySet()) {
+                        if (cur.referencesVariable(e.getKey())) {
+                            cur = cur.substituteVariable(e.getKey(), e.getValue());
+                        }
+                    }
+                    return cur;
+                })
+                .collect(Collectors.toList());
+
+        CircuitExtractor.ExtractionResult substituted = new CircuitExtractor.ExtractionResult(
+                extraction.success, extraction.errorMessage,
+                rewritten, extraction.probes, extraction.currentProbes,
+                extraction.probeLabels, extraction.parametricBlocks,
+                extraction.userCommands, extraction.userPlots);
+        return new ApplyResult(substituted, sweep, sweepVals);
+    }
+
     private void runParametricSweep(
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         CircuitExtractor.ParametricInfo param,
+        List<Double> sweepValues,
         List<Double> tempValues,
         List<String> bookLines,
         List<Component> graphPageComponents
     ) {
-        BlockPos targetPos = param.targetPos;
-        Block targetBlock = param.targetBlock;
-
-        if (!isParametrizable(targetBlock)) {
-            msg(
-                player,
-                "Parametric block not facing a supported component.",
-                ChatFormatting.RED
-            );
-            return;
-        }
-
-        // Parse "paramName=sweepStr" — legacy bare sweep strings default to "value"
-        String[] spec      = com.circuitsim.screen.ParametricEditScreen.parseParametricSpec(param.sweepString);
-        String   paramName = spec[0];
-        String   sweepStr  = spec[1];
-
-        if (!isValidParamForBlock(targetBlock, paramName)) {
-            msg(
-                player,
-                "Parameter '" + paramName + "' is not sweepable for "
-                    + displayName(targetBlock) + ".",
-                ChatFormatting.RED
-            );
-            return;
-        }
-
-        List<Double> sweepValues;
-        try {
-            sweepValues = parseSweepString(sweepStr);
-        } catch (IllegalArgumentException e) {
-            msg(
-                player,
-                "Invalid sweep string: " + e.getMessage(),
-                ChatFormatting.RED
-            );
-            return;
-        }
-        if (sweepValues.isEmpty()) {
-            msg(
-                player,
-                "No sweep values - right-click the Parametric block to set them.",
-                ChatFormatting.RED
-            );
-            return;
-        }
-        if (sweepValues.size() > 50) {
-            msg(
-                player,
-                "Too many sweep values (" + sweepValues.size() + "); max 50.",
-                ChatFormatting.RED
-            );
-            return;
-        }
+        String varName = param.varName;
 
         List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(
             extraction
         );
         List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
 
+        // Unit comes from the first component that references the variable;
+        // mixed-type sharing (e.g. resistor + capacitor with same name) falls
+        // back to a blank unit since no single unit makes sense.
+        String varUnit = unitForVariable(extraction.components, varName);
+
         boolean multiTemp = tempValues.size() > 1;
         String tempPart = multiTemp ? (" x " + tempValues.size() + " temps") : "";
         String header =
-            "=== Parametric: " +
-            displayName(targetBlock) +
-            " (" + paramName + ") sweep (" +
+            "=== Parametric: " + varName + " sweep (" +
             sweepValues.size() +
             " pts" + tempPart + ", " +
             analysis +
@@ -767,9 +865,8 @@ public class SimulatePacket {
             case "AC" -> runParametricAcSweep(
                 player,
                 extraction,
-                targetPos,
-                targetBlock,
-                paramName,
+                varName,
+                varUnit,
                 sweepValues,
                 tempValues,
                 effectiveProbes,
@@ -780,9 +877,8 @@ public class SimulatePacket {
             case "TRAN" -> runParametricTranSweep(
                 player,
                 extraction,
-                targetPos,
-                targetBlock,
-                paramName,
+                varName,
+                varUnit,
                 sweepValues,
                 tempValues,
                 effectiveProbes,
@@ -793,9 +889,8 @@ public class SimulatePacket {
             default -> runParametricOpSweep(
                 player,
                 extraction,
-                targetPos,
-                targetBlock,
-                paramName,
+                varName,
+                varUnit,
                 sweepValues,
                 tempValues,
                 effectiveProbes,
@@ -811,9 +906,8 @@ public class SimulatePacket {
     private void runParametricOpSweep(
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
-        BlockPos targetPos,
-        Block targetBlock,
-        String paramName,
+        String varName,
+        String varUnit,
         List<Double> sweepValues,
         List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
@@ -826,6 +920,12 @@ public class SimulatePacket {
         Map<String, List<Double>> voltData   = new LinkedHashMap<>();
         Map<String, List<Double>> currData   = new LinkedHashMap<>();
         Map<String, String>       probeUnits = new LinkedHashMap<>();
+        // Series grown lazily from raw `print` scalars (e.g. @m.xm1.[gm]).
+        // Names collide with user `plot` directives, so suppress those keys.
+        java.util.Set<String> userPlotNames = new java.util.HashSet<>();
+        for (NetlistBuilder.UserPlot plot : extraction.userPlots)
+            if (plot.name != null) userPlotNames.add(plot.name.toLowerCase(java.util.Locale.ROOT));
+        Map<String, List<Double>> extraSeries = new LinkedHashMap<>();
         // Pre-create one series per (probe, temp) combination. Even when only
         // one temperature is set the suffix is "" so the keys match the old
         // single-temp behaviour.
@@ -846,7 +946,7 @@ public class SimulatePacket {
             String secHdr =
                 "--- " +
                 ComponentEditScreen.formatValue(val) +
-                unit(targetBlock, paramName) +
+                varUnit +
                 " ---";
             msg(player, secHdr, ChatFormatting.YELLOW);
             bookLines.add(secHdr);
@@ -857,7 +957,7 @@ public class SimulatePacket {
             boolean anyOk = false;
             for (double T : tempValues) {
                 String netlist = NetlistBuilder.buildNetlist(
-                    swapParam(extraction.components, targetPos, paramName, val),
+                    swapVariable(extraction.components, varName, val),
                     effectiveProbes,
                     cpList,
                     pdkName,
@@ -869,8 +969,8 @@ public class SimulatePacket {
                 if (firstIteration) {
                     appendNetlistToBook(bookLines, netlist,
                             "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
-                                    + paramName + "=" + ComponentEditScreen.formatValue(val)
-                                    + unit(targetBlock, paramName)
+                                    + varName + "=" + ComponentEditScreen.formatValue(val)
+                                    + varUnit
                                     + (multiTemp ? (", T=" + ComponentEditScreen.formatValue(T) + "C") : "")
                                     + ")");
                     firstIteration = false;
@@ -928,14 +1028,54 @@ public class SimulatePacket {
                     Double v = result != null ? result.extrasByName.get(plot.name) : null;
                     voltData.get(plot.label + suffix).add(v != null ? v : 0.0);
                 }
+                // Echo scalar print/meas output (e.g. `print @m.xm1.[gm]`) so
+                // user commands aren't silently dropped during a sweep.
+                if (result != null && !result.extras.isEmpty()) {
+                    for (String extra : result.extras) {
+                        String line = "  " + extra;
+                        msg(player, line, ChatFormatting.AQUA);
+                        bookLines.add(line);
+                    }
+                }
+                // ... and auto-grow a series per print key so each scalar can
+                // be plotted against the sweep axis like a regular probe.
+                if (result != null) {
+                    String tSuffix = tempSuffix(T, multiTemp);
+                    for (Map.Entry<String, Double> e : result.extrasByName.entrySet()) {
+                        String key = e.getKey();
+                        if (key == null) continue;
+                        if (userPlotNames.contains(key.toLowerCase(java.util.Locale.ROOT))) continue;
+                        String seriesName = key + tSuffix;
+                        List<Double> series = extraSeries.get(seriesName);
+                        if (series == null) {
+                            series = new ArrayList<>();
+                            // Pad past validSweep entries that didn't emit this key.
+                            int prior = validSweep.size() - 1;
+                            for (int i = 0; i < prior; i++) series.add(0.0);
+                            extraSeries.put(seriesName, series);
+                        }
+                        series.add(e.getValue());
+                    }
+                }
+            }
+            // Pad any series that existed but didn't appear this iteration
+            // so every series stays exactly validSweep.size() long.
+            for (List<Double> series : extraSeries.values()) {
+                while (series.size() < validSweep.size()) series.add(0.0);
             }
         }
 
         if (validSweep.isEmpty()) return;
+        // Merge auto-discovered print series into voltData with an empty unit
+        // (we don't know whether gm is in A/V, fT is in Hz, etc.).
+        for (Map.Entry<String, List<Double>> e : extraSeries.entrySet()) {
+            voltData.put(e.getKey(), e.getValue());
+            probeUnits.put(e.getKey(), "");
+        }
         int sessionId = ParametricResultCache.store(
             new ParametricResultCache.ResultSet(
-                displayName(targetBlock) + " (" + paramName + ")",
-                unit(targetBlock, paramName),
+                varName,
+                varUnit,
                 validSweep,
                 voltData,
                 currData,
@@ -960,9 +1100,8 @@ public class SimulatePacket {
     private void runParametricAcSweep(
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
-        BlockPos targetPos,
-        Block targetBlock,
-        String paramName,
+        String varName,
+        String varUnit,
         List<Double> sweepValues,
         List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
@@ -983,13 +1122,13 @@ public class SimulatePacket {
                 String secHdr =
                     "--- " +
                     ComponentEditScreen.formatValue(val) +
-                    unit(targetBlock, paramName) + tempLbl +
+                    varUnit + tempLbl +
                     " (AC) ---";
                 msg(player, secHdr, ChatFormatting.YELLOW);
                 bookLines.add(secHdr);
 
                 String netlist = NetlistBuilder.buildAcNetlist(
-                    swapParam(extraction.components, targetPos, paramName, val),
+                    swapVariable(extraction.components, varName, val),
                     effectiveProbes,
                     cpList,
                     fStart,
@@ -1004,8 +1143,8 @@ public class SimulatePacket {
                 if (firstIteration) {
                     appendNetlistToBook(bookLines, netlist,
                             "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
-                                    + paramName + "=" + ComponentEditScreen.formatValue(val)
-                                    + unit(targetBlock, paramName) + tempLbl + ")");
+                                    + varName + "=" + ComponentEditScreen.formatValue(val)
+                                    + varUnit + tempLbl + ")");
                     firstIteration = false;
                 }
 
@@ -1034,7 +1173,7 @@ public class SimulatePacket {
                 if (freqAxis == null) freqAxis = sortedFreqs;
 
                 String stepSuffix =
-                    "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName)
+                    "@" + ComponentEditScreen.formatValue(val) + varUnit
                     + tempSuffix(T, multiTemp);
                 for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                     String seriesName = probe.label + stepSuffix;
@@ -1116,9 +1255,8 @@ public class SimulatePacket {
     private void runParametricTranSweep(
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
-        BlockPos targetPos,
-        Block targetBlock,
-        String paramName,
+        String varName,
+        String varUnit,
         List<Double> sweepValues,
         List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
@@ -1142,13 +1280,13 @@ public class SimulatePacket {
                 String secHdr =
                     "--- " +
                     ComponentEditScreen.formatValue(val) +
-                    unit(targetBlock, paramName) + tempLbl +
+                    varUnit + tempLbl +
                     " (TRAN) ---";
                 msg(player, secHdr, ChatFormatting.YELLOW);
                 bookLines.add(secHdr);
 
                 String netlist = NetlistBuilder.buildTranNetlist(
-                    swapParam(extraction.components, targetPos, paramName, val),
+                    swapVariable(extraction.components, varName, val),
                     effectiveProbes,
                     cpList,
                     tstep,
@@ -1162,8 +1300,8 @@ public class SimulatePacket {
                 if (firstIteration) {
                     appendNetlistToBook(bookLines, netlist,
                             "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
-                                    + paramName + "=" + ComponentEditScreen.formatValue(val)
-                                    + unit(targetBlock, paramName) + tempLbl + ")");
+                                    + varName + "=" + ComponentEditScreen.formatValue(val)
+                                    + varUnit + tempLbl + ")");
                     firstIteration = false;
                 }
 
@@ -1194,7 +1332,7 @@ public class SimulatePacket {
                 if (timeAxis == null) timeAxis = sortedTimes;
 
                 String stepSuffix =
-                    "@" + ComponentEditScreen.formatValue(val) + unit(targetBlock, paramName)
+                    "@" + ComponentEditScreen.formatValue(val) + varUnit
                     + tempSuffix(T, multiTemp);
                 for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
                     String seriesName = probe.label + stepSuffix;
@@ -1228,6 +1366,15 @@ public class SimulatePacket {
                     }
                     voltData.put(seriesName, vals);
                     probeUnits.put(seriesName, plot.unit);
+                }
+                // Echo scalar print/meas output (e.g. `print @m.xm1.[gm]`) so
+                // user commands aren't silently dropped during a sweep.
+                if (!result.extras.isEmpty()) {
+                    for (String extra : result.extras) {
+                        String line = "  " + extra;
+                        msg(player, line, ChatFormatting.AQUA);
+                        bookLines.add(line);
+                    }
                 }
             }
         }
@@ -1838,40 +1985,20 @@ public class SimulatePacket {
     }
 
     /**
-     * Returns a new component list with one parameter on the target block swapped.
-     * Preserves all other fields including sky130 W/L/mult/nf and node assignments.
-     * paramName ∈ {"value", "W", "L", "mult", "nf"}.
+     * Returns a new component list with every component referencing
+     * {@code varName} in any of its parameter slots (value / W / L / mult / nf)
+     * substituted with {@code newVal}.
      */
-    private static List<NetlistBuilder.CircuitComponent> swapParam(
+    private static List<NetlistBuilder.CircuitComponent> swapVariable(
         List<NetlistBuilder.CircuitComponent> components,
-        BlockPos targetPos,
-        String paramName,
+        String varName,
         double newVal
     ) {
-        return components
-            .stream()
-            .map(c -> {
-                if (!c.pos.equals(targetPos)) return c;
-                double value = c.value;
-                double w     = c.wParam;
-                double l     = c.lParam;
-                double mult  = c.multParam;
-                double nf    = c.nfParam;
-                switch (paramName == null ? "value" : paramName) {
-                    case "W"    -> w    = newVal;
-                    case "L"    -> l    = newVal;
-                    case "mult" -> mult = newVal;
-                    case "nf"   -> nf   = newVal;
-                    default     -> value = newVal;
-                }
-                return new NetlistBuilder.CircuitComponent(
-                    c.block, c.pos,
-                    c.nodeA, c.nodeB, c.nodeC, c.nodeD,
-                    value, c.sourceType, c.frequency,
-                    c.modelName, w, l, mult, nf, c.componentNumber
-                );
-            })
-            .collect(Collectors.toList());
+        return components.stream()
+                .map(c -> c.referencesVariable(varName)
+                        ? c.substituteVariable(varName, newVal)
+                        : c)
+                .collect(Collectors.toList());
     }
 
     /**
@@ -1928,59 +2055,30 @@ public class SimulatePacket {
         }
     }
 
-    private static boolean isParametrizable(Block b) {
-        return (
-            b instanceof ResistorBlock ||
-            b instanceof CapacitorBlock ||
-            b instanceof InductorBlock ||
-            b instanceof VoltageSourceBlock ||
-            b instanceof VoltageSourceSinBlock ||
-            b instanceof VoltageSourcePulseBlock ||
-            b instanceof CurrentSourceBlock ||
-            b instanceof IcResistorBlock ||
-            b instanceof IcCapacitorBlock ||
-            b instanceof IcNmos4Block ||
-            b instanceof IcPmos4Block
-        );
-    }
-
-    /** Whether {@code paramName} is a valid sweep parameter for the target block. */
-    private static boolean isValidParamForBlock(Block b, String paramName) {
-        if (paramName == null) return false;
-        if (b instanceof IcNmos4Block || b instanceof IcPmos4Block) {
-            return paramName.equals("W") || paramName.equals("L")
-                    || paramName.equals("mult") || paramName.equals("nf");
+    /**
+     * Best-effort unit string for sweep values of {@code varName}. The slot
+     * the variable occupies decides: W/L = "u" (microns), mult/nf = unitless,
+     * value = the block's natural unit. Returns "" when multiple components
+     * reference the variable with conflicting units.
+     */
+    private static String unitForVariable(
+            List<NetlistBuilder.CircuitComponent> components, String varName) {
+        String chosen = null;
+        for (NetlistBuilder.CircuitComponent c : components) {
+            String slot = c.slotFor(varName);
+            if (slot == null) continue;
+            String u = switch (slot) {
+                case "W", "L"      -> "u";
+                case "mult", "nf"  -> "";
+                default            -> unitOf(c.block);
+            };
+            if (chosen == null) chosen = u;
+            else if (!chosen.equals(u)) return "";
         }
-        if (b instanceof IcResistorBlock || b instanceof IcCapacitorBlock) {
-            return paramName.equals("W") || paramName.equals("L") || paramName.equals("mult");
-        }
-        // Ideal components only sweep "value"
-        return paramName.equals("value");
+        return chosen == null ? "" : chosen;
     }
 
-    private static String displayName(Block b) {
-        if (b instanceof ResistorBlock) return "Resistor";
-        if (b instanceof CapacitorBlock) return "Capacitor";
-        if (b instanceof InductorBlock) return "Inductor";
-        if (b instanceof VoltageSourceBlock) return "Voltage Source";
-        if (b instanceof VoltageSourceSinBlock) return "SIN Voltage Source";
-        if (b instanceof VoltageSourcePulseBlock) return "Pulse Voltage Source";
-        if (b instanceof CurrentSourceBlock) return "Current Source";
-        if (b instanceof IcResistorBlock) return "IC Resistor";
-        if (b instanceof IcCapacitorBlock) return "IC Capacitor";
-        if (b instanceof IcNmos4Block) return "IC NMOS4";
-        if (b instanceof IcPmos4Block) return "IC PMOS4";
-        return "Component";
-    }
-
-    private static String unit(Block b) {
-        return unit(b, "value");
-    }
-
-    /** Unit suffix for a swept value. For W/L it's "u" (microns); mult/nf are unitless. */
-    private static String unit(Block b, String paramName) {
-        if ("W".equals(paramName) || "L".equals(paramName)) return "u";
-        if ("mult".equals(paramName) || "nf".equals(paramName)) return "";
+    private static String unitOf(Block b) {
         if (b instanceof ResistorBlock) return "\u03A9";
         if (b instanceof CapacitorBlock) return "F";
         if (b instanceof InductorBlock) return "H";

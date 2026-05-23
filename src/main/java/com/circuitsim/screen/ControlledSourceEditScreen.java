@@ -56,14 +56,18 @@ public class ControlledSourceEditScreen extends Screen {
 
         double savedValue = 0.0;
         int savedNumber = 0;
+        String savedExpr = "";
         BlockEntity be = Minecraft.getInstance().level.getBlockEntity(pos);
         if (be instanceof ComponentBlockEntity cbe) {
             savedValue  = cbe.getValue();
             savedNumber = cbe.getComponentNumber();
+            savedExpr   = cbe.getValueExpr();
         }
 
-        valueField = makeBox(px + 16, py + Y_VALUE_FIELD, W - 32,
-                ComponentEditScreen.formatValue(savedValue));
+        String initial = !savedExpr.isEmpty()
+                ? savedExpr
+                : ComponentEditScreen.formatValue(savedValue);
+        valueField = makeBox(px + 16, py + Y_VALUE_FIELD, W - 32, initial);
         valueField.setMaxLength(32);
 
         numberField = makeBox(px + 16, py + Y_NUMBER_FIELD, 80,
@@ -117,16 +121,25 @@ public class ControlledSourceEditScreen extends Screen {
     }
 
     private void sendPacket() {
-        double value;
-        try { value = ComponentEditScreen.parseSI(valueField.getValue()); }
-        catch (NumberFormatException e) { value = 0; }
+        double value = 0;
+        String valueExpr = "";
+        String raw = valueField.getValue().trim();
+        if (!raw.isEmpty()) {
+            try {
+                value = ComponentEditScreen.parseSI(raw);
+            } catch (NumberFormatException nfe) {
+                // Not a number — treat as a Parametric block variable name
+                // when it looks like a plain identifier.
+                if (ComponentEditScreen.isIdentifier(raw)) valueExpr = raw;
+            }
+        }
 
         int num;
         try { num = Integer.parseInt(numberField.getValue().trim()); }
         catch (NumberFormatException e) { num = 0; }
         if (num < 0) num = 0;
 
-        ModMessages.sendToServer(new ControlledSourceUpdatePacket(pos, value, num));
+        ModMessages.sendToServer(new ControlledSourceUpdatePacket(pos, value, num, valueExpr));
     }
 
     @Override

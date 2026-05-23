@@ -104,6 +104,11 @@ public class ComponentEditScreen
         double currentMult = 1.0;
         double currentNf = 1.0;
         int    currentNumber = 0;
+        String currentValueExpr = "";
+        String currentWExpr = "";
+        String currentLExpr = "";
+        String currentMultExpr = "";
+        String currentNfExpr = "";
 
         if (be instanceof ComponentBlockEntity cbe) {
             currentValue = cbe.getValue();
@@ -121,6 +126,11 @@ public class ComponentEditScreen
             currentPulseTr   = cbe.getPulseTr();
             currentPulseTf   = cbe.getPulseTf();
             currentPulsePw   = cbe.getPulsePw();
+            currentValueExpr = cbe.getValueExpr();
+            currentWExpr     = cbe.getWExpr();
+            currentLExpr     = cbe.getLExpr();
+            currentMultExpr  = cbe.getMultExpr();
+            currentNfExpr    = cbe.getNfExpr();
             // For pulse sources the period lives in the BE's frequency slot;
             // pre-fill the editor with a sensible default (matches the BE
             // default) if the player just placed the block.
@@ -198,11 +208,17 @@ public class ComponentEditScreen
         }
 
         if (showValue) {
+            // When the BE holds a variable name (e.g. "Rs"), show that instead
+            // of the numeric value — a parametric block defines the actual
+            // number at sim time.
+            String initial = !currentValueExpr.isEmpty()
+                ? currentValueExpr
+                : formatValue(currentValue);
             valueField = makeBox(
                 fieldX,
                 cursorY + LABEL_H + GAP,
                 fieldW,
-                formatValue(currentValue),
+                initial,
                 32
             );
             cursorY += ROW_H;
@@ -329,7 +345,7 @@ public class ComponentEditScreen
                 fieldX,
                 cursorY + LABEL_H + GAP,
                 fieldW,
-                String.valueOf(currentW),
+                !currentWExpr.isEmpty() ? currentWExpr : String.valueOf(currentW),
                 32
             );
             cursorY += ROW_H;
@@ -337,7 +353,7 @@ public class ComponentEditScreen
                 fieldX,
                 cursorY + LABEL_H + GAP,
                 fieldW,
-                String.valueOf(currentL),
+                !currentLExpr.isEmpty() ? currentLExpr : String.valueOf(currentL),
                 32
             );
             cursorY += ROW_H;
@@ -345,16 +361,19 @@ public class ComponentEditScreen
                 fieldX,
                 cursorY + LABEL_H + GAP,
                 fieldW,
-                String.valueOf(currentMult),
+                !currentMultExpr.isEmpty() ? currentMultExpr : String.valueOf(currentMult),
                 32
             );
             cursorY += ROW_H;
             if (showNf) {
+                String nfInit = !currentNfExpr.isEmpty()
+                        ? currentNfExpr
+                        : String.valueOf((int) Math.max(1, Math.round(currentNf)));
                 nfField = makeBox(
                     fieldX,
                     cursorY + LABEL_H + GAP,
                     fieldW,
-                    String.valueOf((int) Math.max(1, Math.round(currentNf))),
+                    nfInit,
                     16
                 );
                 cursorY += ROW_H;
@@ -520,7 +539,7 @@ public class ComponentEditScreen
         }
         if (showPulse) {
             g.drawString(Minecraft.getInstance().font,
-                    "V_2 (V):",      labelX, cursorY, LABEL_COLOR);
+                    "V2 (V):",      labelX, cursorY, LABEL_COLOR);
             cursorY += ROW_H;
             g.drawString(Minecraft.getInstance().font,
                     "Period (s):",     labelX, cursorY, LABEL_COLOR);
@@ -761,10 +780,18 @@ public class ComponentEditScreen
 
     private void sendUpdatePacket(net.minecraft.core.BlockPos pos) {
         double value = 0.0;
+        String valueExpr = "";
         if (valueField != null) {
-            try {
-                value = parseSI(valueField.getValue());
-            } catch (NumberFormatException ignored) {}
+            String raw = valueField.getValue().trim();
+            if (!raw.isEmpty()) {
+                try {
+                    value = parseSI(raw);
+                } catch (NumberFormatException nfe) {
+                    // Not a number — treat as a variable name if it looks like
+                    // a plain identifier. Anything else falls through to 0.
+                    if (isIdentifier(raw)) valueExpr = raw;
+                }
+            }
         }
         double freq = 0.0;
         if (frequencyField != null) {
@@ -782,6 +809,7 @@ public class ComponentEditScreen
             l = 1.0,
             mult = 1.0,
             nf = 1.0;
+        String wExpr = "", lExpr = "", multExpr = "", nfExpr = "";
         if (showControlSource && modelNameField != null) {
             modelName = modelNameField.getValue().trim();
         }
@@ -789,27 +817,15 @@ public class ComponentEditScreen
             if (modelNameField != null) modelName = modelNameField
                 .getValue()
                 .trim();
-            try {
-                w = Double.parseDouble(
-                    wField != null ? wField.getValue().trim() : "1"
-                );
-            } catch (Exception ignored) {}
-            try {
-                l = Double.parseDouble(
-                    lField != null ? lField.getValue().trim() : "1"
-                );
-            } catch (Exception ignored) {}
-            try {
-                mult = Double.parseDouble(
-                    multField != null ? multField.getValue().trim() : "1"
-                );
-            } catch (Exception ignored) {}
+            ParsedSlot ws = parseSlot(wField, 1.0);
+            w = ws.value; wExpr = ws.expr;
+            ParsedSlot ls = parseSlot(lField, 1.0);
+            l = ls.value; lExpr = ls.expr;
+            ParsedSlot ms = parseSlot(multField, 1.0);
+            mult = ms.value; multExpr = ms.expr;
             if (showNf) {
-                try {
-                    nf = Double.parseDouble(
-                        nfField != null ? nfField.getValue().trim() : "1"
-                    );
-                } catch (Exception ignored) {}
+                ParsedSlot ns = parseSlot(nfField, 1.0);
+                nf = ns.value; nfExpr = ns.expr;
             }
         }
 
@@ -863,9 +879,57 @@ public class ComponentEditScreen
                 pulseVLow,
                 pulseTr,
                 pulseTf,
-                pulsePw
+                pulsePw,
+                valueExpr,
+                wExpr,
+                lExpr,
+                multExpr,
+                nfExpr
             )
         );
+    }
+
+    /**
+     * Result of parsing a per-slot field: a numeric value plus an optional
+     * variable name. When the user typed a number, {@code expr} is empty and
+     * {@code value} holds the parsed number. When they typed an identifier,
+     * {@code expr} holds the name and {@code value} keeps the defaulted
+     * numeric (so the BE still has a usable fallback if the variable later
+     * disappears).
+     */
+    static final class ParsedSlot {
+        final double value;
+        final String expr;
+        ParsedSlot(double v, String e) { value = v; expr = e == null ? "" : e; }
+    }
+
+    /** Parses a field that accepts either a plain number or a variable name. */
+    private static ParsedSlot parseSlot(EditBox box, double defaultVal) {
+        if (box == null) return new ParsedSlot(defaultVal, "");
+        String raw = box.getValue().trim();
+        if (raw.isEmpty()) return new ParsedSlot(defaultVal, "");
+        try {
+            return new ParsedSlot(Double.parseDouble(raw), "");
+        } catch (NumberFormatException nfe) {
+            try {
+                return new ParsedSlot(parseSI(raw), "");
+            } catch (NumberFormatException nfe2) {
+                if (isIdentifier(raw)) return new ParsedSlot(defaultVal, raw);
+                return new ParsedSlot(defaultVal, "");
+            }
+        }
+    }
+
+    /** True if the string looks like a variable name (letter, then [A-Za-z0-9_]*). */
+    public static boolean isIdentifier(String s) {
+        if (s == null || s.isEmpty()) return false;
+        char c0 = s.charAt(0);
+        if (!Character.isLetter(c0) && c0 != '_') return false;
+        for (int i = 1; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '_') return false;
+        }
+        return true;
     }
 
     private String getValueLabel(String type) {

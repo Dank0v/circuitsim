@@ -5,7 +5,6 @@ import com.circuitsim.client.renderer.ComponentBlockEntityRenderer;
 import com.circuitsim.init.ModBlockEntities;
 import com.circuitsim.init.ModMenuTypes;
 import com.circuitsim.screen.ComponentEditScreen;
-import com.circuitsim.screen.ParametricEditScreen;
 import net.minecraft.client.gui.screens.MenuScreens;
 import net.minecraft.core.BlockPos;
 import net.minecraftforge.api.distmarker.Dist;
@@ -38,10 +37,6 @@ public class ClientSetup {
             MenuScreens.register(
                 ModMenuTypes.COMPONENT_EDIT.get(),
                 ComponentEditScreen::new
-            );
-            MenuScreens.register(
-                ModMenuTypes.PARAMETRIC_EDIT.get(),
-                ParametricEditScreen::new
             );
         });
     }

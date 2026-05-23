@@ -21,23 +21,31 @@ public class ControlledSourceUpdatePacket {
     private final BlockPos pos;
     private final double   value;
     private final int      componentNumber;
+    private final String   valueExpr;
 
     public ControlledSourceUpdatePacket(BlockPos pos, double value, int componentNumber) {
+        this(pos, value, componentNumber, "");
+    }
+
+    public ControlledSourceUpdatePacket(BlockPos pos, double value, int componentNumber, String valueExpr) {
         this.pos             = pos;
         this.value           = value;
         this.componentNumber = Math.max(0, componentNumber);
+        this.valueExpr       = valueExpr == null ? "" : valueExpr;
     }
 
     public ControlledSourceUpdatePacket(FriendlyByteBuf buf) {
         this.pos             = buf.readBlockPos();
         this.value           = buf.readDouble();
         this.componentNumber = buf.readVarInt();
+        this.valueExpr       = buf.readUtf(64);
     }
 
     public void encode(FriendlyByteBuf buf) {
         buf.writeBlockPos(pos);
         buf.writeDouble(value);
         buf.writeVarInt(componentNumber);
+        buf.writeUtf(valueExpr == null ? "" : valueExpr, 64);
     }
 
     public static ControlledSourceUpdatePacket decode(FriendlyByteBuf buf) {
@@ -58,6 +66,7 @@ public class ControlledSourceUpdatePacket {
         if (be instanceof ComponentBlockEntity cbe) {
             cbe.setValue(value);
             cbe.setComponentNumber(componentNumber);
+            cbe.setValueExpr(valueExpr);
             cbe.setChanged();
             cbe.syncToClient();
         }

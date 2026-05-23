@@ -130,25 +130,29 @@ public class ComponentBlockEntityRenderer
     private static List<String> getLines(ComponentBlockEntity be) {
         Block block = be.getBlockState().getBlock();
         List<String> lines = new ArrayList<>();
-        double val = be.getValue();
+        double val      = be.getValue();
+        String valExpr  = be.getValueExpr();
+        String wExpr    = be.getWExpr();
+        String lExpr    = be.getLExpr();
+        String multExpr = be.getMultExpr();
+        String nfExpr   = be.getNfExpr();
+        boolean icHasExpr = !wExpr.isEmpty() || !lExpr.isEmpty() || !multExpr.isEmpty();
 
         if (block == ModBlocks.RESISTOR.get()) {
-            lines.add(val == 0.0
-                ? "?\u03A9"
-                : ComponentEditScreen.formatValue(val) + "\u03A9");
+            lines.add(formatScalarOrVar(val, valExpr, "\u03A9"));
         } else if (block == ModBlocks.CAPACITOR.get()) {
-            lines.add(val == 0.0 ? "?F" : ComponentEditScreen.formatValue(val) + "F");
+            lines.add(formatScalarOrVar(val, valExpr, "F"));
         } else if (block == ModBlocks.INDUCTOR.get()) {
-            lines.add(val == 0.0 ? "?H" : ComponentEditScreen.formatValue(val) + "H");
+            lines.add(formatScalarOrVar(val, valExpr, "H"));
         } else if (block == ModBlocks.VOLTAGE_SOURCE.get()) {
-            lines.add(val == 0.0 ? "?V" : ComponentEditScreen.formatValue(val) + "V");
+            lines.add(formatScalarOrVar(val, valExpr, "V"));
             String st = be.getSourceType();
             lines.add((st == null || st.isEmpty()) ? "DC" : st);
         } else if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) {
-            lines.add(val == 0.0 ? "?V" : ComponentEditScreen.formatValue(val) + "V");
+            lines.add(formatScalarOrVar(val, valExpr, "V"));
             lines.add(ComponentEditScreen.formatValue(be.getFrequency()) + "Hz");
         } else if (block == ModBlocks.CURRENT_SOURCE.get()) {
-            lines.add(val == 0.0 ? "?A" : ComponentEditScreen.formatValue(val) + "A");
+            lines.add(formatScalarOrVar(val, valExpr, "A"));
             String st = be.getSourceType();
             lines.add((st == null || st.isEmpty()) ? "DC" : st);
         } else if (block == ModBlocks.PROBE.get()) {
@@ -163,39 +167,47 @@ public class ComponentBlockEntityRenderer
             String sweep = be.getLabel();
             lines.add((sweep == null || sweep.isEmpty()) ? "Param: ?" : "Param: " + sweep);
         } else if (block == ModBlocks.IC_RESISTOR.get()) {
-            Double r = NetlistBuilder.computeResistance(
-                    be.getPdkName(), be.getModelName(),
-                    be.getWParam(), be.getLParam(), be.getMultParam());
-            lines.add(r != null
-                ? ComponentEditScreen.formatValue(r) + "\u03A9"
-                : "?");
+            // When any of W/L/mult is symbolic, the resistance is unknown
+            // until simulation substitutes the values \u2014 fall back to "?".
+            if (icHasExpr) {
+                lines.add("?\u03A9");
+            } else {
+                Double r = NetlistBuilder.computeResistance(
+                        be.getPdkName(), be.getModelName(),
+                        be.getWParam(), be.getLParam(), be.getMultParam());
+                lines.add(r != null
+                    ? ComponentEditScreen.formatValue(r) + "\u03A9"
+                    : "?");
+            }
             String model = be.getModelName();
             lines.add((model == null || model.isEmpty()) ? "res_high_po" : model);
         } else if (block == ModBlocks.IC_CAPACITOR.get()) {
-            Double c = NetlistBuilder.computeCapacitance(
-                    be.getPdkName(), be.getModelName(),
-                    be.getWParam(), be.getLParam(), be.getMultParam());
-            lines.add(c != null
-                ? ComponentEditScreen.formatValue(c) + "F"
-                : "?");
+            if (icHasExpr) {
+                lines.add("?F");
+            } else {
+                Double c = NetlistBuilder.computeCapacitance(
+                        be.getPdkName(), be.getModelName(),
+                        be.getWParam(), be.getLParam(), be.getMultParam());
+                lines.add(c != null
+                    ? ComponentEditScreen.formatValue(c) + "F"
+                    : "?");
+            }
             String model = be.getModelName();
             lines.add((model == null || model.isEmpty()) ? "cap_mim_m3_1" : model);
         } else if (block == ModBlocks.VCVS.get()) {
             lines.add("VCVS");
-            lines.add(val == 0.0 ? "?" : ComponentEditScreen.formatValue(val) + " V/V");
+            lines.add(formatScalarOrVar(val, valExpr, " V/V"));
         } else if (block == ModBlocks.VCCS.get()) {
             lines.add("VCCS");
-            lines.add(val == 0.0 ? "?" : ComponentEditScreen.formatValue(val) + "S");
+            lines.add(formatScalarOrVar(val, valExpr, "S"));
         } else if (block == ModBlocks.CCVS.get()) {
             lines.add("CCVS");
-            lines.add(val == 0.0
-                ? "?\u03A9"
-                : ComponentEditScreen.formatValue(val) + "\u03A9");
+            lines.add(formatScalarOrVar(val, valExpr, "\u03A9"));
             String vnam = be.getModelName();
             if (vnam != null && !vnam.isEmpty()) lines.add("ctl: " + vnam);
         } else if (block == ModBlocks.CCCS.get()) {
             lines.add("CCCS");
-            lines.add(val == 0.0 ? "?" : ComponentEditScreen.formatValue(val) + " A/A");
+            lines.add(formatScalarOrVar(val, valExpr, " A/A"));
             String vnam = be.getModelName();
             if (vnam != null && !vnam.isEmpty()) lines.add("ctl: " + vnam);
         } else if (block == ModBlocks.AMPLIFIER.get()) {
@@ -211,12 +223,28 @@ public class ComponentBlockEntityRenderer
             double mult = be.getMultParam();
             int    nf   = (int) Math.max(1, Math.round(be.getNfParam()));
             lines.add((model == null || model.isEmpty()) ? defaultModel : model);
-            lines.add("W: " + ComponentEditScreen.trimTrailingZeros(String.format("%.6f", w)) + "u");
-            lines.add("L: " + ComponentEditScreen.trimTrailingZeros(String.format("%.6f", l)) + "u");
-            lines.add("mult: " + ComponentEditScreen.trimTrailingZeros(String.format("%.6f", mult)));
-            lines.add("NF: " + nf);
+            lines.add("W: " + (!wExpr.isEmpty()
+                    ? wExpr
+                    : ComponentEditScreen.trimTrailingZeros(String.format("%.6f", w)) + "u"));
+            lines.add("L: " + (!lExpr.isEmpty()
+                    ? lExpr
+                    : ComponentEditScreen.trimTrailingZeros(String.format("%.6f", l)) + "u"));
+            lines.add("mult: " + (!multExpr.isEmpty()
+                    ? multExpr
+                    : ComponentEditScreen.trimTrailingZeros(String.format("%.6f", mult))));
+            lines.add("NF: " + (!nfExpr.isEmpty() ? nfExpr : String.valueOf(nf)));
         }
 
         return lines;
+    }
+
+    /**
+     * Renders a single-value slot: variable name if {@code expr} is set,
+     * otherwise the numeric value (with "?" when zero/unset).
+     */
+    private static String formatScalarOrVar(double val, String expr, String unit) {
+        if (expr != null && !expr.isEmpty()) return expr + unit;
+        if (val == 0.0) return "?" + unit;
+        return ComponentEditScreen.formatValue(val) + unit;
     }
 }

@@ -33,6 +33,15 @@ public class ComponentUpdatePacket {
     private final double   pulseTr;
     private final double   pulseTf;
     private final double   pulsePw;
+    /** When non-empty, the value field is sourced from a Parametric block
+     *  defining this variable at sim time. Empty -> use the numeric value. */
+    private final String   valueExpr;
+    // Per-slot variable names for IC components (W/L/mult/nf). Empty means
+    // use the numeric field directly.
+    private final String   wExpr;
+    private final String   lExpr;
+    private final String   multExpr;
+    private final String   nfExpr;
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label) {
@@ -68,7 +77,7 @@ public class ComponentUpdatePacket {
         // (V1=0, TR=TF=1 ns, PW=1 us). Pulse-source edits use the full ctor
         // directly so these are only seen when the BE is something else.
         this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam,
-                nfParam, pdkName, componentNumber, mirrored, 0.0, 1e-9, 1e-9, 1e-6);
+                nfParam, pdkName, componentNumber, mirrored, 0.0, 1e-9, 1e-9, 1e-6, "");
     }
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
@@ -76,6 +85,28 @@ public class ComponentUpdatePacket {
                                   String modelName, double wParam, double lParam, double multParam,
                                   double nfParam, String pdkName, int componentNumber, boolean mirrored,
                                   double pulseVLow, double pulseTr, double pulseTf, double pulsePw) {
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam,
+                nfParam, pdkName, componentNumber, mirrored, pulseVLow, pulseTr, pulseTf, pulsePw, "");
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  double nfParam, String pdkName, int componentNumber, boolean mirrored,
+                                  double pulseVLow, double pulseTr, double pulseTf, double pulsePw,
+                                  String valueExpr) {
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam,
+                nfParam, pdkName, componentNumber, mirrored, pulseVLow, pulseTr, pulseTf, pulsePw,
+                valueExpr, "", "", "", "");
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  double nfParam, String pdkName, int componentNumber, boolean mirrored,
+                                  double pulseVLow, double pulseTr, double pulseTf, double pulsePw,
+                                  String valueExpr,
+                                  String wExpr, String lExpr, String multExpr, String nfExpr) {
         this.pos             = pos;
         this.value           = value;
         this.sourceType      = sourceType;
@@ -93,6 +124,11 @@ public class ComponentUpdatePacket {
         this.pulseTr         = pulseTr;
         this.pulseTf         = pulseTf;
         this.pulsePw         = pulsePw;
+        this.valueExpr       = valueExpr == null ? "" : valueExpr;
+        this.wExpr           = wExpr     == null ? "" : wExpr;
+        this.lExpr           = lExpr     == null ? "" : lExpr;
+        this.multExpr        = multExpr  == null ? "" : multExpr;
+        this.nfExpr          = nfExpr    == null ? "" : nfExpr;
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
@@ -113,6 +149,11 @@ public class ComponentUpdatePacket {
         this.pulseTr         = buf.readDouble();
         this.pulseTf         = buf.readDouble();
         this.pulsePw         = buf.readDouble();
+        this.valueExpr       = buf.readUtf(64);
+        this.wExpr           = buf.readUtf(64);
+        this.lExpr           = buf.readUtf(64);
+        this.multExpr        = buf.readUtf(64);
+        this.nfExpr          = buf.readUtf(64);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -133,6 +174,11 @@ public class ComponentUpdatePacket {
         buf.writeDouble(pulseTr);
         buf.writeDouble(pulseTf);
         buf.writeDouble(pulsePw);
+        buf.writeUtf(valueExpr == null ? "" : valueExpr, 64);
+        buf.writeUtf(wExpr     == null ? "" : wExpr,     64);
+        buf.writeUtf(lExpr     == null ? "" : lExpr,     64);
+        buf.writeUtf(multExpr  == null ? "" : multExpr,  64);
+        buf.writeUtf(nfExpr    == null ? "" : nfExpr,    64);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -161,6 +207,11 @@ public class ComponentUpdatePacket {
             cbe.setPulseTr(pulseTr);
             cbe.setPulseTf(pulseTf);
             cbe.setPulsePw(pulsePw);
+            cbe.setValueExpr(valueExpr);
+            cbe.setWExpr(wExpr);
+            cbe.setLExpr(lExpr);
+            cbe.setMultExpr(multExpr);
+            cbe.setNfExpr(nfExpr);
             cbe.setChanged();
 
             BlockState curState = level.getBlockState(pos);

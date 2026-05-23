@@ -20,6 +20,17 @@ public class ComponentBlockEntity extends BlockEntity {
     private double frequency = 60.0;
     private String label = "";
     private int    componentNumber = 0;   // 0 = auto, otherwise R<N>/C<N>/etc. in netlist
+    // When non-empty, the component's "value" is sourced at simulation time
+    // from a Parametric block defining this variable name. Empty means use
+    // the numeric `value` field directly.
+    private String valueExpr = "";
+    // Same idea, one per sky130 / IC slot. Only one of (numeric, expr) is
+    // meaningful at a time per slot; the editor decides which based on the
+    // user input.
+    private String wExpr    = "";
+    private String lExpr    = "";
+    private String multExpr = "";
+    private String nfExpr   = "";
 
     // sky130 resistor/mosfet fields
     private String modelName  = "";
@@ -106,6 +117,16 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setProbeLabel(String l)  { this.label = l; setChanged(); }
     public int getComponentNumber()        { return componentNumber; }
     public void setComponentNumber(int n)  { this.componentNumber = Math.max(0, n); setChanged(); }
+    public String getValueExpr()           { return valueExpr == null ? "" : valueExpr; }
+    public void setValueExpr(String expr)  { this.valueExpr = expr == null ? "" : expr; setChanged(); }
+    public String getWExpr()               { return wExpr == null ? "" : wExpr; }
+    public void setWExpr(String e)         { this.wExpr = e == null ? "" : e; setChanged(); }
+    public String getLExpr()               { return lExpr == null ? "" : lExpr; }
+    public void setLExpr(String e)         { this.lExpr = e == null ? "" : e; setChanged(); }
+    public String getMultExpr()            { return multExpr == null ? "" : multExpr; }
+    public void setMultExpr(String e)      { this.multExpr = e == null ? "" : e; setChanged(); }
+    public String getNfExpr()              { return nfExpr == null ? "" : nfExpr; }
+    public void setNfExpr(String e)        { this.nfExpr = e == null ? "" : e; setChanged(); }
 
     public String getModelName()           { return modelName; }
     public void setModelName(String name)  { this.modelName = name; setChanged(); }
@@ -177,6 +198,11 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("pulseTr",   pulseTr);
         tag.putDouble("pulseTf",   pulseTf);
         tag.putDouble("pulsePw",   pulsePw);
+        tag.putString("valueExpr", valueExpr == null ? "" : valueExpr);
+        tag.putString("wExpr",     wExpr     == null ? "" : wExpr);
+        tag.putString("lExpr",     lExpr     == null ? "" : lExpr);
+        tag.putString("multExpr",  multExpr  == null ? "" : multExpr);
+        tag.putString("nfExpr",    nfExpr    == null ? "" : nfExpr);
     }
 
     @Override
@@ -207,6 +233,11 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("pulseTr"))     pulseTr     = tag.getDouble("pulseTr");
         if (tag.contains("pulseTf"))     pulseTf     = tag.getDouble("pulseTf");
         if (tag.contains("pulsePw"))     pulsePw     = tag.getDouble("pulsePw");
+        if (tag.contains("valueExpr"))   valueExpr   = tag.getString("valueExpr");
+        if (tag.contains("wExpr"))       wExpr       = tag.getString("wExpr");
+        if (tag.contains("lExpr"))       lExpr       = tag.getString("lExpr");
+        if (tag.contains("multExpr"))    multExpr    = tag.getString("multExpr");
+        if (tag.contains("nfExpr"))      nfExpr      = tag.getString("nfExpr");
     }
 
     @Override
@@ -237,6 +268,11 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("pulseTr",   pulseTr);
         tag.putDouble("pulseTf",   pulseTf);
         tag.putDouble("pulsePw",   pulsePw);
+        tag.putString("valueExpr", valueExpr == null ? "" : valueExpr);
+        tag.putString("wExpr",     wExpr     == null ? "" : wExpr);
+        tag.putString("lExpr",     lExpr     == null ? "" : lExpr);
+        tag.putString("multExpr",  multExpr  == null ? "" : multExpr);
+        tag.putString("nfExpr",    nfExpr    == null ? "" : nfExpr);
         return tag;
     }
 
