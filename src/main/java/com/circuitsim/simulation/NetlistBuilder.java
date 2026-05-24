@@ -253,6 +253,7 @@ public class NetlistBuilder {
         sb.append(".op\n");
         sb.append(".control\n");
 
+        appendPreRunCommands(sb, userCommands);
         sb.append("  run\n");
 
         appendUserPlotLets(sb, userPlots);
@@ -426,6 +427,7 @@ public class NetlistBuilder {
 
         sb.append(".control\n");
 
+        appendPreRunCommands(sb, userCommands);
         sb.append("  run\n");
 
         appendUserPlotLets(sb, userPlots);
@@ -554,6 +556,7 @@ public class NetlistBuilder {
         }
 
         sb.append(".control\n");
+        appendPreRunCommands(sb, userCommands);
         sb.append("  run\n");
 
         appendUserPlotLets(sb, userPlots);
@@ -707,6 +710,7 @@ public class NetlistBuilder {
 
         sb.append(".control\n");
 
+        appendPreRunCommands(sb, userCommands);
         sb.append("  run\n");
 
         appendUserPlotLets(sb, userPlots);
@@ -841,15 +845,53 @@ public class NetlistBuilder {
         return Integer.toString(n);
     }
 
-    /** Emits each user-supplied command as its own indented line inside .control. */
+    /**
+     * Post-run user commands. Skips lines that {@link #isPreRunCommand}
+     * matches — those are emitted earlier (before {@code run}) by
+     * {@link #appendPreRunCommands} so they actually take effect.
+     */
     private static void appendUserCommands(StringBuilder sb, List<String> userCommands) {
         if (userCommands == null) return;
         for (String cmd : userCommands) {
             if (cmd == null) continue;
             String trimmed = cmd.strip();
             if (trimmed.isEmpty()) continue;
+            if (isPreRunCommand(trimmed)) continue;
             sb.append("  ").append(trimmed).append("\n");
         }
+    }
+
+    /**
+     * Emits commands that must run BEFORE {@code run} to have any effect.
+     * Currently just {@code save <vector>}: ngspice's {@code save} command
+     * registers which vectors the analysis should track, so it has to be
+     * issued before the analysis executes. If a user types it inside the
+     * Commands block we'd otherwise emit it after {@code run} (where it's
+     * a no-op).
+     */
+    private static void appendPreRunCommands(StringBuilder sb, List<String> userCommands) {
+        if (userCommands == null) return;
+        boolean hasAnySave = false;
+        for (String cmd : userCommands) {
+            if (cmd != null && isPreRunCommand(cmd.strip())) { hasAnySave = true; break; }
+        }
+        // ngspice flips to selective-save mode the moment ANY `save <vec>` is
+        // issued, which drops the default node voltages / branch currents
+        // and leaves the DC/AC/TRAN result table empty. Prepending `save all`
+        // keeps the defaults around so the user's extra saves are purely
+        // additive.
+        if (hasAnySave) sb.append("  save all\n");
+        for (String cmd : userCommands) {
+            if (cmd == null) continue;
+            String trimmed = cmd.strip();
+            if (trimmed.isEmpty()) continue;
+            if (isPreRunCommand(trimmed)) sb.append("  ").append(trimmed).append("\n");
+        }
+    }
+
+    private static boolean isPreRunCommand(String trimmed) {
+        String lower = trimmed.toLowerCase();
+        return lower.startsWith("save ") || lower.equals("save");
     }
 
     /**

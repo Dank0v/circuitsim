@@ -14,11 +14,15 @@ import java.util.regex.Pattern;
 public class CircuitExtractor {
 
     /**
-     * Matches {@code plot NAME = EXPR} or {@code plot NAME[UNIT] = EXPR} (case-insensitive).
-     * Group 1 = name, group 2 = optional unit, group 3 = expression.
+     * Matches {@code plot NAME} / {@code plot NAME = EXPR} /
+     * {@code plot NAME[UNIT] = EXPR} (case-insensitive). The {@code = EXPR}
+     * tail is optional: without it the user is expected to have defined
+     * {@code NAME} with their own {@code let} on a prior line, and we only
+     * register the series for graphing (no auto-emitted {@code let}).
+     * Group 1 = name, group 2 = optional unit, group 3 = optional expression.
      */
     private static final Pattern PLOT_DIRECTIVE =
-            Pattern.compile("^plot\\s+([^\\s\\[=]+)\\s*(?:\\[([^\\]]*)\\])?\\s*=\\s*(.+)$",
+            Pattern.compile("^plot\\s+([^\\s\\[=]+)\\s*(?:\\[([^\\]]*)\\])?\\s*(?:=\\s*(.+))?$",
                     Pattern.CASE_INSENSITIVE);
 
     private final Map<BlockPos, BlockPos> parent = new HashMap<>();
@@ -517,15 +521,22 @@ public class CircuitExtractor {
     private static NetlistBuilder.UserPlot parsePlotDirective(String line, Set<String> usedNames) {
         Matcher m = PLOT_DIRECTIVE.matcher(line);
         if (!m.matches()) return null;
-        String displayName = m.group(1).trim();
+        String displayName  = m.group(1).trim();
         String unitOverride = m.group(2);
-        String expr         = m.group(3).trim();
-        if (expr.isEmpty()) return null;
+        String rawExpr      = m.group(3);
+        // When the user omits "= EXPR" they're expected to have defined the
+        // variable themselves with a `let`. The UserPlot then carries a null
+        // expression — appendUserPlotLets() skips it during netlist build,
+        // but the rest of the pipeline (print line, series extraction) still
+        // treats it as a column to read from ngspice output.
+        String expr = rawExpr == null ? null : rawExpr.trim();
+        if (expr != null && expr.isEmpty()) expr = null;
         String safeName = NetlistBuilder.sanitizeNodeName(displayName);
         if (safeName.isEmpty()) return null;
         if (usedNames.contains(safeName)) return null;
         usedNames.add(safeName);
-        String unit = unitOverride != null ? unitOverride.trim() : detectPlotUnit(expr);
+        String unit = unitOverride != null ? unitOverride.trim()
+                : (expr != null ? detectPlotUnit(expr) : "");
         return new NetlistBuilder.UserPlot(safeName, expr, displayName, unit);
     }
 

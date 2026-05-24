@@ -86,11 +86,12 @@ public class SimulateEditScreen extends Screen {
     private static final int Y_PARAM1     = 128;
     private static final int Y_PARAM2     = 151;
     private static final int Y_PARAM3     = 174;
-    // DC sub-panel rows (top of fields). Row 1 sits at Y_PARAM1, the 2D
-    // checkbox between rows, row 2 at Y_PARAM3.
-    private static final int Y_DC_ROW1     = Y_PARAM1;
-    private static final int Y_DC_2DTOGGLE = Y_PARAM2;
-    private static final int Y_DC_ROW2     = Y_PARAM3;
+    // DC sub-panel rows. Row 1 is offset down from Y_PARAM1 to leave room
+    // for the "Src / Start / Stop / Step" column-header strip above it
+    // (without clipping into the analysis-radio area above the divider).
+    private static final int Y_DC_ROW1     = 138;
+    private static final int Y_DC_2DTOGGLE = 158;
+    private static final int Y_DC_ROW2     = 175;
     private static final int Y_PARAM_TEMP = 197;       // temperature override (single value or sweep spec)
     private static final int Y_DIV_AFTER_PARAMS = 217;
     // Compat section

@@ -150,8 +150,21 @@ public class GraphScreen extends Screen {
     }
 
     private static String baseName(String probeName) {
-        int at = probeName.indexOf('@');
-        return at >= 0 ? probeName.substring(0, at) : probeName;
+        int at = suffixSplit(probeName);
+        return at < 0 ? probeName : probeName.substring(0, at);
+    }
+
+    /**
+     * Index of the '@' that separates the probe's base name from the suffix
+     * we appended (e.g. {@code @20C} or {@code @Wn=9u}), or -1 if there's no
+     * such separator. A leading '@' is part of the ngspice device-parameter
+     * syntax ({@code @m.xm1.msky130_fd_pr__nfet_01v8_lvt[gm]}) and must NOT
+     * be treated as the split point — otherwise every {@code @...[gm]} and
+     * {@code @...[vth]} probe collapses into one empty-named group.
+     */
+    private static int suffixSplit(String probeName) {
+        int at = probeName.lastIndexOf('@');
+        return at > 0 ? at : -1;
     }
 
     private String groupOf(int probeIdx) {
@@ -424,7 +437,9 @@ public class GraphScreen extends Screen {
         g.fill(sx, sy, sx + SIDEBAR_W, sy + SIDEBAR_H, C_SIDE_BG);
         drawRect(g, sx - 1, sy - 1, SIDEBAR_W + 2, SIDEBAR_H + 2, 1, C_SEP);
 
-        int hdrY = sy - 11;
+        // Place the header just below the title-bar separator (panelY + 22-23)
+        // rather than above it; sy-11 clipped the text into the gray border.
+        int hdrY = sy - 9;
         g.drawString(font, "T", sx + X_BTN_T + 3, hdrY, C_UNIT);
         g.drawString(font, "B", sx + X_BTN_B + 3, hdrY, C_UNIT);
         g.drawString(font, "probe", sx + X_TEXT, hdrY, C_UNIT);
@@ -500,9 +515,11 @@ public class GraphScreen extends Screen {
                     }
                     textX += SWATCH_W + SWATCH_GAP;
                 }
-                // Variant label = the part after @ (or full name if no @)
+                // Variant label = the part after the suffix '@' (the one we
+                // appended), preserving the leading ngspice-style '@...[gm]'
+                // as part of the base, not the variant suffix.
                 String full = probeNames.get(row.probeIdx);
-                int at = full.indexOf('@');
+                int at = suffixSplit(full);
                 String suffix = at >= 0 ? full.substring(at) : full;
                 int nameMaxW = SIDEBAR_W - (textX - sx) - 4;
                 String shown = ellipsize(suffix, nameMaxW);
@@ -593,8 +610,11 @@ public class GraphScreen extends Screen {
         }
 
         if (haveTop && haveBot) {
+            // Gap fits the bottom plot's Y-label (~9 px) between the two
+            // plots, plus a couple of pixels of breathing room. Smaller gaps
+            // caused the bottom-plot label to overlay onto the top plot.
             int half = (plotBottom - plotTop) / 2;
-            int gap  = 6;
+            int gap  = 18;
             int top1Bottom = plotTop + half - gap / 2;
             int top2Top    = plotTop + half + gap / 2;
             drawMultiCurvePlot(g, plotLeft, plotTop,    gw, top1Bottom - plotTop,
@@ -610,9 +630,14 @@ public class GraphScreen extends Screen {
         }
     }
 
+    /**
+     * @param drawXAxis when true the X-axis tick labels and X-title are
+     *        rendered below the plot. Suppressed on the top plot in split
+     *        view since the bottom plot owns the shared X axis.
+     */
     private void drawMultiCurvePlot(GuiGraphics g, int gx, int gy, int gw, int gh,
                                      Set<Integer> slot, int[] palette,
-                                     boolean drawXTitle, int mouseX, int mouseY) {
+                                     boolean drawXAxis, int mouseX, int mouseY) {
         if (slot.isEmpty()) return;
 
         List<Integer> active = new ArrayList<>();
@@ -665,8 +690,8 @@ public class GraphScreen extends Screen {
             g.drawString(font, yLbl, gx - font.width(yLbl) - 3, py - 4, C_LABEL);
         }
 
-        if (isLogFrequency) drawLogXTicks(g, gx, gy, gw, gh, xMin, xMax);
-        else                drawLinearXTicks(g, gx, gy, gw, gh, xMin, xMax);
+        if (isLogFrequency) drawLogXTicks(g, gx, gy, gw, gh, xMin, xMax, drawXAxis);
+        else                drawLinearXTicks(g, gx, gy, gw, gh, xMin, xMax, drawXAxis);
 
         g.fill(gx,      gy,      gx + 1, gy + gh,      C_AXIS);
         g.fill(gx,      gy + gh, gx + gw, gy + gh + 1, C_AXIS);
@@ -680,7 +705,7 @@ public class GraphScreen extends Screen {
             g.drawString(font, ellipsize(yLabel, gw - 4), gx + 2, gy - 9, yColour);
         }
 
-        if (drawXTitle) {
+        if (drawXAxis) {
             g.drawCenteredString(font,
                     sweepComponentName + " (" + sweepUnit + ")"
                             + (isLogFrequency ? " - log scale" : ""),
@@ -701,8 +726,8 @@ public class GraphScreen extends Screen {
             int[] py = new int[n];
             for (int i = 0; i < n; i++) {
                 double rawX = sweepValues.get(i);
-                double logX = isLogFrequency ? Math.log10(Math.max(rawX, 1e-30)) : rawX;
-                double xf   = (logX - xMin) / (xMax - xMin);
+                double xScaled = isLogFrequency ? Math.log10(Math.max(rawX, 1e-30)) : rawX;
+                double xf   = (xScaled - xMin) / (xMax - xMin);
                 double yf   = (series.get(i) - yMin) / (yMax - yMin);
                 px[i] = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
                 py[i] = clamp(gy + gh - 1 - (int)(yf * (gh - 1)), gy, gy + gh - 1);
@@ -732,8 +757,8 @@ public class GraphScreen extends Screen {
             String name = probeNames.get(hoverCurve);
             String tip  = name + ": " + yStr + " at " + xStr;
             int tw = font.width(tip) + 6, th = 12;
-            double xf = (isLogFrequency
-                    ? Math.log10(Math.max(rawXH, 1e-30)) : rawXH);
+            double xf = isLogFrequency
+                    ? Math.log10(Math.max(rawXH, 1e-30)) : rawXH;
             xf = (xf - xMin) / (xMax - xMin);
             double yf = (series.get(hoverIdx) - yMin) / (yMax - yMin);
             int hx = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
@@ -764,20 +789,21 @@ public class GraphScreen extends Screen {
     // ── tick helpers ────────────────────────────────────────────────────────
 
     private void drawLinearXTicks(GuiGraphics g, int gx, int gy, int gw, int gh,
-                                   double xMin, double xMax) {
+                                   double xMin, double xMax, boolean labels) {
         final int X_TICKS = 6;
         for (int i = 0; i <= X_TICKS; i++) {
             double t     = (double) i / X_TICKS;
             double xReal = xMin + (xMax - xMin) * t;
             int    px    = gx + (int)(t * gw);
             g.fill(px, gy, px + 1, gy + gh, C_GRID);
+            if (!labels) continue;
             String xLbl  = fmtAxis(xReal);
             g.drawString(font, xLbl, px - font.width(xLbl) / 2, gy + gh + 1, C_LABEL);
         }
     }
 
     private void drawLogXTicks(GuiGraphics g, int gx, int gy, int gw, int gh,
-                                double xMin, double xMax) {
+                                double xMin, double xMax, boolean labels) {
         int decLo = (int) Math.floor(xMin);
         int decHi = (int) Math.ceil(xMax);
 
@@ -795,6 +821,7 @@ public class GraphScreen extends Screen {
             int d  = tick[1];
             g.fill(px, gy, px + 1, gy + gh, C_GRID);
 
+            if (!labels) continue;
             double freq  = Math.pow(10, d);
             String xLbl  = fmtFreqDecade(freq);
             int    lx    = px - font.width(xLbl) / 2;
@@ -832,9 +859,15 @@ public class GraphScreen extends Screen {
     }
 
     private static String fmtFreqDecade(double freq) {
-        if (freq >= 1e6) return trimZeros(String.format("%.2f", freq / 1e6)) + "M";
-        if (freq >= 1e3) return trimZeros(String.format("%.2f", freq / 1e3)) + "k";
-        return trimZeros(String.format("%.2f", freq));
+        if (freq >= 1e12) return trimZeros(String.format("%.2f", freq / 1e12)) + "T";
+        if (freq >= 1e9)  return trimZeros(String.format("%.2f", freq / 1e9))  + "G";
+        if (freq >= 1e6)  return trimZeros(String.format("%.2f", freq / 1e6))  + "M";
+        if (freq >= 1e3)  return trimZeros(String.format("%.2f", freq / 1e3))  + "k";
+        if (freq >= 1)    return trimZeros(String.format("%.2f", freq));
+        if (freq >= 1e-3) return trimZeros(String.format("%.2f", freq / 1e-3)) + "m";
+        if (freq >= 1e-6) return trimZeros(String.format("%.2f", freq / 1e-6)) + "u";
+        if (freq >= 1e-9) return trimZeros(String.format("%.2f", freq / 1e-9)) + "n";
+        return trimZeros(String.format("%.2g", freq));
     }
 
     private static String trimZeros(String s) {
