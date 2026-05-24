@@ -692,9 +692,17 @@ public class ComponentEditScreen
         String s = raw.trim();
         if (s.isEmpty()) throw new NumberFormatException("empty input");
 
-        try {
-            return Double.parseDouble(s);
-        } catch (NumberFormatException ignored) {}
+        // Skip the Double.parseDouble fast path when the string has a trailing
+        // letter — Java treats "300f"/"300d"/"300F"/"300D" as valid float /
+        // double type-suffixed literals and returns 300.0, swallowing the SI
+        // prefix. We want the regex below to claim those cases instead.
+        char last = s.charAt(s.length() - 1);
+        boolean hasSuffix = Character.isLetter(last) || last == 'Ω' || last == 'µ';
+        if (!hasSuffix) {
+            try {
+                return Double.parseDouble(s);
+            } catch (NumberFormatException ignored) {}
+        }
 
         java.util.regex.Matcher m = java.util.regex.Pattern.compile(
             "^([+\\-]?[0-9]*\\.?[0-9]+(?:[eE][+\\-]?[0-9]+)?)(\\s*)([a-zA-Zµ]+)$"

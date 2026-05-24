@@ -431,6 +431,12 @@ public class CircuitExtractor {
                         block, pos, pinNodes, modelName, compNum));
 
             } else if (block instanceof BaseComponentBlock) {
+                // GroundBlock is also a BaseComponentBlock but already
+                // handled in the union-find pass above as a node anchor.
+                // Falling through here used to emit a phantom CircuitComponent
+                // with two synthesised nodes that auto-probe picked up,
+                // producing ghost v(N) probes in the print line.
+                if (block instanceof GroundBlock) continue;
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
                 int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);

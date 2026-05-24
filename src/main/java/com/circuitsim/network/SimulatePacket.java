@@ -32,7 +32,7 @@ import net.minecraftforge.network.NetworkEvent;
 public class SimulatePacket {
 
     private final BlockPos pos;
-    private final String analysis; // "OP", "AC", or "TRAN"
+    private final String analysis; // "OP", "DC", "AC", or "TRAN"
     private final double fStart; // AC: fStart  |  TRAN: tstep
     private final double fStop; // AC: fStop   |  TRAN: tstop
     private final int ptsPerDec; // AC: pts/dec |  TRAN: unused (0)
@@ -52,6 +52,18 @@ public class SimulatePacket {
      * axis (frequency / time).
      */
     private final String simTemp;
+    // .DC analysis config. dcSource1 is the SPICE source name to sweep
+    // (e.g. "V1"); start/stop/step are parsed via parseSI at sim time.
+    // dc2D enables an outer sweep on dcSource2.
+    private final String  dcSource1;
+    private final String  dcStart1;
+    private final String  dcStop1;
+    private final String  dcStep1;
+    private final boolean dc2D;
+    private final String  dcSource2;
+    private final String  dcStart2;
+    private final String  dcStop2;
+    private final String  dcStep2;
 
     public SimulatePacket(
         BlockPos pos,
@@ -68,6 +80,35 @@ public class SimulatePacket {
         String rawParam3,
         String simTemp
     ) {
+        this(pos, analysis, fStart, fStop, ptsPerDec, pdkName, pdkLibPath, pdkLibPaths,
+                ngBehavior, rawParam1, rawParam2, rawParam3, simTemp,
+                "V1", "0", "5", "0.1", false, "", "0", "1", "0.25");
+    }
+
+    public SimulatePacket(
+        BlockPos pos,
+        String analysis,
+        double fStart,
+        double fStop,
+        int ptsPerDec,
+        String pdkName,
+        String pdkLibPath,
+        String pdkLibPaths,
+        String ngBehavior,
+        String rawParam1,
+        String rawParam2,
+        String rawParam3,
+        String simTemp,
+        String dcSource1,
+        String dcStart1,
+        String dcStop1,
+        String dcStep1,
+        boolean dc2D,
+        String dcSource2,
+        String dcStart2,
+        String dcStop2,
+        String dcStep2
+    ) {
         this.pos = pos;
         this.analysis = analysis;
         this.fStart = fStart;
@@ -81,6 +122,15 @@ public class SimulatePacket {
         this.rawParam2 = rawParam2;
         this.rawParam3 = rawParam3;
         this.simTemp = simTemp == null ? "27" : simTemp;
+        this.dcSource1 = dcSource1 == null ? ""  : dcSource1;
+        this.dcStart1  = dcStart1  == null ? "0" : dcStart1;
+        this.dcStop1   = dcStop1   == null ? "0" : dcStop1;
+        this.dcStep1   = dcStep1   == null ? "0" : dcStep1;
+        this.dc2D      = dc2D;
+        this.dcSource2 = dcSource2 == null ? ""  : dcSource2;
+        this.dcStart2  = dcStart2  == null ? "0" : dcStart2;
+        this.dcStop2   = dcStop2   == null ? "0" : dcStop2;
+        this.dcStep2   = dcStep2   == null ? "0" : dcStep2;
     }
 
     public SimulatePacket(FriendlyByteBuf buf) {
@@ -97,6 +147,15 @@ public class SimulatePacket {
         this.rawParam2 = buf.readUtf(32);
         this.rawParam3 = buf.readUtf(32);
         this.simTemp = buf.readUtf(64);
+        this.dcSource1 = buf.readUtf(32);
+        this.dcStart1  = buf.readUtf(32);
+        this.dcStop1   = buf.readUtf(32);
+        this.dcStep1   = buf.readUtf(32);
+        this.dc2D      = buf.readBoolean();
+        this.dcSource2 = buf.readUtf(32);
+        this.dcStart2  = buf.readUtf(32);
+        this.dcStop2   = buf.readUtf(32);
+        this.dcStep2   = buf.readUtf(32);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -113,6 +172,15 @@ public class SimulatePacket {
         buf.writeUtf(rawParam2, 32);
         buf.writeUtf(rawParam3, 32);
         buf.writeUtf(simTemp, 64);
+        buf.writeUtf(dcSource1, 32);
+        buf.writeUtf(dcStart1,  32);
+        buf.writeUtf(dcStop1,   32);
+        buf.writeUtf(dcStep1,   32);
+        buf.writeBoolean(dc2D);
+        buf.writeUtf(dcSource2, 32);
+        buf.writeUtf(dcStart2,  32);
+        buf.writeUtf(dcStop2,   32);
+        buf.writeUtf(dcStep2,   32);
     }
 
     public static SimulatePacket decode(FriendlyByteBuf buf) {
@@ -138,6 +206,15 @@ public class SimulatePacket {
             simCbe.setSimParam2(rawParam2);
             simCbe.setSimParam3(rawParam3);
             simCbe.setSimTemp(simTemp);
+            simCbe.setDcSource1(dcSource1);
+            simCbe.setDcStart1(dcStart1);
+            simCbe.setDcStop1(dcStop1);
+            simCbe.setDcStep1(dcStep1);
+            simCbe.setDc2D(dc2D);
+            simCbe.setDcSource2(dcSource2);
+            simCbe.setDcStart2(dcStart2);
+            simCbe.setDcStop2(dcStop2);
+            simCbe.setDcStep2(dcStep2);
             simCbe.setChanged();
             simCbe.syncToClient();
         }
@@ -234,6 +311,9 @@ public class SimulatePacket {
                     bookLines,
                     graphPageComponents
                 );
+            } else if ("DC".equals(analysis)) {
+                double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
+                runDcSimulation(player, extraction, bookLines, graphPageComponents, tempC);
             } else if (tempValues.size() > 1 && "OP".equals(analysis)) {
                 // OP + multi-temp produces a 1D probe-vs-temperature plot.
                 runTempSweep(player, extraction, tempValues, bookLines, graphPageComponents);
@@ -544,6 +624,278 @@ public class SimulatePacket {
         );
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (AC)");
+    }
+
+    // -------------------------------------------------------------------------
+    // .DC
+    // -------------------------------------------------------------------------
+
+    private void runDcSimulation(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        List<String> bookLines,
+        List<Component> graphPageComponents,
+        double tempC
+    ) {
+        // Parse range fields. ParametricEditScreen parser would also work but
+        // start/stop/step are three independent SI strings on this path.
+        double start1, stop1, step1;
+        try {
+            start1 = ComponentEditScreen.parseSI(dcStart1);
+            stop1  = ComponentEditScreen.parseSI(dcStop1);
+            step1  = ComponentEditScreen.parseSI(dcStep1);
+        } catch (NumberFormatException nfe) {
+            msg(player, "DC range fields must parse as numbers.", ChatFormatting.RED);
+            return;
+        }
+        if (step1 == 0) {
+            msg(player, "DC step cannot be zero.", ChatFormatting.RED);
+            return;
+        }
+        if (dcSource1 == null || dcSource1.trim().isEmpty()) {
+            msg(player, "DC sweep needs a source name (e.g. V1).", ChatFormatting.RED);
+            return;
+        }
+
+        double start2 = 0, stop2 = 0, step2 = 1;
+        if (dc2D) {
+            try {
+                start2 = ComponentEditScreen.parseSI(dcStart2);
+                stop2  = ComponentEditScreen.parseSI(dcStop2);
+                step2  = ComponentEditScreen.parseSI(dcStep2);
+            } catch (NumberFormatException nfe) {
+                msg(player, "DC outer range fields must parse as numbers.", ChatFormatting.RED);
+                return;
+            }
+            if (step2 == 0) {
+                msg(player, "DC outer step cannot be zero.", ChatFormatting.RED);
+                return;
+            }
+            if (dcSource2 == null || dcSource2.trim().isEmpty()) {
+                msg(player, "2D DC sweep needs an outer source name.", ChatFormatting.RED);
+                return;
+            }
+        }
+
+        List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
+
+        String header = "=== DC Sweep: " + dcSource1
+                + " " + dcStart1 + ":" + dcStop1 + ":" + dcStep1
+                + (dc2D ? "  outer " + dcSource2 + " " + dcStart2 + ":" + dcStop2 + ":" + dcStep2 : "")
+                + " ===";
+        msg(player, header, ChatFormatting.GOLD);
+        bookLines.add(header);
+
+        if (!dc2D) {
+            DcAccum acc = new DcAccum();
+            runDcInner(player, extraction, effectiveProbes,
+                    dcSource1.trim(), start1, stop1, step1,
+                    "", tempC, bookLines, acc);
+            finishDcSession(player, acc, dcSource1.trim(),
+                    bookLines, graphPageComponents);
+            return;
+        }
+
+        // 2D: outer loop runs in Java. For each outer step, override the outer
+        // source's DC value in the extraction and call the inner 1D runner.
+        // All series are accumulated into a single session so the graph viewer
+        // can overlay every outer-step curve onto one plot.
+        List<Double> outerSteps = stepRange(start2, stop2, step2);
+        if (outerSteps.size() > 50) {
+            msg(player, "Too many outer steps (" + outerSteps.size() + "); max 50.",
+                    ChatFormatting.RED);
+            return;
+        }
+        DcAccum acc = new DcAccum();
+        for (double v2 : outerSteps) {
+            String subHdr = "--- " + dcSource2.trim() + "=" + ComponentEditScreen.formatValue(v2) + " ---";
+            msg(player, subHdr, ChatFormatting.YELLOW);
+            bookLines.add(subHdr);
+            CircuitExtractor.ExtractionResult overridden =
+                    overrideSourceDc(extraction, dcSource2.trim(), v2);
+            if (overridden == null) {
+                msg(player, "Outer source '" + dcSource2.trim()
+                        + "' not found in the circuit (set its Netlist index).",
+                        ChatFormatting.RED);
+                return;
+            }
+            String suffix = "@" + dcSource2.trim() + "=" + ComponentEditScreen.formatValue(v2);
+            runDcInner(player, overridden, effectiveProbes,
+                    dcSource1.trim(), start1, stop1, step1,
+                    suffix, tempC, bookLines, acc);
+        }
+        finishDcSession(player, acc, dcSource1.trim(),
+                bookLines, graphPageComponents);
+    }
+
+    /** Accumulator for a multi-iteration DC sweep so all curves share one session. */
+    private static final class DcAccum {
+        List<Double> sweepAxis = null;     // first inner sweep wins; subsequent must match length
+        final Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        final Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        final Map<String, String>       probeUnits = new LinkedHashMap<>();
+    }
+
+    /** Stores the accumulated DC result and emits the graph links. */
+    private void finishDcSession(
+        ServerPlayer player,
+        DcAccum acc,
+        String src,
+        List<String> bookLines,
+        List<Component> graphPageComponents
+    ) {
+        if (acc.sweepAxis == null || acc.sweepAxis.isEmpty()) return;
+        String xUnit = src.length() > 0
+                ? (Character.toUpperCase(src.charAt(0)) == 'I' ? "A" : "V")
+                : "";
+        int sessionId = ParametricResultCache.store(
+                new ParametricResultCache.ResultSet(
+                        src, xUnit,
+                        acc.sweepAxis, acc.voltData, acc.currData,
+                        acc.probeUnits, false));
+        emitGraphLinks(player, sessionId, acc.voltData, acc.currData,
+                acc.probeUnits, graphPageComponents);
+        emitOutputViewerLink(player, sessionId, bookLines, "CircuitSim Output (DC)");
+    }
+
+    /**
+     * Runs one .dc sweep (inner sweep when 2D, full sweep when 1D) and appends
+     * its series to {@code acc}. The caller stores the merged session and
+     * emits the graph links once all iterations have completed.
+     */
+    private void runDcInner(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        List<NetlistBuilder.ProbeInfo> effectiveProbes,
+        String src, double start, double stop, double step,
+        String seriesSuffix,
+        double tempC,
+        List<String> bookLines,
+        DcAccum acc
+    ) {
+        String netlist = NetlistBuilder.buildDcNetlist(
+                extraction.components,
+                effectiveProbes,
+                extraction.currentProbes,
+                src, start, stop, step,
+                false, "", 0, 0, 1,
+                pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                extraction.userCommands, extraction.userPlots
+        );
+        netlist = injectTemp(netlist, tempC);
+        printNetlist(player, netlist, bookLines);
+
+        NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
+        if (result.error != null) {
+            String first = result.error.lines().filter(l -> !l.isBlank())
+                    .findFirst().orElse("unknown error");
+            msg(player, "Simulation Error: " + first, ChatFormatting.RED);
+            bookLines.add("Error: " + first);
+            return;
+        }
+        if (result.dcData.isEmpty()) {
+            msg(player, "No DC results returned.", ChatFormatting.RED);
+            bookLines.add("(no DC results)");
+            return;
+        }
+
+        List<Double> sweepAxis = new ArrayList<>(result.dcData.keySet());
+        Collections.sort(sweepAxis);
+
+        // First iteration sets the shared X axis; later iterations are
+        // assumed to use the same start/stop/step so their axes match.
+        if (acc.sweepAxis == null) acc.sweepAxis = sweepAxis;
+
+        msg(player, "DC: " + sweepAxis.size() + " sweep points", ChatFormatting.GREEN);
+        bookLines.add("Sweep points: " + sweepAxis.size());
+
+        for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+            List<Double> ys = new ArrayList<>();
+            String key = "v(" + probe.netName.toLowerCase() + ")";
+            for (double x : sweepAxis) {
+                Map<String, Double> row = result.dcData.get(x);
+                Double y = row != null ? row.get(key) : null;
+                ys.add(y != null ? y : 0.0);
+            }
+            acc.voltData.put(probe.label + seriesSuffix, ys);
+        }
+        for (int k = 0; k < extraction.currentProbes.size(); k++) {
+            NetlistBuilder.CurrentProbeInfo cp = extraction.currentProbes.get(k);
+            List<Double> ys = new ArrayList<>();
+            String key = "i(vm" + (k + 1) + ")";
+            for (double x : sweepAxis) {
+                Map<String, Double> row = result.dcData.get(x);
+                Double y = row != null ? row.get(key) : null;
+                ys.add(y != null ? y : 0.0);
+            }
+            acc.currData.put(cp.label + seriesSuffix, ys);
+        }
+        for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+            List<Double> ys = new ArrayList<>();
+            for (double x : sweepAxis) {
+                Map<String, Double> row = result.dcData.get(x);
+                Double y = row != null ? row.get(plot.name.toLowerCase()) : null;
+                ys.add(y != null ? y : 0.0);
+            }
+            acc.voltData.put(plot.label + seriesSuffix, ys);
+            acc.probeUnits.put(plot.label + seriesSuffix, plot.unit);
+        }
+
+        // Scalar print/meas extras (e.g. dc_gain) — echo per sweep block.
+        if (!result.extras.isEmpty()) {
+            for (String extra : result.extras) {
+                String line = "  " + extra;
+                msg(player, line, ChatFormatting.LIGHT_PURPLE);
+                bookLines.add(line);
+            }
+        }
+    }
+
+    /** Builds a start..stop range (inclusive of stop within epsilon) using step. */
+    private static List<Double> stepRange(double start, double stop, double step) {
+        List<Double> vals = new ArrayList<>();
+        double epsilon = 1e-10 * Math.abs(step);
+        if (step > 0) {
+            for (double v = start; v <= stop + epsilon && vals.size() < 200; v += step) vals.add(v);
+        } else {
+            for (double v = start; v >= stop - epsilon && vals.size() < 200; v += step) vals.add(v);
+        }
+        return vals;
+    }
+
+    /**
+     * Returns a copy of {@code extraction} with the named source's stored DC
+     * value replaced by {@code newValue}. The source is matched by SPICE name
+     * (prefix V/I/etc. + integer index that matches the component's manual
+     * Netlist index). Returns null if no matching source is found.
+     */
+    private static CircuitExtractor.ExtractionResult overrideSourceDc(
+        CircuitExtractor.ExtractionResult ex, String sourceName, double newValue
+    ) {
+        if (sourceName == null || sourceName.length() < 2) return null;
+        char prefix = Character.toUpperCase(sourceName.charAt(0));
+        int idx;
+        try { idx = Integer.parseInt(sourceName.substring(1)); }
+        catch (NumberFormatException e) { return null; }
+        boolean matched = false;
+        List<NetlistBuilder.CircuitComponent> rewritten = new ArrayList<>(ex.components.size());
+        for (NetlistBuilder.CircuitComponent c : ex.components) {
+            boolean isV = prefix == 'V' && (c.block instanceof VoltageSourceBlock
+                    || c.block instanceof VoltageSourceSinBlock
+                    || c.block instanceof VoltageSourcePulseBlock);
+            boolean isI = prefix == 'I' && c.block instanceof CurrentSourceBlock;
+            if ((isV || isI) && c.componentNumber == idx) {
+                rewritten.add(c.withValue(newValue));
+                matched = true;
+            } else {
+                rewritten.add(c);
+            }
+        }
+        if (!matched) return null;
+        return new CircuitExtractor.ExtractionResult(
+                ex.success, ex.errorMessage, rewritten,
+                ex.probes, ex.currentProbes, ex.probeLabels,
+                ex.parametricBlocks, ex.userCommands, ex.userPlots);
     }
 
     // -------------------------------------------------------------------------
@@ -883,6 +1235,17 @@ public class SimulatePacket {
                 tempValues,
                 effectiveProbes,
                 cpList,
+                bookLines,
+                graphPageComponents
+            );
+            case "DC" -> runParametricDcSweep(
+                player,
+                extraction,
+                varName,
+                varUnit,
+                sweepValues,
+                tempValues,
+                effectiveProbes,
                 bookLines,
                 graphPageComponents
             );
@@ -1409,6 +1772,69 @@ public class SimulatePacket {
     }
 
     // -------------------------------------------------------------------------
+    // .DC + parametric — outer loop over the parametric variable, run a 1D
+    // ngspice .dc sweep per step, group series by @<var>=<val> suffix.
+    // 2D DC + parametric is disallowed (4 nested loops) — error out cleanly.
+    // -------------------------------------------------------------------------
+
+    private void runParametricDcSweep(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        String varName,
+        String varUnit,
+        List<Double> sweepValues,
+        List<Double> tempValues,
+        List<NetlistBuilder.ProbeInfo> effectiveProbes,
+        List<String> bookLines,
+        List<Component> graphPageComponents
+    ) {
+        if (dc2D) {
+            msg(player,
+                    "2D DC + parametric is not supported. Disable the DC 2D toggle or use a single value in the Parametric block.",
+                    ChatFormatting.RED);
+            return;
+        }
+        double start1, stop1, step1;
+        try {
+            start1 = ComponentEditScreen.parseSI(dcStart1);
+            stop1  = ComponentEditScreen.parseSI(dcStop1);
+            step1  = ComponentEditScreen.parseSI(dcStep1);
+        } catch (NumberFormatException nfe) {
+            msg(player, "DC range fields must parse as numbers.", ChatFormatting.RED);
+            return;
+        }
+        if (step1 == 0) {
+            msg(player, "DC step cannot be zero.", ChatFormatting.RED);
+            return;
+        }
+        if (dcSource1 == null || dcSource1.trim().isEmpty()) {
+            msg(player, "DC sweep needs a source name (e.g. V1).", ChatFormatting.RED);
+            return;
+        }
+        double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
+
+        DcAccum acc = new DcAccum();
+        for (double val : sweepValues) {
+            String subHdr = "--- " + varName + "=" + ComponentEditScreen.formatValue(val) + varUnit + " ---";
+            msg(player, subHdr, ChatFormatting.YELLOW);
+            bookLines.add(subHdr);
+
+            List<NetlistBuilder.CircuitComponent> swept = swapVariable(extraction.components, varName, val);
+            CircuitExtractor.ExtractionResult inner = new CircuitExtractor.ExtractionResult(
+                    extraction.success, extraction.errorMessage,
+                    swept, extraction.probes, extraction.currentProbes,
+                    extraction.probeLabels, extraction.parametricBlocks,
+                    extraction.userCommands, extraction.userPlots);
+
+            String suffix = "@" + varName + "=" + ComponentEditScreen.formatValue(val) + varUnit;
+            runDcInner(player, inner, effectiveProbes,
+                    dcSource1.trim(), start1, stop1, step1,
+                    suffix, tempC, bookLines, acc);
+        }
+        finishDcSession(player, acc, dcSource1.trim(), bookLines, graphPageComponents);
+    }
+
+    // -------------------------------------------------------------------------
     // .DC TEMP sweep — 1D, X-axis = temperature, one .op run per step.
     // Reused for OP + multi-temp (same shape, just different source of the
     // temperature list).
@@ -1856,6 +2282,14 @@ public class SimulatePacket {
         CircuitExtractor.ExtractionResult ex
     ) {
         if (!ex.probes.isEmpty()) return ex.probes;
+        // If the user placed *any* measurement device (current probe, or a
+        // `plot ... = ...` directive in a Commands block), respect their
+        // explicit intent and don't fabricate voltage probes for every node.
+        // The autoprobe-everything fallback is only for circuits with no
+        // probes at all, where the alternative is a sim that returns nothing.
+        if (!ex.currentProbes.isEmpty() || !ex.userPlots.isEmpty()) {
+            return Collections.emptyList();
+        }
         Set<Integer> nodes = new LinkedHashSet<>();
         for (NetlistBuilder.CircuitComponent c : ex.components) {
             if (c.nodeA != 0) nodes.add(c.nodeA);

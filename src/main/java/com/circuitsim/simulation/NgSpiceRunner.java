@@ -45,6 +45,15 @@ public class NgSpiceRunner {
         /** .TRAN results — outer key = time (s), inner key = "v(N)" / "i(vmK)" */
         public Map<Double, Map<String, Double>> tranData = new LinkedHashMap<>();
 
+        /**
+         * .DC results — outer key = swept source value (V or A), inner key =
+         * {@code v(N)} / {@code i(vmK)} / user-plot name. Single-sweep mode
+         * only; the 2D dispatcher splits ngspice's chunked output into
+         * separate Result objects (one per outer step) before this map is
+         * populated.
+         */
+        public Map<Double, Map<String, Double>> dcData = new LinkedHashMap<>();
+
         public String getNodeVoltage(int nodeIndex) {
             return getNodeVoltage(Integer.toString(nodeIndex));
         }
@@ -167,16 +176,21 @@ public class NgSpiceRunner {
         String netlistLower = netlist.toLowerCase();
         boolean isAc   = netlistLower.contains(".ac ");
         boolean isTran = netlistLower.contains(".tran ");
+        boolean isDc   = netlistLower.contains(".dc ");
 
         if (isTran) {
             parseTranOutput(fullOutput, result);
         } else if (isAc) {
             parseAcOutput(fullOutput, result);
+        } else if (isDc) {
+            parseDcOutput(fullOutput, result);
         } else {
             parseOpOutput(fullOutput, result);
         }
 
-        if (!isAc && !isTran && result.values.isEmpty()) {
+        boolean isOp = !isAc && !isTran && !isDc;
+
+        if (isOp && result.values.isEmpty()) {
             result.output.add("Simulation completed (no values parsed).");
             result.output.add("--- Raw ngspice output ---");
             for (String line : fullOutput.split("\n")) {
@@ -185,7 +199,7 @@ public class NgSpiceRunner {
             return result;
         }
 
-        if (!isAc && !isTran) {
+        if (isOp) {
             for (Map.Entry<String, Double> e : result.values.entrySet()) {
                 String k = e.getKey();
                 double v = e.getValue();
@@ -460,6 +474,79 @@ public class NgSpiceRunner {
             result.output.add("Transient analysis: " + result.tranData.size() + " time points");
         } else {
             result.output.add("Transient analysis complete (no data parsed). First 25 lines:");
+            int shown = 0;
+            for (String l : lines) {
+                if (!l.trim().isEmpty()) {
+                    result.output.add("  " + l.trim());
+                    if (++shown >= 25) break;
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // .DC parser — tabular, similar to TRAN but X = swept source value
+    // -------------------------------------------------------------------------
+
+    private static void parseDcOutput(String output, Result result) {
+        String[] lines = output.split("\n");
+
+        // ngspice emits .dc results as one or more chunks, each starting with
+        // an "index  <sweep-name>  v(...)" header. The sweep column header is
+        // typically "v-sweep" or "i-sweep" but we accept anything that is not
+        // "time" (TRAN) or "frequency" (AC) so DC parsing remains the natural
+        // fallback for tabular non-time non-frequency output.
+        for (int i = 0; i < lines.length; i++) {
+            String trimmed = lines[i].trim();
+            if (!trimmed.toLowerCase().startsWith("index")) continue;
+
+            String[] headerToks = trimmed.split("\\s+");
+            if (headerToks.length < 3) continue;
+            String secondColLower = headerToks[1].toLowerCase();
+            if (secondColLower.equals("time") || secondColLower.equals("frequency")) continue;
+
+            // Skip optional dashed separator
+            int dataStart = i + 1;
+            if (dataStart < lines.length && lines[dataStart].trim().startsWith("-")) {
+                dataStart++;
+            }
+
+            for (int j = dataStart; j < lines.length; j++) {
+                String raw = lines[j].trim();
+                if (raw.isEmpty() || raw.startsWith("-") || raw.startsWith("=")) break;
+
+                String[] tok = raw.split("\\s+");
+                if (tok.length < 3) continue;
+
+                try { Integer.parseInt(tok[0]); } catch (NumberFormatException e) { break; }
+
+                double sweepVal;
+                try { sweepVal = Double.parseDouble(tok[1]); }
+                catch (NumberFormatException e) { continue; }
+
+                Map<String, Double> rowMap =
+                        result.dcData.computeIfAbsent(sweepVal, k -> new LinkedHashMap<>());
+
+                for (int col = 2; col < tok.length && col < headerToks.length; col++) {
+                    String hdr = headerToks[col].toLowerCase();
+                    try {
+                        double val = Double.parseDouble(tok[col]);
+                        rowMap.put(hdr, val);
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+            // Don't break — there may be more chunks (e.g. 2D sweep).
+        }
+
+        // Pick up scalar `meas` / `print` outputs (e.g. dc_gain, gbw, pm),
+        // which ngspice prints as plain "name = value" lines outside of any
+        // tabular block. Mirrors what the AC parser does.
+        parseScalarMeasurements(lines, result);
+
+        if (!result.dcData.isEmpty()) {
+            result.output.add("DC sweep: " + result.dcData.size() + " sweep points");
+        } else {
+            result.output.add("DC sweep complete (no data parsed). First 25 lines:");
             int shown = 0;
             for (String l : lines) {
                 if (!l.trim().isEmpty()) {

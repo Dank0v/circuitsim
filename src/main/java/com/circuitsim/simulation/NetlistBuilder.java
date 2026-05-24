@@ -463,6 +463,126 @@ public class NetlistBuilder {
     }
 
     // -------------------------------------------------------------------------
+    // .DC
+    // -------------------------------------------------------------------------
+
+    /**
+     * Builds a netlist with a {@code .dc SRCNAM VSTART VSTOP VINCR
+     * [SRC2 VSTART2 VSTOP2 VINCR2]} directive. The swept source's stored
+     * DC value is overridden by ngspice with the per-step value.
+     */
+    public static String buildDcNetlist(List<CircuitComponent> components,
+                                         List<ProbeInfo>        probes,
+                                         List<CurrentProbeInfo> currentProbes,
+                                         String src1, double start1, double stop1, double step1,
+                                         boolean enable2D,
+                                         String src2, double start2, double stop2, double step2,
+                                         String pdkName, String pdkLibPath,
+                                         String pdkLibPaths, String ngBehavior,
+                                         List<String> userCommands,
+                                         List<UserPlot> userPlots) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("* CircuitSim DC Netlist\n");
+        appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+
+        java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
+
+        IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
+                      lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
+                      iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
+                      eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
+                eIdx, fIdx, gIdx, hIdx);
+        int vmCount = 1;
+        boolean hasDiode = false;
+
+        for (CircuitComponent comp : components) {
+            String line;
+            if (comp.subcircuitNodes != null) {
+                line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcResistorBlock) {
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+            } else if (comp.block instanceof IcCapacitorBlock) {
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+            } else if (comp.block instanceof IcNmos4Block) {
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false, aliases);
+            } else if (comp.block instanceof IcPmos4Block) {
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true, aliases);
+            } else if (comp.block instanceof ResistorBlock) {
+                line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+            } else if (comp.block instanceof CapacitorBlock) {
+                line = String.format("C%d %s %s %g", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+            } else if (comp.block instanceof InductorBlock) {
+                line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+            } else if (comp.block instanceof VoltageSourceBlock) {
+                line = String.format("V%d %s %s DC %g", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+            } else if (comp.block instanceof VoltageSourceSinBlock) {
+                // SIN sources reduce to their DC offset for .dc (they're
+                // small-signal AC during .ac and time-varying during .tran).
+                line = String.format("V%d %s %s DC 0", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
+            } else if (comp.block instanceof VoltageSourcePulseBlock) {
+                line = String.format("V%d %s %s DC %g",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        comp.wParam);
+            } else if (comp.block instanceof CurrentSourceBlock) {
+                line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+            } else if (comp.block instanceof DiodeBlock) {
+                line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
+                hasDiode = true;
+            } else {
+                String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
+                if (controlled == null) continue;
+                line = controlled;
+            }
+            sb.append(line).append("\n");
+        }
+
+        for (CurrentProbeInfo cp : currentProbes) {
+            sb.append(String.format("VM%d %s %s DC 0\n", vmCount++, nodeRef(cp.nodeA, aliases), nodeRef(cp.nodeB, aliases)));
+        }
+
+        if (hasDiode) sb.append(".MODEL DMOD D\n");
+
+        if (enable2D && src2 != null && !src2.isEmpty()) {
+            sb.append(String.format(".dc %s %g %g %g %s %g %g %g\n",
+                    src1, start1, stop1, step1, src2, start2, stop2, step2));
+        } else {
+            sb.append(String.format(".dc %s %g %g %g\n", src1, start1, stop1, step1));
+        }
+
+        sb.append(".control\n");
+        sb.append("  run\n");
+
+        appendUserPlotLets(sb, userPlots);
+        appendUserCommands(sb, userCommands);
+
+        boolean hasUserPlots = userPlots != null && !userPlots.isEmpty();
+        if (!probes.isEmpty() || !currentProbes.isEmpty() || hasUserPlots) {
+            StringBuilder printLine = new StringBuilder("  print");
+            for (ProbeInfo probe : probes) {
+                printLine.append(String.format(" v(%s)", probe.netName));
+            }
+            int vmIdx2 = 1;
+            for (int k = 0; k < currentProbes.size(); k++) {
+                printLine.append(String.format(" i(VM%d)", vmIdx2++));
+            }
+            if (hasUserPlots) {
+                for (UserPlot p : userPlots) {
+                    if (p != null && p.name != null) printLine.append(' ').append(p.name);
+                }
+            }
+            sb.append(printLine).append("\n");
+        }
+
+        sb.append(".endc\n");
+        sb.append(".end\n");
+        return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
     // .TRAN
     // -------------------------------------------------------------------------
 

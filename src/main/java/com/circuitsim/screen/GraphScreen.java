@@ -6,14 +6,24 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
- * Graph viewer for one simulation session. Up to two probes can be plotted
- * simultaneously, stacked vertically — slot 1 on top, slot 2 below. The
- * right-hand sidebar lists every probe in the session; each row has a [T] /
- * [B] toggle pair that assigns the probe to a slot. A probe can be in at
- * most one slot at a time; reassigning automatically clears its other slot.
+ * Graph viewer for one simulation session. The sidebar groups probes by their
+ * base name (the prefix before {@code @} — sweep variants like
+ * {@code gain_db@300fF} all collapse into a single "gain_db" entry). Each
+ * group has an expand/collapse chevron, and group-level T/B buttons toggle
+ * every variant into the matching slot at once.
+ *
+ * <p>A plot slot can only hold variants from one group at a time — adding a
+ * probe from a different group auto-clears the slot first. This prevents
+ * accidentally overlaying unrelated quantities (e.g. gain_db with gain_ph)
+ * on the same axes.
  *
  * <p>When {@code isLogFrequency} is true the shared X axis is rendered on a
  * log10 scale, the standard presentation for AC Bode-style plots.
@@ -28,24 +38,33 @@ public class GraphScreen extends Screen {
     private final List<List<Double>>  probeData;
     private final List<String>        probeUnits;
 
-    // Slot occupants — -1 means empty. Each slot holds an index into
-    // probeNames. slot1 is the top plot, slot2 the bottom.
-    private int slot1 = -1;
-    private int slot2 = -1;
+    // Slot occupants — ordered set of probe indices. Insertion order picks
+    // the palette colour. slot1 = top plot, slot2 = bottom.
+    private final Set<Integer> slot1 = new LinkedHashSet<>();
+    private final Set<Integer> slot2 = new LinkedHashSet<>();
 
-    // Sidebar scroll offset, in pixels. Clamped to [0, maxScroll] each frame
-    // to follow probe-count changes (none expected during a session but
-    // cheap to keep robust).
+    // ── group model ─────────────────────────────────────────────────────────
+    // Groups are derived from probe names by taking the prefix before '@'.
+    // Probes without '@' form a single-variant group named after the whole
+    // probe.
+    private final List<String> groupOrder = new ArrayList<>();
+    private final Map<String, List<Integer>> groupMembers = new LinkedHashMap<>();
+    private final Set<String> expandedGroups = new HashSet<>();
+    private final List<Row> visibleRows = new ArrayList<>();
+
+    private static final class Row {
+        enum Type { GROUP, VARIANT }
+        final Type   type;
+        final String groupName;
+        final int    probeIdx;   // -1 for GROUP rows
+        Row(Type t, String g, int idx) { type = t; groupName = g; probeIdx = idx; }
+    }
+
+    // Sidebar scroll offset, in pixels.
     private int sidebarScroll = 0;
-
-    // Hovered point index in each plot, refreshed every render frame.
-    private int hoverIdxTop = -1;
-    private int hoverIdxBot = -1;
 
     // ── panel layout ─────────────────────────────────────────────────────────
     private static final int PANEL_W = 660, PANEL_H = 380;
-    // Plot area (relative to panelX/panelY). The sidebar lives to the right
-    // of GR; the plot width must not overlap it.
     private static final int GL = 50, GR = 510;
     private static final int GT = 32, GB = 330;
 
@@ -55,11 +74,19 @@ public class GraphScreen extends Screen {
     private static final int SIDEBAR_W     = 132;
     private static final int SIDEBAR_H     = 318;
     private static final int ROW_H         = 13;
-    private static final int BTN_W         = 13;        // T/B button width
+    private static final int CHEV_W        = 9;
+    private static final int BTN_W         = 13;
     private static final int BTN_H         = 11;
     private static final int BTN_GAP       = 2;
     private static final int ROW_PAD_LEFT  = 4;
-    private static final int ROW_TEXT_X    = ROW_PAD_LEFT + 2 * BTN_W + BTN_GAP + 4;
+    // Layout: [chev] [T] [B] [swatch?] groupName / variantName(indented)
+    private static final int X_CHEV        = ROW_PAD_LEFT;
+    private static final int X_BTN_T       = X_CHEV + CHEV_W;
+    private static final int X_BTN_B       = X_BTN_T + BTN_W + BTN_GAP;
+    private static final int X_TEXT        = X_BTN_B + BTN_W + BTN_GAP + 2;
+    private static final int VARIANT_INDENT = 6;
+    private static final int SWATCH_W      = 6;
+    private static final int SWATCH_GAP    = 3;
 
     // ── colours ─────────────────────────────────────────────────────────────
     private static final int C_BG          = 0xFF1A1A2E;
@@ -69,8 +96,6 @@ public class GraphScreen extends Screen {
     private static final int C_SEP         = 0xFF444466;
     private static final int C_GRID        = 0xFF2A2A4A;
     private static final int C_AXIS        = 0xFF8888AA;
-    private static final int C_LINE_TOP    = 0xFF4FC3F7; // cyan-ish
-    private static final int C_LINE_BOT    = 0xFFFFB347; // orange — different colour for slot 2
     private static final int C_DOT_OUT     = 0xFFFFFFFF;
     private static final int C_TITLE       = 0xFFFFD700;
     private static final int C_LABEL       = 0xFFCCCCCC;
@@ -79,10 +104,18 @@ public class GraphScreen extends Screen {
     private static final int C_ROW_HOVER   = 0xFF1A2A4A;
     private static final int C_BTN_OFF     = 0xFF333355;
     private static final int C_BTN_OFF_HV  = 0xFF44447A;
-    private static final int C_BTN_ON_TOP  = 0xFF4FC3F7;
-    private static final int C_BTN_ON_BOT  = 0xFFFFB347;
+    private static final int C_BTN_PARTIAL = 0xFF6A6A8A;   // group with some-but-not-all
     private static final int C_BTN_TXT_OFF = 0xFFAAAACC;
     private static final int C_BTN_TXT_ON  = 0xFF000000;
+    private static final int C_CHEV        = 0xFFAAAACC;
+    private static final int[] PALETTE_TOP = {
+            0xFF4FC3F7, 0xFFB388FF, 0xFF81C784, 0xFFFFD54F,
+            0xFFE57373, 0xFFF06292, 0xFF80CBC4, 0xFFAED581,
+    };
+    private static final int[] PALETTE_BOT = {
+            0xFFFFB347, 0xFFFF8A65, 0xFFCE93D8, 0xFF9FA8DA,
+            0xFFFFF59D, 0xFFA1887F, 0xFFC5E1A5, 0xFF90CAF9,
+    };
 
     private int panelX, panelY;
 
@@ -98,7 +131,43 @@ public class GraphScreen extends Screen {
         this.probeNames         = probeNames;
         this.probeData          = probeData;
         this.probeUnits         = probeUnits;
-        if (initialIndex >= 0 && initialIndex < probeNames.size()) this.slot1 = initialIndex;
+        buildGroups();
+        if (initialIndex >= 0 && initialIndex < probeNames.size()) {
+            this.slot1.add(initialIndex);
+            // Expand the group containing the initial selection so the user
+            // sees what's underneath it without having to click.
+            expandedGroups.add(groupOf(initialIndex));
+        }
+        rebuildVisibleRows();
+    }
+
+    private void buildGroups() {
+        for (int i = 0; i < probeNames.size(); i++) {
+            String g = baseName(probeNames.get(i));
+            groupMembers.computeIfAbsent(g, k -> { groupOrder.add(k); return new ArrayList<>(); })
+                    .add(i);
+        }
+    }
+
+    private static String baseName(String probeName) {
+        int at = probeName.indexOf('@');
+        return at >= 0 ? probeName.substring(0, at) : probeName;
+    }
+
+    private String groupOf(int probeIdx) {
+        return baseName(probeNames.get(probeIdx));
+    }
+
+    private void rebuildVisibleRows() {
+        visibleRows.clear();
+        for (String g : groupOrder) {
+            visibleRows.add(new Row(Row.Type.GROUP, g, -1));
+            if (expandedGroups.contains(g) && groupMembers.get(g).size() > 1) {
+                for (int idx : groupMembers.get(g)) {
+                    visibleRows.add(new Row(Row.Type.VARIANT, g, idx));
+                }
+            }
+        }
     }
 
     @Override
@@ -113,20 +182,110 @@ public class GraphScreen extends Screen {
     // ── slot assignment ─────────────────────────────────────────────────────
 
     /**
-     * Toggles probe {@code idx} in or out of slot 1. If the probe is already
-     * in slot 2, slot 2 is cleared first — a probe can be in at most one
-     * slot. Clicking a slot's current occupant clears that slot.
+     * Adds {@code idx} to slot 1 (top). If the slot currently holds probes
+     * from a different group they're cleared first — a slot only holds one
+     * group's variants at a time. Removes from slot 2 if it's there.
      */
-    private void toggleSlot1(int idx) {
-        if (slot1 == idx) { slot1 = -1; return; }
-        if (slot2 == idx) slot2 = -1;
-        slot1 = idx;
+    private void addToSlot1(int idx) {
+        String g = groupOf(idx);
+        if (slotGroup(slot1) != null && !slotGroup(slot1).equals(g)) slot1.clear();
+        slot2.remove(idx);
+        slot1.add(idx);
     }
 
-    private void toggleSlot2(int idx) {
-        if (slot2 == idx) { slot2 = -1; return; }
-        if (slot1 == idx) slot1 = -1;
-        slot2 = idx;
+    private void addToSlot2(int idx) {
+        String g = groupOf(idx);
+        if (slotGroup(slot2) != null && !slotGroup(slot2).equals(g)) slot2.clear();
+        slot1.remove(idx);
+        slot2.add(idx);
+    }
+
+    private void removeFromSlot1(int idx) { slot1.remove(idx); }
+    private void removeFromSlot2(int idx) { slot2.remove(idx); }
+
+    /** Toggle a single variant in the top slot. */
+    private void toggleVariantSlot1(int idx) {
+        if (slot1.contains(idx)) removeFromSlot1(idx);
+        else                     addToSlot1(idx);
+    }
+
+    private void toggleVariantSlot2(int idx) {
+        if (slot2.contains(idx)) removeFromSlot2(idx);
+        else                     addToSlot2(idx);
+    }
+
+    /**
+     * Toggles every variant of {@code group} in/out of the top slot. If every
+     * variant is already there, remove them all; otherwise replace the slot's
+     * contents with this group's full set.
+     */
+    private void toggleGroupSlot1(String group) {
+        List<Integer> members = groupMembers.get(group);
+        if (members == null) return;
+        boolean allIn = !members.isEmpty();
+        for (int idx : members) if (!slot1.contains(idx)) { allIn = false; break; }
+        if (allIn) {
+            for (int idx : members) slot1.remove(idx);
+        } else {
+            String existing = slotGroup(slot1);
+            if (existing != null && !existing.equals(group)) slot1.clear();
+            for (int idx : members) {
+                slot2.remove(idx);
+                slot1.add(idx);
+            }
+        }
+    }
+
+    private void toggleGroupSlot2(String group) {
+        List<Integer> members = groupMembers.get(group);
+        if (members == null) return;
+        boolean allIn = !members.isEmpty();
+        for (int idx : members) if (!slot2.contains(idx)) { allIn = false; break; }
+        if (allIn) {
+            for (int idx : members) slot2.remove(idx);
+        } else {
+            String existing = slotGroup(slot2);
+            if (existing != null && !existing.equals(group)) slot2.clear();
+            for (int idx : members) {
+                slot1.remove(idx);
+                slot2.add(idx);
+            }
+        }
+    }
+
+    /** Returns the (single) group name occupying this slot, or null if empty. */
+    private String slotGroup(Set<Integer> slot) {
+        if (slot.isEmpty()) return null;
+        return groupOf(slot.iterator().next());
+    }
+
+    /** Returns the palette colour assigned to probe {@code idx} in its slot, or 0. */
+    private int colourOf(int idx) {
+        int order = indexIn(slot1, idx);
+        if (order >= 0) return PALETTE_TOP[order % PALETTE_TOP.length];
+        order = indexIn(slot2, idx);
+        if (order >= 0) return PALETTE_BOT[order % PALETTE_BOT.length];
+        return 0;
+    }
+
+    private static int indexIn(Set<Integer> set, int idx) {
+        int i = 0;
+        for (Integer v : set) {
+            if (v == idx) return i;
+            i++;
+        }
+        return -1;
+    }
+
+    /** "all", "some", or "none" of this group's variants in the given slot. */
+    private String groupSlotState(String group, Set<Integer> slot) {
+        List<Integer> members = groupMembers.get(group);
+        if (members == null || members.isEmpty()) return "none";
+        int hits = 0;
+        for (int idx : members) if (slot.contains(idx)) hits++;
+        if (hits == 0) return "none";
+        if (hits == members.size()) return "all";
+        return "some";
     }
 
     // ── input handling ──────────────────────────────────────────────────────
@@ -134,37 +293,64 @@ public class GraphScreen extends Screen {
     @Override
     public boolean mouseClicked(double mx, double my, int btn) {
         if (btn == 0) {
-            // Sidebar rows
             int sx = panelX + SIDEBAR_X;
             int sy = panelY + SIDEBAR_Y;
             if (mx >= sx && mx < sx + SIDEBAR_W && my >= sy && my < sy + SIDEBAR_H) {
                 int rel = (int)(my - sy) + sidebarScroll;
-                int row = rel / ROW_H;
-                if (row >= 0 && row < probeNames.size()) {
-                    int rowYAbs = sy + row * ROW_H - sidebarScroll;
-                    // Top button hit-test
-                    int tX = sx + ROW_PAD_LEFT;
-                    int bX = tX + BTN_W + BTN_GAP;
+                int rowIdx = rel / ROW_H;
+                if (rowIdx >= 0 && rowIdx < visibleRows.size()) {
+                    Row row = visibleRows.get(rowIdx);
+                    int rowYAbs = sy + rowIdx * ROW_H - sidebarScroll;
                     int btnTop = rowYAbs + (ROW_H - BTN_H) / 2;
+                    int tX = sx + X_BTN_T;
+                    int bX = sx + X_BTN_B;
+
+                    // T button
                     if (mx >= tX && mx < tX + BTN_W && my >= btnTop && my < btnTop + BTN_H) {
-                        toggleSlot1(row);
+                        if (row.type == Row.Type.GROUP) toggleGroupSlot1(row.groupName);
+                        else                            toggleVariantSlot1(row.probeIdx);
                         return true;
                     }
+                    // B button
                     if (mx >= bX && mx < bX + BTN_W && my >= btnTop && my < btnTop + BTN_H) {
-                        toggleSlot2(row);
+                        if (row.type == Row.Type.GROUP) toggleGroupSlot2(row.groupName);
+                        else                            toggleVariantSlot2(row.probeIdx);
                         return true;
                     }
-                    // Click on the probe name: convenience shortcut — push to
-                    // slot 1, or to slot 2 if slot 1 already holds it.
-                    if (mx >= sx + ROW_TEXT_X && mx < sx + SIDEBAR_W) {
-                        if (slot1 == row) toggleSlot2(row);
-                        else              toggleSlot1(row);
+                    // Chevron — only on group rows that actually have variants.
+                    int cX = sx + X_CHEV;
+                    if (row.type == Row.Type.GROUP && groupMembers.get(row.groupName).size() > 1
+                            && mx >= cX && mx < cX + CHEV_W
+                            && my >= rowYAbs && my < rowYAbs + ROW_H) {
+                        toggleExpanded(row.groupName);
+                        return true;
+                    }
+                    // Click on name text — group: toggle expand; variant: shortcut into slot 1.
+                    if (mx >= sx + X_TEXT && mx < sx + SIDEBAR_W) {
+                        if (row.type == Row.Type.GROUP) {
+                            if (groupMembers.get(row.groupName).size() > 1) {
+                                toggleExpanded(row.groupName);
+                            } else {
+                                int idx = groupMembers.get(row.groupName).get(0);
+                                if (slot1.contains(idx)) toggleVariantSlot2(idx);
+                                else                     toggleVariantSlot1(idx);
+                            }
+                        } else {
+                            if (slot1.contains(row.probeIdx)) toggleVariantSlot2(row.probeIdx);
+                            else                              toggleVariantSlot1(row.probeIdx);
+                        }
                         return true;
                     }
                 }
             }
         }
         return super.mouseClicked(mx, my, btn);
+    }
+
+    private void toggleExpanded(String group) {
+        if (!expandedGroups.add(group)) expandedGroups.remove(group);
+        rebuildVisibleRows();
+        sidebarScroll = clamp(sidebarScroll, 0, maxSidebarScroll());
     }
 
     @Override
@@ -179,7 +365,7 @@ public class GraphScreen extends Screen {
     }
 
     private int maxSidebarScroll() {
-        int total = probeNames.size() * ROW_H;
+        int total = visibleRows.size() * ROW_H;
         return Math.max(0, total - SIDEBAR_H);
     }
 
@@ -188,8 +374,6 @@ public class GraphScreen extends Screen {
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float pt) {
         renderBackground(g);
-
-        // Clamp scroll first — defensive against probeNames shrinking.
         sidebarScroll = clamp(sidebarScroll, 0, maxSidebarScroll());
 
         drawPanel(g);
@@ -208,18 +392,28 @@ public class GraphScreen extends Screen {
 
     private void drawTitle(GuiGraphics g) {
         StringBuilder t = new StringBuilder();
-        if (slot1 >= 0) t.append(probeNames.get(slot1));
-        if (slot2 >= 0) {
+        String topLbl = summariseSlot(slot1);
+        String botLbl = summariseSlot(slot2);
+        if (!topLbl.isEmpty()) t.append(topLbl);
+        if (!botLbl.isEmpty()) {
             if (t.length() > 0) t.append("  +  ");
-            t.append(probeNames.get(slot2));
+            t.append(botLbl);
         }
         if (t.length() == 0) t.append("(no probe selected)");
         t.append("  vs  ").append(sweepComponentName).append(" (").append(sweepUnit).append(")");
         if (isLogFrequency) t.append("  [log]");
-        // Title can grow long with two probes; truncate with ellipsis so it
-        // doesn't bleed into the close-button row.
         String title = ellipsize(t.toString(), PANEL_W - 16);
         g.drawCenteredString(font, title, panelX + PANEL_W / 2, panelY + 7, C_TITLE);
+    }
+
+    /** "name" for a 1-variant slot; "stem (N curves)" otherwise. */
+    private String summariseSlot(Set<Integer> slot) {
+        if (slot.isEmpty()) return "";
+        if (slot.size() == 1) {
+            for (int i : slot) return probeNames.get(i);
+        }
+        String stem = slotGroup(slot);
+        return (stem != null ? stem + " " : "") + "(" + slot.size() + " curves)";
     }
 
     // ── sidebar ─────────────────────────────────────────────────────────────
@@ -230,17 +424,13 @@ public class GraphScreen extends Screen {
         g.fill(sx, sy, sx + SIDEBAR_W, sy + SIDEBAR_H, C_SIDE_BG);
         drawRect(g, sx - 1, sy - 1, SIDEBAR_W + 2, SIDEBAR_H + 2, 1, C_SEP);
 
-        // Header inside the sidebar — labels which column is T and which is
-        // B, otherwise the buttons read as anonymous coloured squares.
         int hdrY = sy - 11;
-        g.drawString(font, "T", sx + ROW_PAD_LEFT + 3,                hdrY, C_UNIT);
-        g.drawString(font, "B", sx + ROW_PAD_LEFT + BTN_W + BTN_GAP + 3, hdrY, C_UNIT);
-        g.drawString(font, "probe", sx + ROW_TEXT_X, hdrY, C_UNIT);
+        g.drawString(font, "T", sx + X_BTN_T + 3, hdrY, C_UNIT);
+        g.drawString(font, "B", sx + X_BTN_B + 3, hdrY, C_UNIT);
+        g.drawString(font, "probe", sx + X_TEXT, hdrY, C_UNIT);
 
-        // Clip rows manually — Minecraft's GuiGraphics has enableScissor but
-        // it's overkill here; we just skip rows that don't overlap the box.
-        int rows = probeNames.size();
-        for (int i = 0; i < rows; i++) {
+        for (int i = 0; i < visibleRows.size(); i++) {
+            Row row = visibleRows.get(i);
             int rowY = sy + i * ROW_H - sidebarScroll;
             if (rowY + ROW_H <= sy) continue;
             if (rowY >= sy + SIDEBAR_H) break;
@@ -253,34 +443,90 @@ public class GraphScreen extends Screen {
             }
 
             int btnY = rowY + (ROW_H - BTN_H) / 2;
-            // Only draw buttons that are at least partly visible.
-            if (btnY + BTN_H > sy && btnY < sy + SIDEBAR_H) {
-                drawSlotButton(g, sx + ROW_PAD_LEFT,                  btnY, slot1 == i, true,
-                        mouseX, mouseY);
-                drawSlotButton(g, sx + ROW_PAD_LEFT + BTN_W + BTN_GAP, btnY, slot2 == i, false,
-                        mouseX, mouseY);
-            }
+            boolean drawBtns = btnY + BTN_H > sy && btnY < sy + SIDEBAR_H;
 
-            // Probe name (truncated to fit the remaining sidebar width).
-            String name = probeNames.get(i);
-            int nameMaxW = SIDEBAR_W - ROW_TEXT_X - 4;
-            String shown = ellipsize(name, nameMaxW);
-            int nameY = rowY + (ROW_H - 8) / 2;
-            int color = (slot1 == i) ? C_BTN_ON_TOP
-                      : (slot2 == i) ? C_BTN_ON_BOT
-                      : C_LABEL;
-            if (nameY + 8 > sy && nameY < sy + SIDEBAR_H) {
-                g.drawString(font, shown, sx + ROW_TEXT_X, nameY, color);
+            if (row.type == Row.Type.GROUP) {
+                List<Integer> members = groupMembers.get(row.groupName);
+                boolean expandable = members.size() > 1;
+
+                // Chevron (only when expandable)
+                int chevX = sx + X_CHEV;
+                if (expandable && rowY + ROW_H > sy && rowY < sy + SIDEBAR_H) {
+                    String chev = expandedGroups.contains(row.groupName) ? "v" : ">";
+                    g.drawString(font, chev, chevX, rowY + (ROW_H - 8) / 2, C_CHEV);
+                }
+
+                // T/B group buttons with all/some/none state
+                if (drawBtns) {
+                    drawGroupButton(g, sx + X_BTN_T, btnY,
+                            groupSlotState(row.groupName, slot1), PALETTE_TOP[0], "T",
+                            mouseX, mouseY);
+                    drawGroupButton(g, sx + X_BTN_B, btnY,
+                            groupSlotState(row.groupName, slot2), PALETTE_BOT[0], "B",
+                            mouseX, mouseY);
+                }
+
+                // Group name (bold-ish via white colour when selected)
+                String state1 = groupSlotState(row.groupName, slot1);
+                String state2 = groupSlotState(row.groupName, slot2);
+                int nameColour = !"none".equals(state1) ? PALETTE_TOP[0]
+                              : !"none".equals(state2) ? PALETTE_BOT[0]
+                              : C_LABEL;
+                String name = row.groupName;
+                int textX = sx + X_TEXT;
+                int nameMaxW = SIDEBAR_W - X_TEXT - 4;
+                String shown = ellipsize(name, nameMaxW);
+                int nameY = rowY + (ROW_H - 8) / 2;
+                if (nameY + 8 > sy && nameY < sy + SIDEBAR_H) {
+                    g.drawString(font, shown, textX, nameY, nameColour);
+                }
+
+            } else { // VARIANT row
+                boolean inTop = slot1.contains(row.probeIdx);
+                boolean inBot = slot2.contains(row.probeIdx);
+                int curveColour = colourOf(row.probeIdx);
+                if (drawBtns) {
+                    drawSlotButton(g, sx + X_BTN_T, btnY, inTop, curveColour, "T",
+                            mouseX, mouseY);
+                    drawSlotButton(g, sx + X_BTN_B, btnY, inBot, curveColour, "B",
+                            mouseX, mouseY);
+                }
+                int textX = sx + X_TEXT + VARIANT_INDENT;
+                // Swatch when in a slot
+                if ((inTop || inBot) && curveColour != 0) {
+                    int swatchY = rowY + (ROW_H - 6) / 2;
+                    if (swatchY + 6 > sy && swatchY < sy + SIDEBAR_H) {
+                        g.fill(textX, swatchY, textX + SWATCH_W, swatchY + 6, curveColour);
+                    }
+                    textX += SWATCH_W + SWATCH_GAP;
+                }
+                // Variant label = the part after @ (or full name if no @)
+                String full = probeNames.get(row.probeIdx);
+                int at = full.indexOf('@');
+                String suffix = at >= 0 ? full.substring(at) : full;
+                int nameMaxW = SIDEBAR_W - (textX - sx) - 4;
+                String shown = ellipsize(suffix, nameMaxW);
+                int colour = (inTop || inBot) ? curveColour : C_LABEL;
+                int nameY = rowY + (ROW_H - 8) / 2;
+                if (nameY + 8 > sy && nameY < sy + SIDEBAR_H) {
+                    g.drawString(font, shown, textX, nameY, colour);
+                }
             }
         }
 
-        // Tooltip for the hovered row — shows the full untruncated name +
-        // its Y unit, useful for the long sky130 model-parameter keys.
-        int hovered = sidebarRowAt(mouseX, mouseY);
-        if (hovered >= 0) {
-            String full = probeNames.get(hovered);
-            String unit = probeUnits.get(hovered);
-            String tip  = unit.isEmpty() ? full : (full + " (" + unit + ")");
+        // Hover tooltip — full name of the hovered probe / group.
+        int hoveredRow = sidebarRowAt(mouseX, mouseY);
+        if (hoveredRow >= 0 && hoveredRow < visibleRows.size()) {
+            Row row = visibleRows.get(hoveredRow);
+            String tip;
+            if (row.type == Row.Type.GROUP) {
+                int n = groupMembers.get(row.groupName).size();
+                tip = row.groupName + (n > 1 ? "  (" + n + " variants)" : "");
+            } else {
+                String full = probeNames.get(row.probeIdx);
+                String unit = probeUnits.get(row.probeIdx);
+                tip = unit.isEmpty() ? full : (full + " (" + unit + ")");
+            }
             drawTooltip(g, tip, mouseX, mouseY);
         }
     }
@@ -292,32 +538,47 @@ public class GraphScreen extends Screen {
         if (mouseY < sy || mouseY >= sy + SIDEBAR_H) return -1;
         int rel = (mouseY - sy) + sidebarScroll;
         int row = rel / ROW_H;
-        return (row >= 0 && row < probeNames.size()) ? row : -1;
+        return (row >= 0 && row < visibleRows.size()) ? row : -1;
     }
 
-    private void drawSlotButton(GuiGraphics g, int x, int y, boolean on, boolean isTop,
+    private void drawSlotButton(GuiGraphics g, int x, int y, boolean on, int onColour, String label,
                                  int mouseX, int mouseY) {
         boolean hover = mouseX >= x && mouseX < x + BTN_W && mouseY >= y && mouseY < y + BTN_H;
         int bg = on
-                ? (isTop ? C_BTN_ON_TOP : C_BTN_ON_BOT)
+                ? (onColour != 0 ? onColour : C_BTN_OFF)
                 : (hover ? C_BTN_OFF_HV : C_BTN_OFF);
+        drawButton(g, x, y, bg, label, on);
+    }
+
+    private void drawGroupButton(GuiGraphics g, int x, int y, String state, int onColour, String label,
+                                  int mouseX, int mouseY) {
+        boolean hover = mouseX >= x && mouseX < x + BTN_W && mouseY >= y && mouseY < y + BTN_H;
+        int bg;
+        switch (state) {
+            case "all"  -> bg = onColour;
+            case "some" -> bg = C_BTN_PARTIAL;
+            default     -> bg = hover ? C_BTN_OFF_HV : C_BTN_OFF;
+        }
+        drawButton(g, x, y, bg, label, !"none".equals(state));
+    }
+
+    private void drawButton(GuiGraphics g, int x, int y, int bg, String label, boolean on) {
         g.fill(x, y, x + BTN_W, y + BTN_H, bg);
         g.fill(x, y, x + BTN_W, y + 1, C_SEP);
         g.fill(x, y + BTN_H - 1, x + BTN_W, y + BTN_H, C_SEP);
         g.fill(x, y, x + 1, y + BTN_H, C_SEP);
         g.fill(x + BTN_W - 1, y, x + BTN_W, y + BTN_H, C_SEP);
-        String lbl = isTop ? "T" : "B";
         int color = on ? C_BTN_TXT_ON : C_BTN_TXT_OFF;
-        int tx = x + (BTN_W - font.width(lbl)) / 2;
+        int tx = x + (BTN_W - font.width(label)) / 2;
         int ty = y + (BTN_H - 8) / 2;
-        g.drawString(font, lbl, tx, ty, color);
+        g.drawString(font, label, tx, ty, color);
     }
 
     // ── plot area ──────────────────────────────────────────────────────────
 
     private void drawPlots(GuiGraphics g, int mouseX, int mouseY) {
-        boolean haveTop = slot1 >= 0;
-        boolean haveBot = slot2 >= 0;
+        boolean haveTop = !slot1.isEmpty();
+        boolean haveBot = !slot2.isEmpty();
         int plotTop    = panelY + GT;
         int plotBottom = panelY + GB;
         int plotLeft   = panelX + GL;
@@ -325,61 +586,55 @@ public class GraphScreen extends Screen {
         int gw         = plotRight - plotLeft;
 
         if (!haveTop && !haveBot) {
-            // Empty placeholder so the area still looks like a graph card.
             g.fill(plotLeft, plotTop, plotRight, plotBottom, C_PLOT_BG);
             g.drawCenteredString(font, "Pick a probe on the right (T = top plot, B = bottom plot)",
                     (plotLeft + plotRight) / 2, (plotTop + plotBottom) / 2 - 4, 0xFFAAAAAA);
             return;
         }
 
-        // When only one slot is filled the plot fills the entire area; with
-        // both slots filled the area is split in half with a small gutter.
         if (haveTop && haveBot) {
             int half = (plotBottom - plotTop) / 2;
             int gap  = 6;
             int top1Bottom = plotTop + half - gap / 2;
             int top2Top    = plotTop + half + gap / 2;
-            hoverIdxTop = drawSinglePlot(g, plotLeft, plotTop,    gw, top1Bottom - plotTop,
-                    slot1, true,  C_LINE_TOP, false, mouseX, mouseY);
-            hoverIdxBot = drawSinglePlot(g, plotLeft, top2Top,    gw, plotBottom  - top2Top,
-                    slot2, false, C_LINE_BOT, true,  mouseX, mouseY);
+            drawMultiCurvePlot(g, plotLeft, plotTop,    gw, top1Bottom - plotTop,
+                    slot1, PALETTE_TOP, false, mouseX, mouseY);
+            drawMultiCurvePlot(g, plotLeft, top2Top,    gw, plotBottom  - top2Top,
+                    slot2, PALETTE_BOT, true,  mouseX, mouseY);
+        } else if (haveTop) {
+            drawMultiCurvePlot(g, plotLeft, plotTop, gw, plotBottom - plotTop,
+                    slot1, PALETTE_TOP, true, mouseX, mouseY);
         } else {
-            int onlySlot = haveTop ? slot1 : slot2;
-            int colour   = haveTop ? C_LINE_TOP : C_LINE_BOT;
-            int idx = drawSinglePlot(g, plotLeft, plotTop, gw, plotBottom - plotTop,
-                    onlySlot, true, colour, true, mouseX, mouseY);
-            if (haveTop) { hoverIdxTop = idx; hoverIdxBot = -1; }
-            else         { hoverIdxBot = idx; hoverIdxTop = -1; }
+            drawMultiCurvePlot(g, plotLeft, plotTop, gw, plotBottom - plotTop,
+                    slot2, PALETTE_BOT, true, mouseX, mouseY);
         }
     }
 
-    /**
-     * Renders one plot inside {@code (gx,gy,gw,gh)}. Returns the index of the
-     * data point currently under the mouse (or -1).
-     *
-     * @param drawXAxis when true the X-axis labels are drawn below this plot
-     *        — used to suppress duplicate labels on the top plot when both
-     *        slots are occupied.
-     * @param drawXTitle when true the {@code "<sweep> (<unit>)"} line below
-     *        the plot is rendered (only the bottommost plot gets it).
-     */
-    private int drawSinglePlot(GuiGraphics g, int gx, int gy, int gw, int gh,
-                                int probeIdx, boolean drawXAxis, int colour,
-                                boolean drawXTitle, int mouseX, int mouseY) {
-        List<Double> series = probeData.get(probeIdx);
-        String yUnit = probeUnits.get(probeIdx);
-        if (sweepValues.size() != series.size() || sweepValues.isEmpty()) {
+    private void drawMultiCurvePlot(GuiGraphics g, int gx, int gy, int gw, int gh,
+                                     Set<Integer> slot, int[] palette,
+                                     boolean drawXTitle, int mouseX, int mouseY) {
+        if (slot.isEmpty()) return;
+
+        List<Integer> active = new ArrayList<>();
+        for (int idx : slot) {
+            if (probeData.get(idx).size() == sweepValues.size()) active.add(idx);
+        }
+        if (active.isEmpty() || sweepValues.isEmpty()) {
             g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
             g.drawCenteredString(font, "No data", gx + gw / 2, gy + gh / 2 - 4, 0xFFFF4444);
-            return -1;
+            return;
         }
 
-        // ── ranges ────────────────────────────────────────────────────────
         double xMinRaw = sweepValues.stream().mapToDouble(d -> d).min().orElse(1);
         double xMaxRaw = sweepValues.stream().mapToDouble(d -> d).max().orElse(2);
-        double yMin    = series.stream().mapToDouble(d -> d).min().orElse(0);
-        double yMax    = series.stream().mapToDouble(d -> d).max().orElse(1);
-
+        double yMin = Double.POSITIVE_INFINITY, yMax = Double.NEGATIVE_INFINITY;
+        for (int idx : active) {
+            for (double v : probeData.get(idx)) {
+                if (v < yMin) yMin = v;
+                if (v > yMax) yMax = v;
+            }
+        }
+        if (!Double.isFinite(yMin) || !Double.isFinite(yMax)) { yMin = 0; yMax = 1; }
         if (yMax == yMin) { yMin -= 1; yMax += 1; }
         double yPad = (yMax - yMin) * 0.10;
         yMin -= yPad; yMax += yPad;
@@ -398,10 +653,8 @@ public class GraphScreen extends Screen {
             xMin -= xPad; xMax += xPad;
         }
 
-        // ── plot background ───────────────────────────────────────────────
         g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
 
-        // ── Y ticks (4 intervals if cramped, 6 otherwise) ─────────────────
         int yTicks = gh < 160 ? 4 : 6;
         for (int i = 0; i <= yTicks; i++) {
             double t  = (double) i / yTicks;
@@ -412,28 +665,21 @@ public class GraphScreen extends Screen {
             g.drawString(font, yLbl, gx - font.width(yLbl) - 3, py - 4, C_LABEL);
         }
 
-        // ── X ticks ───────────────────────────────────────────────────────
-        if (drawXAxis) {
-            if (isLogFrequency) drawLogXTicks(g, gx, gy, gw, gh, xMin, xMax);
-            else                drawLinearXTicks(g, gx, gy, gw, gh, xMin, xMax);
-        } else {
-            // Still draw vertical gridlines for visual alignment with the
-            // bottom plot, just no labels.
-            if (isLogFrequency) drawLogXTicks(g, gx, gy, gw, gh, xMin, xMax, false);
-            else                drawLinearXTicks(g, gx, gy, gw, gh, xMin, xMax, false);
-        }
+        if (isLogFrequency) drawLogXTicks(g, gx, gy, gw, gh, xMin, xMax);
+        else                drawLinearXTicks(g, gx, gy, gw, gh, xMin, xMax);
 
-        // ── axes ──────────────────────────────────────────────────────────
         g.fill(gx,      gy,      gx + 1, gy + gh,      C_AXIS);
         g.fill(gx,      gy + gh, gx + gw, gy + gh + 1, C_AXIS);
 
-        // ── per-plot Y label (top-left of plot) ───────────────────────────
-        String yLabel = yUnit.isEmpty()
-                ? probeNames.get(probeIdx)
-                : probeNames.get(probeIdx) + "  (" + yUnit + ")";
-        g.drawString(font, ellipsize(yLabel, gw - 4), gx + 2, gy - 9, colour);
+        String stem = slotGroup(slot);
+        String yUnitLabel = commonUnit(active);
+        String yLabel = (stem == null ? "" : stem)
+                + (yUnitLabel.isEmpty() ? "" : "  (" + yUnitLabel + ")");
+        if (!yLabel.isEmpty()) {
+            int yColour = active.size() == 1 ? palette[0] : C_LABEL;
+            g.drawString(font, ellipsize(yLabel, gw - 4), gx + 2, gy - 9, yColour);
+        }
 
-        // ── X title (below the plot, only on the last one) ────────────────
         if (drawXTitle) {
             g.drawCenteredString(font,
                     sweepComponentName + " (" + sweepUnit + ")"
@@ -441,68 +687,90 @@ public class GraphScreen extends Screen {
                     gx + gw / 2, gy + gh + 10, C_UNIT);
         }
 
-        // ── data points ───────────────────────────────────────────────────
         int n = sweepValues.size();
-        int[] px = new int[n];
-        int[] py = new int[n];
-        int hoverIdx = -1;
+        boolean drawDots = active.size() == 1 && n <= 200;
+        int hoverCurve = -1;
+        int hoverIdx   = -1;
 
-        for (int i = 0; i < n; i++) {
-            double rawX = sweepValues.get(i);
-            double logX = isLogFrequency ? Math.log10(Math.max(rawX, 1e-30)) : rawX;
-            double xf   = (logX - xMin) / (xMax - xMin);
-            double yf   = (series.get(i) - yMin) / (yMax - yMin);
-            px[i] = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
-            py[i] = clamp(gy + gh - 1 - (int)(yf * (gh - 1)), gy, gy + gh - 1);
-            if (Math.abs(mouseX - px[i]) <= 5 && Math.abs(mouseY - py[i]) <= 5) hoverIdx = i;
-        }
-
-        for (int i = 1; i < n; i++) drawLine(g, px[i-1], py[i-1], px[i], py[i], colour);
-        if (n <= 200) {
+        int order = 0;
+        for (int probeIdx : active) {
+            int colour = palette[order % palette.length];
+            order++;
+            List<Double> series = probeData.get(probeIdx);
+            int[] px = new int[n];
+            int[] py = new int[n];
             for (int i = 0; i < n; i++) {
-                g.fill(px[i] - 2, py[i] - 2, px[i] + 3, py[i] + 3, C_DOT_OUT);
-                g.fill(px[i] - 1, py[i] - 1, px[i] + 2, py[i] + 2, colour);
+                double rawX = sweepValues.get(i);
+                double logX = isLogFrequency ? Math.log10(Math.max(rawX, 1e-30)) : rawX;
+                double xf   = (logX - xMin) / (xMax - xMin);
+                double yf   = (series.get(i) - yMin) / (yMax - yMin);
+                px[i] = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
+                py[i] = clamp(gy + gh - 1 - (int)(yf * (gh - 1)), gy, gy + gh - 1);
+                if (Math.abs(mouseX - px[i]) <= 5 && Math.abs(mouseY - py[i]) <= 5) {
+                    hoverCurve = probeIdx;
+                    hoverIdx   = i;
+                }
+            }
+            for (int i = 1; i < n; i++) drawLine(g, px[i-1], py[i-1], px[i], py[i], colour);
+            if (drawDots) {
+                for (int i = 0; i < n; i++) {
+                    g.fill(px[i] - 2, py[i] - 2, px[i] + 3, py[i] + 3, C_DOT_OUT);
+                    g.fill(px[i] - 1, py[i] - 1, px[i] + 2, py[i] + 2, colour);
+                }
             }
         }
 
-        if (hoverIdx >= 0) {
+        if (hoverIdx >= 0 && hoverCurve >= 0) {
+            List<Double> series = probeData.get(hoverCurve);
             double rawXH = sweepValues.get(hoverIdx);
             String xStr = isLogFrequency
                     ? ComponentEditScreen.formatValue(rawXH) + "Hz"
                     : ComponentEditScreen.formatValue(rawXH) + sweepUnit;
+            String yUnitH = probeUnits.get(hoverCurve);
             String yStr = ComponentEditScreen.formatValue(series.get(hoverIdx))
-                    + (yUnit.isEmpty() ? "" : " " + yUnit);
-            String tip  = yStr + " at " + xStr;
+                    + (yUnitH.isEmpty() ? "" : " " + yUnitH);
+            String name = probeNames.get(hoverCurve);
+            String tip  = name + ": " + yStr + " at " + xStr;
             int tw = font.width(tip) + 6, th = 12;
-            int tx = clamp(px[hoverIdx] + 6, gx, gx + gw - tw);
-            int ty = clamp(py[hoverIdx] - 16, gy, gy + gh - th);
+            double xf = (isLogFrequency
+                    ? Math.log10(Math.max(rawXH, 1e-30)) : rawXH);
+            xf = (xf - xMin) / (xMax - xMin);
+            double yf = (series.get(hoverIdx) - yMin) / (yMax - yMin);
+            int hx = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
+            int hy = clamp(gy + gh - 1 - (int)(yf * (gh - 1)), gy, gy + gh - 1);
+            int tx = clamp(hx + 6, gx, gx + gw - tw);
+            int ty = clamp(hy - 16, gy, gy + gh - th);
             g.fill(tx - 1, ty - 1, tx + tw + 1, ty + th + 1, C_BORDER);
             g.fill(tx, ty, tx + tw, ty + th, C_HOVER_BG);
             g.drawString(font, tip, tx + 3, ty + 2, 0xFFFFFFFF);
 
-            g.fill(px[hoverIdx] - 3, py[hoverIdx] - 3, px[hoverIdx] + 4, py[hoverIdx] + 4, 0xFFFFFF00);
-            g.fill(px[hoverIdx] - 1, py[hoverIdx] - 1, px[hoverIdx] + 2, py[hoverIdx] + 2, colour);
+            g.fill(hx - 3, hy - 3, hx + 4, hy + 4, 0xFFFFFF00);
+            int orderHover = indexIn(slot, hoverCurve);
+            int colourHover = orderHover >= 0 ? palette[orderHover % palette.length] : C_LABEL;
+            g.fill(hx - 1, hy - 1, hx + 2, hy + 2, colourHover);
         }
+    }
 
-        return hoverIdx;
+    private String commonUnit(List<Integer> active) {
+        String unit = null;
+        for (int idx : active) {
+            String u = probeUnits.get(idx);
+            if (unit == null) unit = u;
+            else if (!unit.equals(u)) return "";
+        }
+        return unit == null ? "" : unit;
     }
 
     // ── tick helpers ────────────────────────────────────────────────────────
 
     private void drawLinearXTicks(GuiGraphics g, int gx, int gy, int gw, int gh,
                                    double xMin, double xMax) {
-        drawLinearXTicks(g, gx, gy, gw, gh, xMin, xMax, true);
-    }
-
-    private void drawLinearXTicks(GuiGraphics g, int gx, int gy, int gw, int gh,
-                                   double xMin, double xMax, boolean labels) {
         final int X_TICKS = 6;
         for (int i = 0; i <= X_TICKS; i++) {
             double t     = (double) i / X_TICKS;
             double xReal = xMin + (xMax - xMin) * t;
             int    px    = gx + (int)(t * gw);
             g.fill(px, gy, px + 1, gy + gh, C_GRID);
-            if (!labels) continue;
             String xLbl  = fmtAxis(xReal);
             g.drawString(font, xLbl, px - font.width(xLbl) / 2, gy + gh + 1, C_LABEL);
         }
@@ -510,11 +778,6 @@ public class GraphScreen extends Screen {
 
     private void drawLogXTicks(GuiGraphics g, int gx, int gy, int gw, int gh,
                                 double xMin, double xMax) {
-        drawLogXTicks(g, gx, gy, gw, gh, xMin, xMax, true);
-    }
-
-    private void drawLogXTicks(GuiGraphics g, int gx, int gy, int gw, int gh,
-                                double xMin, double xMax, boolean labels) {
         int decLo = (int) Math.floor(xMin);
         int decHi = (int) Math.ceil(xMax);
 
@@ -532,7 +795,6 @@ public class GraphScreen extends Screen {
             int d  = tick[1];
             g.fill(px, gy, px + 1, gy + gh, C_GRID);
 
-            if (!labels) continue;
             double freq  = Math.pow(10, d);
             String xLbl  = fmtFreqDecade(freq);
             int    lx    = px - font.width(xLbl) / 2;
@@ -582,13 +844,9 @@ public class GraphScreen extends Screen {
         return s;
     }
 
-    /**
-     * Truncates {@code s} with a trailing "…" so its rendered width fits in
-     * {@code maxPx}. Returns {@code s} unchanged when it already fits.
-     */
     private String ellipsize(String s, int maxPx) {
         if (font.width(s) <= maxPx) return s;
-        String ell = "…";
+        String ell = "...";
         int ellW = font.width(ell);
         for (int len = s.length() - 1; len > 0; len--) {
             String candidate = s.substring(0, len);

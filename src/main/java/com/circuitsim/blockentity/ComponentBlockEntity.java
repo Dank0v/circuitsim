@@ -53,6 +53,18 @@ public class ComponentBlockEntity extends BlockEntity {
     private String simParam1   = "10";
     private String simParam2   = "1Meg";
     private String simParam3   = "10";
+    // .DC analysis config. dcSource1 is the SPICE source name to sweep
+    // (e.g. "V1"); start/stop/step are parsed via parseSI at sim time.
+    // dc2D enables an outer sweep on dcSource2.
+    private String  dcSource1 = "V1";
+    private String  dcStart1  = "0";
+    private String  dcStop1   = "5";
+    private String  dcStep1   = "0.1";
+    private boolean dc2D      = false;
+    private String  dcSource2 = "";
+    private String  dcStart2  = "0";
+    private String  dcStop2   = "1";
+    private String  dcStep2   = "0.25";
     // Temperature override for the simulate block. Single value ("27") sets
     // the circuit temperature; a sweep spec ("20:40:5" or "20,30,40")
     // triggers a multi-run pass — OP gives a 1D probe-vs-temperature plot,
@@ -154,6 +166,24 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setSimParam2(String v)       { this.simParam2 = v; setChanged(); }
     public String getSimParam3()             { return simParam3; }
     public void setSimParam3(String v)       { this.simParam3 = v; setChanged(); }
+    public String  getDcSource1()             { return dcSource1 == null ? "" : dcSource1; }
+    public void    setDcSource1(String v)     { this.dcSource1 = v == null ? "" : v; setChanged(); }
+    public String  getDcStart1()              { return dcStart1 == null ? "0" : dcStart1; }
+    public void    setDcStart1(String v)      { this.dcStart1 = v == null ? "0" : v; setChanged(); }
+    public String  getDcStop1()               { return dcStop1 == null ? "0" : dcStop1; }
+    public void    setDcStop1(String v)       { this.dcStop1 = v == null ? "0" : v; setChanged(); }
+    public String  getDcStep1()               { return dcStep1 == null ? "0" : dcStep1; }
+    public void    setDcStep1(String v)       { this.dcStep1 = v == null ? "0" : v; setChanged(); }
+    public boolean getDc2D()                  { return dc2D; }
+    public void    setDc2D(boolean v)         { this.dc2D = v; setChanged(); }
+    public String  getDcSource2()             { return dcSource2 == null ? "" : dcSource2; }
+    public void    setDcSource2(String v)     { this.dcSource2 = v == null ? "" : v; setChanged(); }
+    public String  getDcStart2()              { return dcStart2 == null ? "0" : dcStart2; }
+    public void    setDcStart2(String v)      { this.dcStart2 = v == null ? "0" : v; setChanged(); }
+    public String  getDcStop2()               { return dcStop2 == null ? "0" : dcStop2; }
+    public void    setDcStop2(String v)       { this.dcStop2 = v == null ? "0" : v; setChanged(); }
+    public String  getDcStep2()               { return dcStep2 == null ? "0" : dcStep2; }
+    public void    setDcStep2(String v)       { this.dcStep2 = v == null ? "0" : v; setChanged(); }
     public String getSimTemp()               { return simTemp; }
     public void setSimTemp(String t)         { this.simTemp = (t == null || t.isEmpty()) ? "27" : t; setChanged(); }
     public String getCommands()              { return commands; }
@@ -203,6 +233,15 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("lExpr",     lExpr     == null ? "" : lExpr);
         tag.putString("multExpr",  multExpr  == null ? "" : multExpr);
         tag.putString("nfExpr",    nfExpr    == null ? "" : nfExpr);
+        tag.putString("dcSource1", dcSource1 == null ? ""  : dcSource1);
+        tag.putString("dcStart1",  dcStart1  == null ? "0" : dcStart1);
+        tag.putString("dcStop1",   dcStop1   == null ? "0" : dcStop1);
+        tag.putString("dcStep1",   dcStep1   == null ? "0" : dcStep1);
+        tag.putBoolean("dc2D", dc2D);
+        tag.putString("dcSource2", dcSource2 == null ? ""  : dcSource2);
+        tag.putString("dcStart2",  dcStart2  == null ? "0" : dcStart2);
+        tag.putString("dcStop2",   dcStop2   == null ? "0" : dcStop2);
+        tag.putString("dcStep2",   dcStep2   == null ? "0" : dcStep2);
     }
 
     @Override
@@ -238,6 +277,15 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("lExpr"))       lExpr       = tag.getString("lExpr");
         if (tag.contains("multExpr"))    multExpr    = tag.getString("multExpr");
         if (tag.contains("nfExpr"))      nfExpr      = tag.getString("nfExpr");
+        if (tag.contains("dcSource1"))   dcSource1   = tag.getString("dcSource1");
+        if (tag.contains("dcStart1"))    dcStart1    = tag.getString("dcStart1");
+        if (tag.contains("dcStop1"))     dcStop1     = tag.getString("dcStop1");
+        if (tag.contains("dcStep1"))     dcStep1     = tag.getString("dcStep1");
+        if (tag.contains("dc2D"))        dc2D        = tag.getBoolean("dc2D");
+        if (tag.contains("dcSource2"))   dcSource2   = tag.getString("dcSource2");
+        if (tag.contains("dcStart2"))    dcStart2    = tag.getString("dcStart2");
+        if (tag.contains("dcStop2"))     dcStop2     = tag.getString("dcStop2");
+        if (tag.contains("dcStep2"))     dcStep2     = tag.getString("dcStep2");
     }
 
     @Override
@@ -273,6 +321,15 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("lExpr",     lExpr     == null ? "" : lExpr);
         tag.putString("multExpr",  multExpr  == null ? "" : multExpr);
         tag.putString("nfExpr",    nfExpr    == null ? "" : nfExpr);
+        tag.putString("dcSource1", dcSource1 == null ? ""  : dcSource1);
+        tag.putString("dcStart1",  dcStart1  == null ? "0" : dcStart1);
+        tag.putString("dcStop1",   dcStop1   == null ? "0" : dcStop1);
+        tag.putString("dcStep1",   dcStep1   == null ? "0" : dcStep1);
+        tag.putBoolean("dc2D", dc2D);
+        tag.putString("dcSource2", dcSource2 == null ? ""  : dcSource2);
+        tag.putString("dcStart2",  dcStart2  == null ? "0" : dcStart2);
+        tag.putString("dcStop2",   dcStop2   == null ? "0" : dcStop2);
+        tag.putString("dcStep2",   dcStep2   == null ? "0" : dcStep2);
         return tag;
     }
 
