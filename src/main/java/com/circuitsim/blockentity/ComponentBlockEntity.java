@@ -46,7 +46,7 @@ public class ComponentBlockEntity extends BlockEntity {
     // multiple library files. Each line is one library path. Stored separately
     // from pdkLibPath so switching between psa and hsa preserves both.
     private String pdkLibPaths = "";
-    private String ngBehavior = "hsa";
+    private String ngBehavior = "none";
 
     // simulate block dialog state
     private String simAnalysis = "OP";

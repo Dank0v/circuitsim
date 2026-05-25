@@ -20,7 +20,7 @@ public class SimulateEditScreen extends Screen {
 
     // PDK state
     private String pdkName    = "none"; // "none", "sky130A", "placeholder"
-    private String ngBehavior = "hsa";
+    private String ngBehavior = "none";
     // Single-line lib path used by non-psa modes (sky130A flow).
     private String pdkLibPath  = "";
     // Newline-separated lib paths used by psa mode (one .INCLUDE per line).
@@ -48,7 +48,10 @@ public class SimulateEditScreen extends Screen {
     private EditBox pdkLibField;
     private MultiLineEditBox pdkLibPathsField;
 
-    private static final String[] NG_MODES = {"hsa", "psa", "lt", "ki", "va"};
+    // "none" = strict ngspice, no compatibility tweaks (default for new
+    // blocks). The other modes match ngspice's `set ngbehavior=<x>` accepted
+    // values for HSPICE / PSPICE / LTspice / Keysight / Verilog-A flavours.
+    private static final String[] NG_MODES = {"none", "hsa", "psa", "lt", "ki", "va"};
 
     private EditBox param1Field;
     private EditBox param2Field;
