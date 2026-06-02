@@ -24,6 +24,12 @@ public class ComponentBlockEntity extends BlockEntity {
     // from a Parametric block defining this variable name. Empty means use
     // the numeric `value` field directly.
     private String valueExpr = "";
+
+    // Voltage source can carry both a DC bias (in `value`) and an AC magnitude
+    // (here). The editor exposes both as separate fields; the legacy DC/AC
+    // toggle is gone. acValueExpr lets the AC slot reference a Parametric var.
+    private double acValue     = 0.0;
+    private String acValueExpr = "";
     // Same idea, one per sky130 / IC slot. Only one of (numeric, expr) is
     // meaningful at a time per slot; the editor decides which based on the
     // user input.
@@ -110,6 +116,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.IC_PMOS4.get())             return "ic_pmos4";
         if (block == ModBlocks.COMMANDS.get())             return "commands";
         if (block == ModBlocks.AMPLIFIER.get())            return "amplifier";
+        if (block == ModBlocks.DISCRETE_NMOS.get())        return "discrete_nmos";
         if (block == ModBlocks.CCVS.get())                 return "ccvs";
         if (block == ModBlocks.CCCS.get())                 return "cccs";
         if (block == ModBlocks.VCVS.get())                 return "vcvs";
@@ -131,6 +138,10 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setComponentNumber(int n)  { this.componentNumber = Math.max(0, n); setChanged(); }
     public String getValueExpr()           { return valueExpr == null ? "" : valueExpr; }
     public void setValueExpr(String expr)  { this.valueExpr = expr == null ? "" : expr; setChanged(); }
+    public double getAcValue()             { return acValue; }
+    public void setAcValue(double v)       { this.acValue = v; setChanged(); }
+    public String getAcValueExpr()         { return acValueExpr == null ? "" : acValueExpr; }
+    public void setAcValueExpr(String e)   { this.acValueExpr = e == null ? "" : e; setChanged(); }
     public String getWExpr()               { return wExpr == null ? "" : wExpr; }
     public void setWExpr(String e)         { this.wExpr = e == null ? "" : e; setChanged(); }
     public String getLExpr()               { return lExpr == null ? "" : lExpr; }
@@ -233,6 +244,8 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("lExpr",     lExpr     == null ? "" : lExpr);
         tag.putString("multExpr",  multExpr  == null ? "" : multExpr);
         tag.putString("nfExpr",    nfExpr    == null ? "" : nfExpr);
+        tag.putDouble("acValue",   acValue);
+        tag.putString("acValueExpr", acValueExpr == null ? "" : acValueExpr);
         tag.putString("dcSource1", dcSource1 == null ? ""  : dcSource1);
         tag.putString("dcStart1",  dcStart1  == null ? "0" : dcStart1);
         tag.putString("dcStop1",   dcStop1   == null ? "0" : dcStop1);
@@ -260,7 +273,14 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("pdkName"))     pdkName    = tag.getString("pdkName");
         if (tag.contains("pdkLibPath"))  pdkLibPath = tag.getString("pdkLibPath");
         if (tag.contains("pdkLibPaths")) pdkLibPaths = tag.getString("pdkLibPaths");
-        if (tag.contains("ngBehavior"))  ngBehavior = tag.getString("ngBehavior");
+        if (tag.contains("ngBehavior")) {
+            ngBehavior = tag.getString("ngBehavior");
+            // Old saves may carry compat modes that are no longer offered
+            // ("lt" for LTspice, "ki" for Keysight). Quietly downgrade them
+            // to "none" so those blocks fall back to strict ngspice instead
+            // of leaving a now-invisible mode selected.
+            if ("lt".equals(ngBehavior) || "ki".equals(ngBehavior)) ngBehavior = "none";
+        }
         if (tag.contains("simAnalysis")) simAnalysis = tag.getString("simAnalysis");
         if (tag.contains("simParam1"))   simParam1   = tag.getString("simParam1");
         if (tag.contains("simParam2"))   simParam2   = tag.getString("simParam2");
@@ -277,6 +297,19 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("lExpr"))       lExpr       = tag.getString("lExpr");
         if (tag.contains("multExpr"))    multExpr    = tag.getString("multExpr");
         if (tag.contains("nfExpr"))      nfExpr      = tag.getString("nfExpr");
+        if (tag.contains("acValue"))     acValue     = tag.getDouble("acValue");
+        if (tag.contains("acValueExpr")) acValueExpr = tag.getString("acValueExpr");
+        // Legacy migration: pre-rework voltage sources stored a single value
+        // plus a sourceType "AC"/"DC" toggle. Move that value into the new
+        // dedicated AC slot when the saved data still uses the old shape.
+        if (!tag.contains("acValue")
+                && "voltage_source".equals(getComponentType())
+                && "AC".equalsIgnoreCase(sourceType)) {
+            acValue     = value;
+            acValueExpr = valueExpr == null ? "" : valueExpr;
+            value       = 0.0;
+            valueExpr   = "";
+        }
         if (tag.contains("dcSource1"))   dcSource1   = tag.getString("dcSource1");
         if (tag.contains("dcStart1"))    dcStart1    = tag.getString("dcStart1");
         if (tag.contains("dcStop1"))     dcStop1     = tag.getString("dcStop1");
@@ -321,6 +354,8 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("lExpr",     lExpr     == null ? "" : lExpr);
         tag.putString("multExpr",  multExpr  == null ? "" : multExpr);
         tag.putString("nfExpr",    nfExpr    == null ? "" : nfExpr);
+        tag.putDouble("acValue",   acValue);
+        tag.putString("acValueExpr", acValueExpr == null ? "" : acValueExpr);
         tag.putString("dcSource1", dcSource1 == null ? ""  : dcSource1);
         tag.putString("dcStart1",  dcStart1  == null ? "0" : dcStart1);
         tag.putString("dcStop1",   dcStop1   == null ? "0" : dcStop1);

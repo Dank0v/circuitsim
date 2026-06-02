@@ -50,8 +50,8 @@ public class SimulateEditScreen extends Screen {
 
     // "none" = strict ngspice, no compatibility tweaks (default for new
     // blocks). The other modes match ngspice's `set ngbehavior=<x>` accepted
-    // values for HSPICE / PSPICE / LTspice / Keysight / Verilog-A flavours.
-    private static final String[] NG_MODES = {"none", "hsa", "psa", "lt", "ki", "va"};
+    // values for HSPICE / PSPICE / Verilog-A flavours.
+    private static final String[] NG_MODES = {"none", "hsa", "psa", "va"};
 
     private EditBox param1Field;
     private EditBox param2Field;
@@ -151,7 +151,12 @@ public class SimulateEditScreen extends Screen {
         }
 
         boolean psa = "psa".equals(ngBehavior);
+        boolean hsa = "hsa".equals(ngBehavior);
 
+        // PDK / library widgets are only relevant for the two modes we
+        // actually support libraries for. The other compat modes (none, ki,
+        // va) leave this section empty — no widget is created and the
+        // render path skips its labels/chips.
         if (psa) {
             String hint = "C:\\path\\to\\OPAMP.LIB\nC:\\path\\to\\models.lib";
             pdkLibPathsField = new MultiLineEditBox(
@@ -162,7 +167,7 @@ public class SimulateEditScreen extends Screen {
             pdkLibPathsField.setCharacterLimit(8000);
             pdkLibPathsField.setValue(pdkLibPaths);
             addRenderableWidget(pdkLibPathsField);
-        } else {
+        } else if (hsa) {
             pdkLibField = box(px + 16, py + Y_LIB_FIELD, W - 32, pdkLibPath);
             String libHint = "C:\\path\\to\\sky130.lib.spice tt";
             pdkLibField.setSuggestion(pdkLibPath.isEmpty() ? libHint : "");
@@ -333,14 +338,25 @@ public class SimulateEditScreen extends Screen {
      */
     private void setNgBehavior(String mode) {
         if (mode.equals(ngBehavior)) return;
-        boolean wasPsa = "psa".equals(ngBehavior);
-        boolean willPsa = "psa".equals(mode);
-        // Persist current widget values so rebuildWidgets() can repopulate them.
+        // The PDK / lib section now has THREE shapes — psa (multi-line
+        // .INCLUDE), hsa (single-line .lib + PDK chips), and "no widget" for
+        // every other compat mode. Crossing between any two of those shapes
+        // changes which widgets exist, so rebuild whenever the shape kind
+        // changes.
+        String oldKind = pdkSectionKind(ngBehavior);
+        String newKind = pdkSectionKind(mode);
         captureWidgetState();
         ngBehavior = mode;
-        if (wasPsa != willPsa) {
+        if (!oldKind.equals(newKind)) {
             rebuildWidgets();
         }
+    }
+
+    /** Which PDK-section widget layout this compat mode uses. */
+    private static String pdkSectionKind(String mode) {
+        if ("psa".equals(mode)) return "psa";
+        if ("hsa".equals(mode)) return "hsa";
+        return "none";
     }
 
     /** Copies current widget contents back into instance fields. */
@@ -399,9 +415,10 @@ public class SimulateEditScreen extends Screen {
                 return true;
             }
         }
-        // PDK radio options — only active in non-psa modes (in psa we have a
-        // multi-line edit box covering this area instead).
-        if (!"psa".equals(ngBehavior)) {
+        // PDK radio options — only present in hsa mode. psa replaces this
+        // area with a multi-line .INCLUDE box; the other compat modes draw
+        // nothing here so there's nothing to hit-test.
+        if ("hsa".equals(ngBehavior)) {
             if (hit(mx, my, px + 14, py + Y_PDK_CHIPS, 84, 16)) {
                 setPdk("none");
                 return true;
@@ -517,10 +534,12 @@ public class SimulateEditScreen extends Screen {
             g.drawCenteredString(f, NG_MODES[i], cx + 15, cy + 3, sel ? SEL : DIM);
         }
 
-        // PDK / library section — varies by compat mode.
+        // PDK / library section — only rendered for hsa (single-line .lib) or
+        // psa (multi-line .INCLUDE). Other compat modes (none, ki, va) leave
+        // the area blank; their netlists don't need library config.
         if ("psa".equals(ngBehavior)) {
             g.drawString(f, ".lib paths (.INCLUDE, one per line):", px + 14, py + Y_PDK_LABEL, LABEL);
-        } else {
+        } else if ("hsa".equals(ngBehavior)) {
             g.drawString(f, "PDK:", px + 14, py + Y_PDK_LABEL, LABEL);
 
             boolean isNone        = "none".equals(pdkName);

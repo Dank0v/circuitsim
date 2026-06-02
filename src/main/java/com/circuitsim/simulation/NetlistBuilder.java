@@ -215,11 +215,12 @@ public class NetlistBuilder {
             } else if (comp.block instanceof InductorBlock) {
                 line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof VoltageSourceBlock) {
-                if ("AC".equalsIgnoreCase(comp.sourceType)) {
-                    line = String.format("V%d %s %s AC %g", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
-                } else {
-                    line = String.format("V%d %s %s DC %g", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
-                }
+                // OP analysis cares only about the DC bias; the AC magnitude is
+                // a small-signal perturbation that is meaningless here.
+                line = String.format("V%d %s %s DC %g",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        comp.value);
             } else if (comp.block instanceof VoltageSourceSinBlock) {
                 line = String.format("V%d %s %s DC 0", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else if (comp.block instanceof VoltageSourcePulseBlock) {
@@ -367,14 +368,13 @@ public class NetlistBuilder {
             } else if (comp.block instanceof InductorBlock) {
                 line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof VoltageSourceBlock) {
-                if ("AC".equalsIgnoreCase(comp.sourceType)) {
-                    line = String.format("V%d %s %s DC 0 AC %g",
-                            vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
-                    hasAcSource = true;
-                } else {
-                    line = String.format("V%d %s %s DC %g AC 0",
-                            vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
-                }
+                // Both halves are independent: DC sets the bias point that the
+                // small-signal solver linearises around, AC is the perturbation.
+                line = String.format("V%d %s %s DC %g AC %g",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        comp.value, comp.acValue);
+                if (comp.acValue != 0.0) hasAcSource = true;
             } else if (comp.block instanceof VoltageSourceSinBlock) {
                 line = String.format("V%d %s %s DC 0 AC %g",
                         vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
@@ -1090,6 +1090,10 @@ public class NetlistBuilder {
         public final String   lExpr;
         public final String   multExpr;
         public final String   nfExpr;
+        // Voltage source AC magnitude (paired with the DC `value` slot). Other
+        // component types leave these at 0 / "".
+        public final double   acValue;
+        public final String   acValueExpr;
 
         public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB,
                                 double value, String sourceType, double frequency) {
@@ -1150,6 +1154,18 @@ public class NetlistBuilder {
                                 double nfParam, int componentNumber, int[] subcircuitNodes,
                                 String valueExpr,
                                 String wExpr, String lExpr, String multExpr, String nfExpr) {
+            this(block, pos, nodeA, nodeB, nodeC, nodeD, value, sourceType, frequency,
+                    modelName, wParam, lParam, multParam, nfParam, componentNumber,
+                    subcircuitNodes, valueExpr, wExpr, lExpr, multExpr, nfExpr, 0.0, "");
+        }
+
+        public CircuitComponent(Block block, BlockPos pos, int nodeA, int nodeB, int nodeC, int nodeD,
+                                double value, String sourceType, double frequency,
+                                String modelName, double wParam, double lParam, double multParam,
+                                double nfParam, int componentNumber, int[] subcircuitNodes,
+                                String valueExpr,
+                                String wExpr, String lExpr, String multExpr, String nfExpr,
+                                double acValue, String acValueExpr) {
             this.block           = block;
             this.pos             = pos;
             this.nodeA           = nodeA;
@@ -1171,6 +1187,8 @@ public class NetlistBuilder {
             this.lExpr           = lExpr     == null ? "" : lExpr;
             this.multExpr        = multExpr  == null ? "" : multExpr;
             this.nfExpr          = nfExpr    == null ? "" : nfExpr;
+            this.acValue         = acValue;
+            this.acValueExpr     = acValueExpr == null ? "" : acValueExpr;
         }
 
         /** Convenience constructor for subcircuit-instance components (X-prefix). */
@@ -1187,14 +1205,15 @@ public class NetlistBuilder {
                     newValue, sourceType, frequency,
                     modelName, wParam, lParam, multParam, nfParam,
                     componentNumber, subcircuitNodes, "",
-                    wExpr, lExpr, multExpr, nfExpr);
+                    wExpr, lExpr, multExpr, nfExpr,
+                    acValue, acValueExpr);
         }
 
         /** True if any expression slot references {@code varName}. */
         public boolean referencesVariable(String varName) {
             return varName.equals(valueExpr) || varName.equals(wExpr)
                     || varName.equals(lExpr) || varName.equals(multExpr)
-                    || varName.equals(nfExpr);
+                    || varName.equals(nfExpr) || varName.equals(acValueExpr);
         }
 
         /**
@@ -1204,27 +1223,30 @@ public class NetlistBuilder {
          * substitutions can compose).
          */
         public CircuitComponent substituteVariable(String varName, double newVal) {
-            double v = value, w = wParam, l = lParam, m = multParam, n = nfParam;
-            String ve = valueExpr, we = wExpr, le = lExpr, me = multExpr, ne = nfExpr;
-            if (varName.equals(valueExpr)) { v = newVal; ve = ""; }
-            if (varName.equals(wExpr))     { w = newVal; we = ""; }
-            if (varName.equals(lExpr))     { l = newVal; le = ""; }
-            if (varName.equals(multExpr))  { m = newVal; me = ""; }
-            if (varName.equals(nfExpr))    { n = newVal; ne = ""; }
+            double v = value, w = wParam, l = lParam, m = multParam, n = nfParam, ac = acValue;
+            String ve = valueExpr, we = wExpr, le = lExpr, me = multExpr, ne = nfExpr, ace = acValueExpr;
+            if (varName.equals(valueExpr))   { v  = newVal; ve  = ""; }
+            if (varName.equals(wExpr))       { w  = newVal; we  = ""; }
+            if (varName.equals(lExpr))       { l  = newVal; le  = ""; }
+            if (varName.equals(multExpr))    { m  = newVal; me  = ""; }
+            if (varName.equals(nfExpr))      { n  = newVal; ne  = ""; }
+            if (varName.equals(acValueExpr)) { ac = newVal; ace = ""; }
             return new CircuitComponent(block, pos, nodeA, nodeB, nodeC, nodeD,
                     v, sourceType, frequency,
                     modelName, w, l, m, n,
                     componentNumber, subcircuitNodes, ve,
-                    we, le, me, ne);
+                    we, le, me, ne,
+                    ac, ace);
         }
 
         /** Which slot of this component references {@code varName}, or null. */
         public String slotFor(String varName) {
-            if (varName.equals(valueExpr)) return "value";
-            if (varName.equals(wExpr))     return "W";
-            if (varName.equals(lExpr))     return "L";
-            if (varName.equals(multExpr))  return "mult";
-            if (varName.equals(nfExpr))    return "nf";
+            if (varName.equals(valueExpr))   return "value";
+            if (varName.equals(wExpr))       return "W";
+            if (varName.equals(lExpr))       return "L";
+            if (varName.equals(multExpr))    return "mult";
+            if (varName.equals(nfExpr))      return "nf";
+            if (varName.equals(acValueExpr)) return "acValue";
             return null;
         }
     }

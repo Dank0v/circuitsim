@@ -42,6 +42,10 @@ public class ComponentUpdatePacket {
     private final String   lExpr;
     private final String   multExpr;
     private final String   nfExpr;
+    // Voltage source AC magnitude (and its optional Parametric variable name).
+    // Other component types ignore these — the editor sends 0 / "" for them.
+    private final double   acValue;
+    private final String   acValueExpr;
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label) {
@@ -107,6 +111,19 @@ public class ComponentUpdatePacket {
                                   double pulseVLow, double pulseTr, double pulseTf, double pulsePw,
                                   String valueExpr,
                                   String wExpr, String lExpr, String multExpr, String nfExpr) {
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam,
+                nfParam, pdkName, componentNumber, mirrored, pulseVLow, pulseTr, pulseTf, pulsePw,
+                valueExpr, wExpr, lExpr, multExpr, nfExpr, 0.0, "");
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  double nfParam, String pdkName, int componentNumber, boolean mirrored,
+                                  double pulseVLow, double pulseTr, double pulseTf, double pulsePw,
+                                  String valueExpr,
+                                  String wExpr, String lExpr, String multExpr, String nfExpr,
+                                  double acValue, String acValueExpr) {
         this.pos             = pos;
         this.value           = value;
         this.sourceType      = sourceType;
@@ -129,6 +146,8 @@ public class ComponentUpdatePacket {
         this.lExpr           = lExpr     == null ? "" : lExpr;
         this.multExpr        = multExpr  == null ? "" : multExpr;
         this.nfExpr          = nfExpr    == null ? "" : nfExpr;
+        this.acValue         = acValue;
+        this.acValueExpr     = acValueExpr == null ? "" : acValueExpr;
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
@@ -154,6 +173,8 @@ public class ComponentUpdatePacket {
         this.lExpr           = buf.readUtf(64);
         this.multExpr        = buf.readUtf(64);
         this.nfExpr          = buf.readUtf(64);
+        this.acValue         = buf.readDouble();
+        this.acValueExpr     = buf.readUtf(64);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -179,6 +200,8 @@ public class ComponentUpdatePacket {
         buf.writeUtf(lExpr     == null ? "" : lExpr,     64);
         buf.writeUtf(multExpr  == null ? "" : multExpr,  64);
         buf.writeUtf(nfExpr    == null ? "" : nfExpr,    64);
+        buf.writeDouble(acValue);
+        buf.writeUtf(acValueExpr == null ? "" : acValueExpr, 64);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -212,6 +235,8 @@ public class ComponentUpdatePacket {
             cbe.setLExpr(lExpr);
             cbe.setMultExpr(multExpr);
             cbe.setNfExpr(nfExpr);
+            cbe.setAcValue(acValue);
+            cbe.setAcValueExpr(acValueExpr);
             cbe.setChanged();
 
             BlockState curState = level.getBlockState(pos);

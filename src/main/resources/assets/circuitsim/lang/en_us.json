@@ -19,6 +19,8 @@
     "block.circuitsim.ic_nmos4": "IC NMOS4",
     "block.circuitsim.ic_pmos4": "IC PMOS4",
     "block.circuitsim.amplifier": "Amplifier",
+    "block.circuitsim.discrete_nmos": "Discrete NMOS",
+    "block.circuitsim.discrete_pmos": "Discrete PMOS",
     "block.circuitsim.vcvs": "VCVS (E)",
     "block.circuitsim.vccs": "VCCS (G)",
     "block.circuitsim.ccvs": "CCVS (H)",

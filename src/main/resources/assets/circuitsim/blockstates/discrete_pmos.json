@@ -1,0 +1,8 @@
+{
+    "variants": {
+        "facing=north": { "model": "circuitsim:block/discrete_pmos" },
+        "facing=south": { "model": "circuitsim:block/discrete_pmos", "y": 180 },
+        "facing=east":  { "model": "circuitsim:block/discrete_pmos", "y": 90 },
+        "facing=west":  { "model": "circuitsim:block/discrete_pmos", "y": 270 }
+    }
+}

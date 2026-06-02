@@ -412,6 +412,47 @@ public class CircuitExtractor {
                         value, "DC", 0,
                         "", 1.0, 1.0, 1.0, 1.0, compNum, null, valueExpr));
 
+            } else if (block instanceof DiscreteNmosBlock) {
+                // 3-pin discrete NMOS: facing=drain, opposite=source,
+                // counter-clockwise=gate. Clockwise face is insulated.
+                // Emitted as X<n> drain gate source MODEL (pin order matches
+                // typical PSpice .SUBCKT D G S).
+                Direction facing = state.getValue(DiscreteNmosBlock.FACING);
+                int nodeD = resolveNode(pos.relative(facing),                       visited, nodeMap, nextNode);
+                int nodeS = resolveNode(pos.relative(facing.getOpposite()),         visited, nodeMap, nextNode);
+                int nodeG = resolveNode(pos.relative(facing.getCounterClockWise()), visited, nodeMap, nextNode);
+
+                String modelName = "";
+                int    compNum   = 0;
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    modelName = be.getModelName();
+                    compNum   = be.getComponentNumber();
+                }
+
+                components.add(NetlistBuilder.CircuitComponent.subcircuit(
+                        block, pos, new int[]{nodeD, nodeG, nodeS}, modelName, compNum));
+
+            } else if (block instanceof DiscretePmosBlock) {
+                // 3-pin discrete PMOS — pin layout matches the IC PMOS block:
+                // facing=source, opposite=drain, counter-clockwise=gate. The
+                // clockwise face is insulated. Emitted as X<n> drain gate
+                // source MODEL so a single .SUBCKT pin convention (D G S)
+                // works for both discrete NMOS and PMOS.
+                Direction facing = state.getValue(DiscretePmosBlock.FACING);
+                int nodeS = resolveNode(pos.relative(facing),                       visited, nodeMap, nextNode);
+                int nodeD = resolveNode(pos.relative(facing.getOpposite()),         visited, nodeMap, nextNode);
+                int nodeG = resolveNode(pos.relative(facing.getCounterClockWise()), visited, nodeMap, nextNode);
+
+                String modelName = "";
+                int    compNum   = 0;
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    modelName = be.getModelName();
+                    compNum   = be.getComponentNumber();
+                }
+
+                components.add(NetlistBuilder.CircuitComponent.subcircuit(
+                        block, pos, new int[]{nodeD, nodeG, nodeS}, modelName, compNum));
+
             } else if (block instanceof AmplifierBlock) {
                 // Only emit one component per amp — at the anchor cell. Every
                 // other cell is part of the same structure.
@@ -454,6 +495,8 @@ public class CircuitExtractor {
                 // exact slot meanings. For every other component these stay 1.0
                 // and are ignored downstream.
                 double wSlot = 1.0, lSlot = 1.0, multSlot = 1.0, nfSlot = 1.0;
+                double acValueSlot   = 0.0;
+                String acValueExprSlot = "";
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     value      = be.getValue();
@@ -473,12 +516,17 @@ public class CircuitExtractor {
                         lSlot    = be.getPulseTr();
                         multSlot = be.getPulseTf();
                         nfSlot   = be.getPulsePw();
+                    } else if (block instanceof VoltageSourceBlock) {
+                        acValueSlot     = be.getAcValue();
+                        acValueExprSlot = be.getAcValueExpr();
                     }
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, -1, -1, value, sourceType, frequency,
-                        "", wSlot, lSlot, multSlot, nfSlot, compNum, null, valueExpr));
+                        "", wSlot, lSlot, multSlot, nfSlot, compNum, null, valueExpr,
+                        "", "", "", "",
+                        acValueSlot, acValueExprSlot));
             }
         }
 
@@ -680,6 +728,8 @@ public class CircuitExtractor {
                 || block instanceof ParametricBlock
                 || block instanceof CommandsBlock
                 || block instanceof AmplifierBlock
+                || block instanceof DiscreteNmosBlock
+                || block instanceof DiscretePmosBlock
                 || block instanceof Controlled2x3Block
                 || block instanceof CcvsBlock
                 || block instanceof CccsBlock

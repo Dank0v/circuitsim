@@ -104,6 +104,26 @@ public class WireBlock extends Block {
             return outward == dir.getOpposite();
         }
 
+        // Discrete 3-pin NMOS: front (drain), back (source), counter-clockwise (gate).
+        // Clockwise face is insulated.
+        if (neighbor instanceof DiscreteNmosBlock) {
+            Direction facing = neighborState.getValue(DiscreteNmosBlock.FACING);
+            Direction toWire = dir.getOpposite();
+            return facing == toWire
+                    || facing.getOpposite() == toWire
+                    || facing.getCounterClockWise() == toWire;
+        }
+
+        // Discrete 3-pin PMOS: same connectable sides as NMOS — front, back,
+        // and counter-clockwise — only the pin semantics differ.
+        if (neighbor instanceof DiscretePmosBlock) {
+            Direction facing = neighborState.getValue(DiscretePmosBlock.FACING);
+            Direction toWire = dir.getOpposite();
+            return facing == toWire
+                    || facing.getOpposite() == toWire
+                    || facing.getCounterClockWise() == toWire;
+        }
+
         // VCVS / VCCS 2×3 multi-block: same rule as the amplifier.
         if (neighbor instanceof Controlled2x3Block) {
             Controlled2x3Block.CellKind kind = neighborState.getValue(Controlled2x3Block.CELL_KIND);

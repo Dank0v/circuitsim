@@ -681,11 +681,16 @@ public class GraphScreen extends Screen {
         g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
 
         int yTicks = gh < 160 ? 4 : 6;
-        for (int i = 0; i <= yTicks; i++) {
-            double t  = (double) i / yTicks;
+        double yStep = niceTickStep(yMax - yMin, yTicks);
+        // Snap to multiples of yStep so labels land on round numbers (e.g. 0,
+        // 1, 2, ...) instead of whatever value falls at each evenly-spaced
+        // position. The tiny epsilon protects the final tick from floating-
+        // point drift dropping it below xMax.
+        double yFirst = Math.ceil(yMin / yStep) * yStep;
+        for (double yVal = yFirst; yVal <= yMax + yStep * 1e-9; yVal += yStep) {
+            double t  = (yVal - yMin) / (yMax - yMin);
             int    py = gy + (int)((1.0 - t) * gh);
             g.fill(gx, py, gx + gw, py + 1, C_GRID);
-            double yVal = yMin + (yMax - yMin) * t;
             String yLbl = fmtAxis(yVal);
             g.drawString(font, yLbl, gx - font.width(yLbl) - 3, py - 4, C_LABEL);
         }
@@ -791,15 +796,35 @@ public class GraphScreen extends Screen {
     private void drawLinearXTicks(GuiGraphics g, int gx, int gy, int gw, int gh,
                                    double xMin, double xMax, boolean labels) {
         final int X_TICKS = 6;
-        for (int i = 0; i <= X_TICKS; i++) {
-            double t     = (double) i / X_TICKS;
-            double xReal = xMin + (xMax - xMin) * t;
-            int    px    = gx + (int)(t * gw);
+        double step = niceTickStep(xMax - xMin, X_TICKS);
+        double first = Math.ceil(xMin / step) * step;
+        for (double xReal = first; xReal <= xMax + step * 1e-9; xReal += step) {
+            double t  = (xReal - xMin) / (xMax - xMin);
+            int    px = gx + (int)(t * gw);
             g.fill(px, gy, px + 1, gy + gh, C_GRID);
             if (!labels) continue;
-            String xLbl  = fmtAxis(xReal);
+            String xLbl = fmtAxis(xReal);
             g.drawString(font, xLbl, px - font.width(xLbl) / 2, gy + gh + 1, C_LABEL);
         }
+    }
+
+    /**
+     * Picks a "nice" tick spacing for a linear axis: snaps the raw
+     * range/targetCount step to the nearest 1, 2, or 5 × 10^k so labels land
+     * on round numbers (0, 500, 1k, 1.5k, ...) instead of whatever value
+     * happens to fall at evenly-divided positions.
+     */
+    private static double niceTickStep(double range, int targetCount) {
+        if (!(range > 0) || targetCount < 1) return 1.0;
+        double rawStep = range / targetCount;
+        double exp     = Math.pow(10, Math.floor(Math.log10(rawStep)));
+        double frac    = rawStep / exp;
+        double niceFrac;
+        if (frac < 1.5)     niceFrac = 1;
+        else if (frac < 3)  niceFrac = 2;
+        else if (frac < 7)  niceFrac = 5;
+        else                niceFrac = 10;
+        return niceFrac * exp;
     }
 
     private void drawLogXTicks(GuiGraphics g, int gx, int gy, int gw, int gh,

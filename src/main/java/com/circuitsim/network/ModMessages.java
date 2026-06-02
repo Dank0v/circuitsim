@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "7";   // bumped for ControlledSourceUpdatePacket
+    private static final String PROTOCOL_VERSION = "9";   // bumped for DiscretePmosUpdatePacket
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -48,6 +48,18 @@ public class ModMessages {
                 .encoder(AmplifierUpdatePacket::encode)
                 .decoder(AmplifierUpdatePacket::decode)
                 .consumerMainThread(ModMessages::handleAmplifierUpdate)
+                .add();
+
+        INSTANCE.messageBuilder(DiscreteNmosUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(DiscreteNmosUpdatePacket::encode)
+                .decoder(DiscreteNmosUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleDiscreteNmosUpdate)
+                .add();
+
+        INSTANCE.messageBuilder(DiscretePmosUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(DiscretePmosUpdatePacket::encode)
+                .decoder(DiscretePmosUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleDiscretePmosUpdate)
                 .add();
 
         INSTANCE.messageBuilder(ControlledSourceUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
@@ -98,6 +110,18 @@ public class ModMessages {
 
     private static void handleAmplifierUpdate(AmplifierUpdatePacket msg,
                                                Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleDiscreteNmosUpdate(DiscreteNmosUpdatePacket msg,
+                                                  Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleDiscretePmosUpdate(DiscretePmosUpdatePacket msg,
+                                                  Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }

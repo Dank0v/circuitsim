@@ -24,6 +24,8 @@ public class ComponentEditScreen
     private EditBox labelField;
     private EditBox frequencyField;
     private EditBox numberField;
+    // Voltage-source-only: AC magnitude (paired with valueField which carries DC).
+    private EditBox acValueField;
     // Pulse-source-only fields. valueField doubles as V1; frequencyField
     // is reused for the pulse period (stored in the BE's frequency slot).
     private EditBox pulseVLowField;
@@ -54,6 +56,8 @@ public class ComponentEditScreen
     private boolean showNf;
     private boolean showMirror;
     private boolean showNumber;
+    /** Voltage source: show the AC magnitude field below the DC value field. */
+    private boolean showAcValue;
     /** True for CCVS/CCCS: show a "Control voltage source (vnam)" text field,
      *  stored in the BE's modelName slot. */
     private boolean showControlSource;
@@ -94,6 +98,8 @@ public class ComponentEditScreen
         String currentSourceType = "DC";
         String currentLabel = "";
         double currentFrequency = 1000.0;
+        double currentAcValue   = 0.0;
+        String currentAcValueExpr = "";
         String currentModelName = "";
         double currentPulseVLow = 0.0;
         double currentPulseTr   = 1e-9;
@@ -131,6 +137,8 @@ public class ComponentEditScreen
             currentLExpr     = cbe.getLExpr();
             currentMultExpr  = cbe.getMultExpr();
             currentNfExpr    = cbe.getNfExpr();
+            currentAcValue     = cbe.getAcValue();
+            currentAcValueExpr = cbe.getAcValueExpr();
             // For pulse sources the period lives in the BE's frequency slot;
             // pre-fill the editor with a sensible default (matches the BE
             // default) if the player just placed the block.
@@ -162,7 +170,10 @@ public class ComponentEditScreen
         boolean isCccs    = "cccs".equals(componentType);
 
         showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap && !isNmos4 && !isPmos4;
-        showSourceType = isVoltSrc;
+        // The DC/AC toggle is gone — voltage_source now exposes DC and AC as
+        // independent value fields. Other sources never used the toggle.
+        showSourceType = false;
+        showAcValue = isVoltSrc;
         // Pulse and sine sources both reuse the BE.frequency slot — sine
         // stores Hz there, pulse stores the period in seconds — but the
         // labelling and surrounding rows are different.
@@ -179,6 +190,7 @@ public class ComponentEditScreen
         int rowCount = 0;
         if (showNumber) rowCount++;
         if (showValue) rowCount++;
+        if (showAcValue) rowCount++;
         if (showSourceType) rowCount++;
         if (showFrequency) rowCount++;
         if (showPulse) rowCount += 5;        // V_2, Period, Time-high, TR, TF (V1 reuses valueField)
@@ -219,6 +231,20 @@ public class ComponentEditScreen
                 cursorY + LABEL_H + GAP,
                 fieldW,
                 initial,
+                32
+            );
+            cursorY += ROW_H;
+        }
+
+        if (showAcValue) {
+            String acInitial = !currentAcValueExpr.isEmpty()
+                ? currentAcValueExpr
+                : formatValue(currentAcValue);
+            acValueField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                acInitial,
                 32
             );
             cursorY += ROW_H;
@@ -527,6 +553,16 @@ public class ComponentEditScreen
             );
             cursorY += ROW_H;
         }
+        if (showAcValue) {
+            g.drawString(
+                Minecraft.getInstance().font,
+                "AC Value (V):",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+        }
         if (showSourceType) {
             g.drawString(
                 Minecraft.getInstance().font,
@@ -801,6 +837,18 @@ public class ComponentEditScreen
                 }
             }
         }
+        double acValue = 0.0;
+        String acValueExpr = "";
+        if (acValueField != null) {
+            String raw = acValueField.getValue().trim();
+            if (!raw.isEmpty()) {
+                try {
+                    acValue = parseSI(raw);
+                } catch (NumberFormatException nfe) {
+                    if (isIdentifier(raw)) acValueExpr = raw;
+                }
+            }
+        }
         double freq = 0.0;
         if (frequencyField != null) {
             try {
@@ -892,7 +940,9 @@ public class ComponentEditScreen
                 wExpr,
                 lExpr,
                 multExpr,
-                nfExpr
+                nfExpr,
+                acValue,
+                acValueExpr
             )
         );
     }
@@ -945,7 +995,7 @@ public class ComponentEditScreen
             case "resistor" -> "Resistance (\u03A9)";
             case "capacitor" -> "Capacitance (F)";
             case "inductor" -> "Inductance (H)";
-            case "voltage_source" -> "Voltage (V)";
+            case "voltage_source" -> "DC Value (V)";
             case "voltage_source_sin" -> "Amplitude (V)";
             case "voltage_source_pulse" -> "V1 (V)";
             case "current_source" -> "Current (A)";

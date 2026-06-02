@@ -1,0 +1,12 @@
+{
+    "parent": "minecraft:block/cube",
+    "textures": {
+        "particle": "circuitsim:block/discrete_pmos_gate",
+        "up":    "circuitsim:block/discrete_pmos_top",
+        "down":  "circuitsim:block/discrete_pmos_top",
+        "north": "circuitsim:block/discrete_pmos_source",
+        "south": "circuitsim:block/discrete_pmos_drain",
+        "west":  "circuitsim:block/discrete_pmos_gate",
+        "east":  "circuitsim:block/discrete_pmos_side"
+    }
+}

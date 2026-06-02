@@ -96,6 +96,14 @@ public class ModBlocks {
             () -> new AmplifierBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.METAL).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> DISCRETE_NMOS = BLOCKS.register("discrete_nmos",
+            () -> new DiscreteNmosBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_GREEN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> DISCRETE_PMOS = BLOCKS.register("discrete_pmos",
+            () -> new DiscretePmosBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_RED).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static final RegistryObject<Block> CCVS = BLOCKS.register("ccvs",
             () -> new CcvsBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_YELLOW).strength(2.0f).pushReaction(PushReaction.BLOCK)));

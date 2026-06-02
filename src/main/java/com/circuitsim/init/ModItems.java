@@ -34,6 +34,8 @@ public class ModItems {
     public static final RegistryObject<Item> IC_NMOS4             = blockItem(ModBlocks.IC_NMOS4);
     public static final RegistryObject<Item> IC_PMOS4             = blockItem(ModBlocks.IC_PMOS4);
     public static final RegistryObject<Item> AMPLIFIER             = blockItem(ModBlocks.AMPLIFIER);
+    public static final RegistryObject<Item> DISCRETE_NMOS          = blockItem(ModBlocks.DISCRETE_NMOS);
+    public static final RegistryObject<Item> DISCRETE_PMOS          = blockItem(ModBlocks.DISCRETE_PMOS);
     public static final RegistryObject<Item> CCVS                  = blockItem(ModBlocks.CCVS);
     public static final RegistryObject<Item> CCCS                  = blockItem(ModBlocks.CCCS);
     public static final RegistryObject<Item> VCVS                  = blockItem(ModBlocks.VCVS);

@@ -145,9 +145,15 @@ public class ComponentBlockEntityRenderer
         } else if (block == ModBlocks.INDUCTOR.get()) {
             lines.add(formatScalarOrVar(val, valExpr, "H"));
         } else if (block == ModBlocks.VOLTAGE_SOURCE.get()) {
-            lines.add(formatScalarOrVar(val, valExpr, "V"));
-            String st = be.getSourceType();
-            lines.add((st == null || st.isEmpty()) ? "DC" : st);
+            // Two-row label: DC bias on top, AC magnitude underneath. The AC
+            // row is suppressed when the user has not set an AC component, so
+            // a pure DC source looks the same as before the rework.
+            double  ac     = be.getAcValue();
+            String  acExpr = be.getAcValueExpr();
+            lines.add("DC: " + formatVoltage(val, valExpr));
+            if (!acExpr.isEmpty() || ac != 0.0) {
+                lines.add("AC: " + formatVoltage(ac, acExpr));
+            }
         } else if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) {
             lines.add(formatScalarOrVar(val, valExpr, "V"));
             lines.add(ComponentEditScreen.formatValue(be.getFrequency()) + "Hz");
@@ -214,6 +220,12 @@ public class ComponentBlockEntityRenderer
             // Amp BE only exists on the anchor cell; show the subcircuit model name.
             String model = be.getLabel();
             lines.add((model == null || model.isEmpty()) ? "Amplifier" : model);
+        } else if (block == ModBlocks.DISCRETE_NMOS.get()) {
+            String model = be.getModelName();
+            lines.add((model == null || model.isEmpty()) ? "NMOS" : model);
+        } else if (block == ModBlocks.DISCRETE_PMOS.get()) {
+            String model = be.getModelName();
+            lines.add((model == null || model.isEmpty()) ? "PMOS" : model);
         } else if (block == ModBlocks.IC_NMOS4.get() || block == ModBlocks.IC_PMOS4.get()) {
             boolean isNmos     = block == ModBlocks.IC_NMOS4.get();
             String defaultModel = isNmos ? "nfet_01v8" : "pfet_01v8";
@@ -246,5 +258,15 @@ public class ComponentBlockEntityRenderer
         if (expr != null && !expr.isEmpty()) return expr + unit;
         if (val == 0.0) return "?" + unit;
         return ComponentEditScreen.formatValue(val) + unit;
+    }
+
+    /**
+     * Voltage-source variant: 0 is a valid value (not "unset"). Used for the
+     * dedicated DC/AC rows so an explicit 0 in either field renders as "0V"
+     * instead of the placeholder "?V".
+     */
+    private static String formatVoltage(double val, String expr) {
+        if (expr != null && !expr.isEmpty()) return expr + "V";
+        return ComponentEditScreen.formatValue(val) + "V";
     }
 }
