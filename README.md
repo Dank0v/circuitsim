@@ -103,6 +103,23 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
 - **Voltage Probe** — place adjacent to a wire node. Right-click to give it a label. The simulation will report the voltage at that node.
 - **Current Probe** — place in series (between two wires) to measure current through that branch.
 ---
+
+## Example World
+
+The repository ships with a ready-to-play save in [`example_world/`](example_world) containing a set of **pre-built example circuits**. It's the quickest way to see the mod in action — walk up to a circuit, run its **Simulate Block**, and inspect a working setup instead of wiring everything from scratch. The examples range from simple passive circuits to ones that use the controlled sources, the **Amplifier** block, and the IC/PDK components.
+
+### Loading it
+1. Make sure the mod and [ngspice](https://ngspice.sourceforge.io/) are installed (see [Installation](#installation)).
+2. Copy the **`Zaza The Creator`** folder from `example_world/` into your Minecraft `saves/` directory:
+   - **Windows:** `%appdata%\.minecraft\saves\`
+   - **Linux:** `~/.minecraft/saves/`
+   - **macOS:** `~/Library/Application Support/minecraft/saves/`
+3. Launch the game and open the **Zaza The Creator** world from the singleplayer list.
+4. Walk up to a circuit, right-click its **Simulate Block**, and read the results in chat (or open the **Graph screen** for AC/TRAN sweeps).
+
+> **Note:** Some examples use a PDK or external SPICE library and reference `.lib` files by **absolute path**. Those paths point at the machine the world was built on, so for those circuits you'll need to open the relevant component (or the **Simulate Block**'s `.lib` field) and update the path to match your own ngspice/PDK install before they will simulate.
+
+---
  
 ## Known Issues / TODO
  

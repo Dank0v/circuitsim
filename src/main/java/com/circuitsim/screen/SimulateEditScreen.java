@@ -62,7 +62,20 @@ public class SimulateEditScreen extends Screen {
     private EditBox dcSrc2Field, dcStart2Field, dcStop2Field, dcStep2Field;
 
     private static final int W = 290,
-        H = 408;
+        H = 358;
+
+    // Analysis types live in an array so the selector scales: add an entry
+    // here (plus a description and a refreshFields()/setAnalysis() branch) and
+    // it shows up as another tab — no layout/height changes required.
+    private static final String[] ANALYSES = {"OP", "DC", "AC", "TRAN"};
+    private static final String[] ANALYSIS_DESC = {
+        ".OP — DC operating point",
+        ".DC — DC sweep",
+        ".AC — frequency sweep",
+        ".TRAN — transient analysis",
+    };
+    // Tab-strip geometry (constant height regardless of analysis count).
+    private static final int TAB_W = 60, TAB_GAP = 6, TAB_H = 16;
 
     private static final int BG = 0xFF1E1E1E;
     private static final int BORDER = 0xFF4A90D9;
@@ -74,40 +87,41 @@ public class SimulateEditScreen extends Screen {
 
     // --- Y-axis layout constants (offsets from py) ---
     // Title (7) ─ divider (22)
-    // Analysis section
+    // Analysis section: a label, a single-row tab strip, and a one-line
+    // description of the active analysis. Because the tabs are a horizontal
+    // strip rather than a stack of radios, adding an analysis costs zero
+    // vertical space — the section height is fixed no matter how many exist.
     private static final int Y_ANALYSIS_LABEL = 29;
-    private static final int Y_ANALYSIS_OP    = 43;
-    private static final int Y_ANALYSIS_DC    = 63;
-    private static final int Y_ANALYSIS_AC    = 83;
-    private static final int Y_ANALYSIS_TRAN  = 103;
-    private static final int Y_DIV_AFTER_ANALYSIS = 122;
+    private static final int Y_TABS           = 42;   // tab strip (TAB_H tall)
+    private static final int Y_ANALYSIS_DESC  = 61;   // description of selected
+    private static final int Y_DIV_AFTER_ANALYSIS = 72;
     // Analysis-specific params occupy a single shared region between the
-    // analysis radios and the temperature row. The DC sub-panel and the
+    // analysis tabs and the temperature row. The DC sub-panel and the
     // AC/TRAN param rows share these Y offsets — `refreshFields()` toggles
     // widget visibility so only one set shows at a time, keeping the dialog
     // at a fixed height regardless of which analysis is selected.
-    private static final int Y_PARAM1     = 128;
-    private static final int Y_PARAM2     = 151;
-    private static final int Y_PARAM3     = 174;
+    private static final int Y_PARAM1     = 78;
+    private static final int Y_PARAM2     = 101;
+    private static final int Y_PARAM3     = 124;
     // DC sub-panel rows. Row 1 is offset down from Y_PARAM1 to leave room
     // for the "Src / Start / Stop / Step" column-header strip above it
-    // (without clipping into the analysis-radio area above the divider).
-    private static final int Y_DC_ROW1     = 138;
-    private static final int Y_DC_2DTOGGLE = 158;
-    private static final int Y_DC_ROW2     = 175;
-    private static final int Y_PARAM_TEMP = 197;       // temperature override (single value or sweep spec)
-    private static final int Y_DIV_AFTER_PARAMS = 217;
+    // (without clipping into the analysis-tab area above the divider).
+    private static final int Y_DC_ROW1     = 88;
+    private static final int Y_DC_2DTOGGLE = 108;
+    private static final int Y_DC_ROW2     = 125;
+    private static final int Y_PARAM_TEMP = 147;       // temperature override (single value or sweep spec)
+    private static final int Y_DIV_AFTER_PARAMS = 167;
     // Compat section
-    private static final int Y_COMPAT_LABEL = 224;
-    private static final int Y_COMPAT_CHIPS = 238;
-    private static final int Y_DIV_AFTER_COMPAT = 261;
+    private static final int Y_COMPAT_LABEL = 174;
+    private static final int Y_COMPAT_CHIPS = 188;
+    private static final int Y_DIV_AFTER_COMPAT = 211;
     // PDK/lib section (depends on mode)
-    private static final int Y_PDK_LABEL  = 268;
-    private static final int Y_PDK_CHIPS  = 282;
-    private static final int Y_LIB_LABEL  = 300;
-    private static final int Y_LIB_FIELD  = 313;
+    private static final int Y_PDK_LABEL  = 218;
+    private static final int Y_PDK_CHIPS  = 232;
+    private static final int Y_LIB_LABEL  = 250;
+    private static final int Y_LIB_FIELD  = 263;
     // psa multi-line field spans the entire mode-dependent slot:
-    private static final int Y_PSA_FIELD       = 282;
+    private static final int Y_PSA_FIELD       = 232;
     private static final int H_PSA_FIELD       = 58;
 
     public SimulateEditScreen(BlockPos pos) {
@@ -381,22 +395,12 @@ public class SimulateEditScreen extends Screen {
     public boolean mouseClicked(double mx, double my, int btn) {
         int px = (width - W) / 2,
             py = (height - H) / 2;
-        // Analysis type rows
-        if (hit(mx, my, px + 14, py + Y_ANALYSIS_OP,   W - 20, 16)) {
-            setAnalysis("OP");
-            return true;
-        }
-        if (hit(mx, my, px + 14, py + Y_ANALYSIS_DC,   W - 20, 16)) {
-            setAnalysis("DC");
-            return true;
-        }
-        if (hit(mx, my, px + 14, py + Y_ANALYSIS_AC,   W - 20, 16)) {
-            setAnalysis("AC");
-            return true;
-        }
-        if (hit(mx, my, px + 14, py + Y_ANALYSIS_TRAN, W - 20, 16)) {
-            setAnalysis("TRAN");
-            return true;
+        // Analysis type tab strip
+        for (int i = 0; i < ANALYSES.length; i++) {
+            if (hit(mx, my, tabX(px, i), py + Y_TABS, TAB_W, TAB_H)) {
+                setAnalysis(ANALYSES[i]);
+                return true;
+            }
         }
         // 2D-sweep checkbox in the DC sub-panel.
         if ("DC".equals(analysis)) {
@@ -446,6 +450,22 @@ public class SimulateEditScreen extends Screen {
         return mx >= x && mx <= x + w && my >= y && my <= y + h;
     }
 
+    /** Left edge of analysis tab {@code i}; the strip is centred in the panel. */
+    private static int tabX(int px, int i) {
+        int n = ANALYSES.length;
+        int totalW = n * TAB_W + (n - 1) * TAB_GAP;
+        int startX = px + (W - totalW) / 2;
+        return startX + i * (TAB_W + TAB_GAP);
+    }
+
+    /** Index of the active analysis in {@link #ANALYSES}, or -1 if unknown. */
+    private int analysisIndex() {
+        for (int i = 0; i < ANALYSES.length; i++) {
+            if (ANALYSES[i].equals(analysis)) return i;
+        }
+        return -1;
+    }
+
     private void drawBackground(GuiGraphics g) {
         int px = (width - W) / 2,
             py = (height - H) / 2;
@@ -470,22 +490,26 @@ public class SimulateEditScreen extends Screen {
         g.drawCenteredString(f, "Circuit Analysis", width / 2, py + 7, TITLE);
         g.drawString(f, "Analysis Type:", px + 14, py + Y_ANALYSIS_LABEL, LABEL);
 
-        boolean op   = "OP".equals(analysis);
         boolean dc   = "DC".equals(analysis);
         boolean ac   = "AC".equals(analysis);
         boolean tran = "TRAN".equals(analysis);
 
-        radio(g, px + 16, py + Y_ANALYSIS_OP + 2, op);
-        g.drawString(f, ".OP   - DC Operating Point", px + 30, py + Y_ANALYSIS_OP + 1, op ? SEL : DIM);
-
-        radio(g, px + 16, py + Y_ANALYSIS_DC + 2, dc);
-        g.drawString(f, ".DC   - DC Sweep", px + 30, py + Y_ANALYSIS_DC + 1, dc ? SEL : DIM);
-
-        radio(g, px + 16, py + Y_ANALYSIS_AC + 2, ac);
-        g.drawString(f, ".AC   - Frequency Sweep", px + 30, py + Y_ANALYSIS_AC + 1, ac ? SEL : DIM);
-
-        radio(g, px + 16, py + Y_ANALYSIS_TRAN + 2, tran);
-        g.drawString(f, ".TRAN - Transient Analysis", px + 30, py + Y_ANALYSIS_TRAN + 1, tran ? SEL : DIM);
+        // Analysis-type tab strip — one row, constant height however many
+        // analyses exist (see ANALYSES). Selected tab is highlighted like the
+        // compat chips below; a one-line description of the active analysis
+        // keeps the discoverability the old long radio labels provided.
+        for (int i = 0; i < ANALYSES.length; i++) {
+            int tx = tabX(px, i);
+            int ty = py + Y_TABS;
+            boolean sel = ANALYSES[i].equals(analysis);
+            g.fill(tx, ty, tx + TAB_W, ty + TAB_H, sel ? 0xFF1A4A6A : 0xFF333333);
+            g.fill(tx + 1, ty + 1, tx + TAB_W - 1, ty + TAB_H - 1, sel ? 0xFF2A6A9A : 0xFF444444);
+            g.drawCenteredString(f, ANALYSES[i], tx + TAB_W / 2, ty + 4, sel ? SEL : DIM);
+        }
+        int ai = analysisIndex();
+        if (ai >= 0) {
+            g.drawCenteredString(f, ANALYSIS_DESC[ai], width / 2, py + Y_ANALYSIS_DESC, DIM);
+        }
 
         // DC sub-panel — labels and column headers (rendered only when DC).
         if (dc) {
@@ -558,12 +582,6 @@ public class SimulateEditScreen extends Screen {
             boolean hasPdk = !"none".equals(pdkName);
             g.drawString(f, ".lib path:", px + 16, py + Y_LIB_LABEL, hasPdk ? LABEL : DIM);
         }
-    }
-
-    private void radio(GuiGraphics g, int x, int y, boolean sel) {
-        g.fill(x, y, x + 10, y + 10, 0xFF888888);
-        g.fill(x + 1, y + 1, x + 9, y + 9, BG);
-        if (sel) g.fill(x + 3, y + 3, x + 7, y + 7, SEL);
     }
 
     private void checkbox(GuiGraphics g, int x, int y, boolean sel) {
