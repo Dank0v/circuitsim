@@ -168,7 +168,8 @@ public class ComponentBlockEntityRenderer
             String lbl = be.getProbeLabel();
             lines.add((lbl == null || lbl.isEmpty()) ? "I Probe" : lbl);
         } else if (block == ModBlocks.DIODE.get()) {
-            lines.add("Diode");
+            String model = be.getModelName();
+            lines.add((model == null || model.isEmpty()) ? "Diode" : model);
         } else if (block == ModBlocks.PARAMETRIC.get()) {
             String sweep = be.getLabel();
             lines.add((sweep == null || sweep.isEmpty()) ? "Param: ?" : "Param: " + sweep);

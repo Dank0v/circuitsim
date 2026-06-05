@@ -235,8 +235,15 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CurrentSourceBlock) {
                 line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof DiodeBlock) {
-                line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
-                hasDiode = true;
+                // No user model → fall back to the built-in DMOD (.MODEL D)
+                // emitted below. A user-typed model name is assumed to be
+                // provided by an included library (.lib / .INCLUDE).
+                String dmodel = (comp.modelName == null || comp.modelName.isBlank())
+                        ? "DMOD" : comp.modelName.trim();
+                line = String.format("D%d %s %s %s",
+                        dIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
+                if ("DMOD".equals(dmodel)) hasDiode = true;
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -398,8 +405,15 @@ public class NetlistBuilder {
                             iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
                 }
             } else if (comp.block instanceof DiodeBlock) {
-                line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
-                hasDiode = true;
+                // No user model → fall back to the built-in DMOD (.MODEL D)
+                // emitted below. A user-typed model name is assumed to be
+                // provided by an included library (.lib / .INCLUDE).
+                String dmodel = (comp.modelName == null || comp.modelName.isBlank())
+                        ? "DMOD" : comp.modelName.trim();
+                line = String.format("D%d %s %s %s",
+                        dIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
+                if ("DMOD".equals(dmodel)) hasDiode = true;
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -532,8 +546,15 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CurrentSourceBlock) {
                 line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof DiodeBlock) {
-                line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
-                hasDiode = true;
+                // No user model → fall back to the built-in DMOD (.MODEL D)
+                // emitted below. A user-typed model name is assumed to be
+                // provided by an included library (.lib / .INCLUDE).
+                String dmodel = (comp.modelName == null || comp.modelName.isBlank())
+                        ? "DMOD" : comp.modelName.trim();
+                line = String.format("D%d %s %s %s",
+                        dIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
+                if ("DMOD".equals(dmodel)) hasDiode = true;
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -690,8 +711,15 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CurrentSourceBlock) {
                 line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof DiodeBlock) {
-                line = String.format("D%d %s %s DMOD", dIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
-                hasDiode = true;
+                // No user model → fall back to the built-in DMOD (.MODEL D)
+                // emitted below. A user-typed model name is assumed to be
+                // provided by an included library (.lib / .INCLUDE).
+                String dmodel = (comp.modelName == null || comp.modelName.isBlank())
+                        ? "DMOD" : comp.modelName.trim();
+                line = String.format("D%d %s %s %s",
+                        dIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
+                if ("DMOD".equals(dmodel)) hasDiode = true;
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;

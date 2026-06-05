@@ -61,6 +61,9 @@ public class ComponentEditScreen
     /** True for CCVS/CCCS: show a "Control voltage source (vnam)" text field,
      *  stored in the BE's modelName slot. */
     private boolean showControlSource;
+    /** True for the diode: show an optional ".MODEL name" text field, stored
+     *  in the BE's modelName slot. Blank = use the built-in basic SPICE diode. */
+    private boolean showDiodeModel;
 
     private static final int LABEL_H = 10;
     private static final int GAP = 4;
@@ -186,6 +189,7 @@ public class ComponentEditScreen
         // Show the netlist-index field for everything that emits a SPICE element line.
         showNumber = !isProbe && !isCurrentProbe;
         showControlSource = isCcvs || isCccs;
+        showDiodeModel = isDiode;
 
         int rowCount = 0;
         if (showNumber) rowCount++;
@@ -197,6 +201,7 @@ public class ComponentEditScreen
         if (showLabel) rowCount++;
         if (showSky130) rowCount += 5 + (showNf ? 1 : 0) + (showMirror ? 1 : 0); // pdk, model, W, L, mult [, NF] [, Mirror]
         if (showControlSource) rowCount++;
+        if (showDiodeModel) rowCount++;
 
         this.imageHeight = 10 + 10 + 10 + (rowCount * ROW_H) + 36;
 
@@ -346,6 +351,22 @@ public class ComponentEditScreen
             modelNameField.setSuggestion(currentModelName.isEmpty() ? "e.g. V1, VSENS" : "");
             modelNameField.setResponder(
                 t -> modelNameField.setSuggestion(t.isEmpty() ? "e.g. V1, VSENS" : "")
+            );
+            cursorY += ROW_H;
+        }
+
+        if (showDiodeModel) {
+            modelNameField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                currentModelName,
+                64
+            );
+            String hint = "blank = basic diode; or e.g. D1N4148_1";
+            modelNameField.setSuggestion(currentModelName.isEmpty() ? hint : "");
+            modelNameField.setResponder(
+                t -> modelNameField.setSuggestion(t.isEmpty() ? hint : "")
             );
             cursorY += ROW_H;
         }
@@ -620,6 +641,16 @@ public class ComponentEditScreen
             );
             cursorY += ROW_H;
         }
+        if (showDiodeModel) {
+            g.drawString(
+                Minecraft.getInstance().font,
+                "Model (blank = basic):",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+        }
         if (showSky130) {
             // PDK row
             g.drawString(Minecraft.getInstance().font, "PDK:", labelX, cursorY, LABEL_COLOR);
@@ -866,7 +897,7 @@ public class ComponentEditScreen
             mult = 1.0,
             nf = 1.0;
         String wExpr = "", lExpr = "", multExpr = "", nfExpr = "";
-        if (showControlSource && modelNameField != null) {
+        if ((showControlSource || showDiodeModel) && modelNameField != null) {
             modelName = modelNameField.getValue().trim();
         }
         if (showSky130) {

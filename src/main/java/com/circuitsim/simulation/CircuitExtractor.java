@@ -243,12 +243,14 @@ public class CircuitExtractor {
                 int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
                 int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
                 int compNum = 0;
+                String diodeModel = "";
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
-                    compNum = be.getComponentNumber();
+                    compNum    = be.getComponentNumber();
+                    diodeModel = be.getModelName();
                 }
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, -1, -1, 0, "DC", 0,
-                        "", 1.0, 1.0, 1.0, 1.0, compNum));
+                        diodeModel, 1.0, 1.0, 1.0, 1.0, compNum));
 
             } else if (block instanceof IcResistorBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
