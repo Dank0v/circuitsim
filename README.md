@@ -1,12 +1,15 @@
 # CircuitSim — A Minecraft Circuit Simulation Mod
- 
-![CircuitSim Preview](images/preview.png)
-
 
 > **This mod was built entirely with AI assistance.**
- 
+
 CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build and simulate real electronic circuits inside the game. Place component blocks in the world, connect them with wires, and right-click the **Simulate Block** to run a full SPICE simulation powered by [ngspice](https://ngspice.sourceforge.io/).
- 
+
+![Non-inverting amplifier](gifs/non_inverting.gif)
+
+![Miller amplifier](gifs/miller_amp.gif)
+
+![MOSFET output characteristics](gifs/mosfet_output_char.gif)
+
 ---
  
 ## Features
