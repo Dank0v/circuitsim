@@ -37,6 +37,8 @@ public class ModBlockEntities {
                             ModBlocks.AMPLIFIER.get(),
                             ModBlocks.DISCRETE_NMOS.get(),
                             ModBlocks.DISCRETE_PMOS.get(),
+                            ModBlocks.DISCRETE_NPN.get(),
+                            ModBlocks.DISCRETE_PNP.get(),
                             ModBlocks.CCVS.get(),
                             ModBlocks.CCCS.get(),
                             ModBlocks.VCVS.get(),

@@ -19,6 +19,10 @@ public class ComponentBlockEntity extends BlockEntity {
     private String sourceType = "DC";
     private double frequency = 60.0;
     private String label = "";
+    // Probe "name only" mode: when true the probe names (and can merge) its net
+    // but is excluded from simulation print/plot. Only meaningful for voltage
+    // probes; ignored by every other component type.
+    private boolean probeNoPlot = false;
     private int    componentNumber = 0;   // 0 = auto, otherwise R<N>/C<N>/etc. in netlist
     // When non-empty, the component's "value" is sourced at simulation time
     // from a Parametric block defining this variable name. Empty means use
@@ -117,6 +121,9 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.COMMANDS.get())             return "commands";
         if (block == ModBlocks.AMPLIFIER.get())            return "amplifier";
         if (block == ModBlocks.DISCRETE_NMOS.get())        return "discrete_nmos";
+        if (block == ModBlocks.DISCRETE_PMOS.get())        return "discrete_pmos";
+        if (block == ModBlocks.DISCRETE_NPN.get())         return "discrete_npn";
+        if (block == ModBlocks.DISCRETE_PNP.get())         return "discrete_pnp";
         if (block == ModBlocks.CCVS.get())                 return "ccvs";
         if (block == ModBlocks.CCCS.get())                 return "cccs";
         if (block == ModBlocks.VCVS.get())                 return "vcvs";
@@ -134,6 +141,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setLabel(String label)   { this.label = label; setChanged(); }
     public String getProbeLabel()        { return label; }
     public void setProbeLabel(String l)  { this.label = l; setChanged(); }
+    public boolean isProbeNoPlot()       { return probeNoPlot; }
+    public void setProbeNoPlot(boolean b){ this.probeNoPlot = b; setChanged(); }
     public int getComponentNumber()        { return componentNumber; }
     public void setComponentNumber(int n)  { this.componentNumber = Math.max(0, n); setChanged(); }
     public String getValueExpr()           { return valueExpr == null ? "" : valueExpr; }
@@ -218,6 +227,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("sourceType", sourceType);
         tag.putDouble("frequency", frequency);
         tag.putString("label", label);
+        tag.putBoolean("probeNoPlot", probeNoPlot);
         tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
         tag.putDouble("wParam",     wParam);
@@ -264,6 +274,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("sourceType")) sourceType = tag.getString("sourceType");
         if (tag.contains("frequency"))  frequency  = tag.getDouble("frequency");
         if (tag.contains("label"))      label      = tag.getString("label");
+        if (tag.contains("probeNoPlot")) probeNoPlot = tag.getBoolean("probeNoPlot");
         if (tag.contains("componentNumber")) componentNumber = tag.getInt("componentNumber");
         if (tag.contains("modelName"))  modelName  = tag.getString("modelName");
         if (tag.contains("wParam"))     wParam     = tag.getDouble("wParam");
@@ -328,6 +339,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("sourceType", sourceType);
         tag.putDouble("frequency", frequency);
         tag.putString("label", label);
+        tag.putBoolean("probeNoPlot", probeNoPlot);
         tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
         tag.putDouble("wParam",     wParam);

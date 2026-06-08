@@ -21,6 +21,8 @@
     "block.circuitsim.amplifier": "Amplifier",
     "block.circuitsim.discrete_nmos": "Discrete NMOS",
     "block.circuitsim.discrete_pmos": "Discrete PMOS",
+    "block.circuitsim.discrete_npn": "Discrete NPN",
+    "block.circuitsim.discrete_pnp": "Discrete PNP",
     "block.circuitsim.vcvs": "VCVS (E)",
     "block.circuitsim.vccs": "VCCS (G)",
     "block.circuitsim.ccvs": "CCVS (H)",

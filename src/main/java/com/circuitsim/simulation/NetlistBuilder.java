@@ -129,7 +129,12 @@ public class NetlistBuilder {
     private static String formatSubcircuit(int idx, CircuitComponent comp,
                                             java.util.Map<Integer, String> aliases) {
         StringBuilder sb = new StringBuilder();
-        sb.append('X').append(idx);
+        // Discrete BJTs reference a SPICE .model (e.g. from a vendor BIPOLAR.lib)
+        // and so are emitted as native Q devices (Q<n> C B E MODEL), not X
+        // subcircuit instances. Everything else on this path is a real .SUBCKT.
+        boolean isBjt = comp.block instanceof DiscreteNpnBlock
+                || comp.block instanceof DiscretePnpBlock;
+        sb.append(isBjt ? 'Q' : 'X').append(idx);
         for (int n : comp.subcircuitNodes) sb.append(' ').append(nodeRef(n, aliases));
         String model = comp.modelName == null || comp.modelName.isBlank()
                 ? "UNDEFINED_MODEL"
@@ -269,6 +274,7 @@ public class NetlistBuilder {
         appendUserCommands(sb, userCommands);
 
         for (ProbeInfo probe : probes) {
+            if (probe.noPlot) continue;   // name-only probe: alias the net, don't print it
             sb.append(String.format("  print v(%s)\n", probe.netName));
         }
         int vmIdx = 1;
@@ -452,6 +458,7 @@ public class NetlistBuilder {
         if (!probes.isEmpty() || !currentProbes.isEmpty() || hasUserPlots) {
             StringBuilder printLine = new StringBuilder("  print");
             for (ProbeInfo probe : probes) {
+                if (probe.noPlot) continue;   // name-only probe: alias the net, don't print it
                 printLine.append(String.format(" v(%s)", probe.netName));
             }
             int vmIdx2 = 1;
@@ -587,6 +594,7 @@ public class NetlistBuilder {
         if (!probes.isEmpty() || !currentProbes.isEmpty() || hasUserPlots) {
             StringBuilder printLine = new StringBuilder("  print");
             for (ProbeInfo probe : probes) {
+                if (probe.noPlot) continue;   // name-only probe: alias the net, don't print it
                 printLine.append(String.format(" v(%s)", probe.netName));
             }
             int vmIdx2 = 1;
@@ -749,6 +757,7 @@ public class NetlistBuilder {
         if (!probes.isEmpty() || !currentProbes.isEmpty() || hasUserPlots) {
             StringBuilder printLine = new StringBuilder("  print");
             for (ProbeInfo probe : probes) {
+                if (probe.noPlot) continue;   // name-only probe: alias the net, don't print it
                 printLine.append(String.format(" v(%s)", probe.netName));
             }
             int vmIdx = 1;
@@ -1290,15 +1299,29 @@ public class NetlistBuilder {
          * and aliasing is unique, or the stringified integer node id.
          */
         public final String netName;
+        /**
+         * "Name only" mode. When true this probe still contributes its label as
+         * a net alias (so it names — and, when its label is shared with another
+         * probe, merges — the net), but it is excluded from every simulation
+         * print/plot: no {@code print v(...)} line and no result/graph series.
+         * Used to name or bridge a net without cluttering the output with a
+         * value you don't care to read.
+         */
+        public final boolean noPlot;
 
         public ProbeInfo(int node, String label) {
-            this(node, label, Integer.toString(node));
+            this(node, label, Integer.toString(node), false);
         }
 
         public ProbeInfo(int node, String label, String netName) {
+            this(node, label, netName, false);
+        }
+
+        public ProbeInfo(int node, String label, String netName, boolean noPlot) {
             this.node    = node;
             this.label   = label;
             this.netName = netName == null || netName.isEmpty() ? Integer.toString(node) : netName;
+            this.noPlot  = noPlot;
         }
     }
 

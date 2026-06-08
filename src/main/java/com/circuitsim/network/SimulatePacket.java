@@ -420,7 +420,7 @@ public class SimulatePacket {
             msg(player, line, ChatFormatting.AQUA);
             bookLines.add(line);
         }
-        for (NetlistBuilder.ProbeInfo probe : extraction.probes) {
+        for (NetlistBuilder.ProbeInfo probe : plotted(extraction.probes)) {
             String line =
                 "Probe [" +
                 probe.label +
@@ -523,7 +523,7 @@ public class SimulatePacket {
             msg(player, "  f=" + fLbl, ChatFormatting.YELLOW);
             bookLines.add("  f=" + fLbl);
             Map<String, Double> vals = result.acData.get(f);
-            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+            for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                 String key = "v(" + probe.netName + ")_mag";
                 Double mag = vals.get(key);
                 String line =
@@ -567,7 +567,7 @@ public class SimulatePacket {
         Map<String, List<Double>> currentData = new LinkedHashMap<>();
         Map<String, String>       probeUnits  = new LinkedHashMap<>();
 
-        for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+        for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
             List<Double> mags = new ArrayList<>();
             for (double f : freqAxis) {
                 Map<String, Double> vals = result.acData.get(f);
@@ -809,7 +809,7 @@ public class SimulatePacket {
         msg(player, "DC: " + sweepAxis.size() + " sweep points", ChatFormatting.GREEN);
         bookLines.add("Sweep points: " + sweepAxis.size());
 
-        for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+        for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
             List<Double> ys = new ArrayList<>();
             String key = "v(" + probe.netName.toLowerCase() + ")";
             for (double x : sweepAxis) {
@@ -970,7 +970,7 @@ public class SimulatePacket {
             msg(player, "  t=" + tLbl, ChatFormatting.YELLOW);
             bookLines.add("  t=" + tLbl);
             Map<String, Double> vals = result.tranData.get(t);
-            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+            for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                 String key = "v(" + probe.netName + ")";
                 Double v = vals != null ? vals.get(key) : null;
                 String line =
@@ -989,7 +989,7 @@ public class SimulatePacket {
         Map<String, List<Double>> currentData = new LinkedHashMap<>();
         Map<String, String>       probeUnits  = new LinkedHashMap<>();
 
-        for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+        for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
             List<Double> vals = new ArrayList<>();
             for (double t : timeAxis) {
                 Map<String, Double> row = result.tranData.get(t);
@@ -1294,7 +1294,7 @@ public class SimulatePacket {
         // single-temp behaviour.
         for (double T : tempValues) {
             String suffix = tempSuffix(T, multiTemp);
-            for (NetlistBuilder.ProbeInfo p : effectiveProbes)
+            for (NetlistBuilder.ProbeInfo p : plotted(effectiveProbes))
                 voltData.put(p.label + suffix, new ArrayList<>());
             for (NetlistBuilder.CurrentProbeInfo c : cpList)
                 currData.put(c.label + suffix, new ArrayList<>());
@@ -1367,7 +1367,7 @@ public class SimulatePacket {
             for (double T : tempValues) {
                 NgSpiceRunner.Result result = resultsPerTemp.get(T);
                 String suffix = tempSuffix(T, multiTemp);
-                for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                     Double v = result != null ? result.values.get("v(" + probe.netName + ")") : null;
                     voltData.get(probe.label + suffix).add(v != null ? v : 0.0);
                     if (result != null) {
@@ -1538,7 +1538,7 @@ public class SimulatePacket {
                 String stepSuffix =
                     "@" + ComponentEditScreen.formatValue(val) + varUnit
                     + tempSuffix(T, multiTemp);
-                for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                     String seriesName = probe.label + stepSuffix;
                     String vKey = "v(" + probe.netName + ")_mag";
                     List<Double> mags = new ArrayList<>();
@@ -1697,7 +1697,7 @@ public class SimulatePacket {
                 String stepSuffix =
                     "@" + ComponentEditScreen.formatValue(val) + varUnit
                     + tempSuffix(T, multiTemp);
-                for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+                for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                     String seriesName = probe.label + stepSuffix;
                     String vKey = "v(" + probe.netName + ")";
                     List<Double> vals = new ArrayList<>();
@@ -1873,7 +1873,7 @@ public class SimulatePacket {
         Map<String, List<Double>> voltData   = new LinkedHashMap<>();
         Map<String, List<Double>> currData   = new LinkedHashMap<>();
         Map<String, String>       probeUnits = new LinkedHashMap<>();
-        for (NetlistBuilder.ProbeInfo p : probes)
+        for (NetlistBuilder.ProbeInfo p : plotted(probes))
             voltData.put(p.label, new ArrayList<>());
         for (NetlistBuilder.CurrentProbeInfo c : cpList)
             currData.put(c.label, new ArrayList<>());
@@ -1940,7 +1940,7 @@ public class SimulatePacket {
             }
 
             validSweep.add(T);
-            for (NetlistBuilder.ProbeInfo probe : probes) {
+            for (NetlistBuilder.ProbeInfo probe : plotted(probes)) {
                 Double v = result.values.get("v(" + probe.netName + ")");
                 voltData.get(probe.label).add(v != null ? v : 0.0);
                 String line = "  [" + probe.label + "]: " + result.getNodeVoltage(probe.netName);
@@ -2080,7 +2080,7 @@ public class SimulatePacket {
             if (freqAxis == null) freqAxis = sortedFreqs;
 
             String suffix = tempSuffix(T, true);
-            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+            for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                 String seriesName = probe.label + suffix;
                 String vKey = "v(" + probe.netName + ")_mag";
                 List<Double> mags = new ArrayList<>();
@@ -2197,7 +2197,7 @@ public class SimulatePacket {
             if (timeAxis == null) timeAxis = sortedTimes;
 
             String suffix = tempSuffix(T, true);
-            for (NetlistBuilder.ProbeInfo probe : effectiveProbes) {
+            for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                 String seriesName = probe.label + suffix;
                 String vKey = "v(" + probe.netName + ")";
                 List<Double> vals = new ArrayList<>();
@@ -2276,6 +2276,23 @@ public class SimulatePacket {
         for (String line : netlist.split("\n")) {
             bookLines.add("  " + line);
         }
+    }
+
+    /**
+     * Filters out "name only" probes for display / graph-series purposes. Such
+     * probes still flow into the netlist builders (which need them to apply net
+     * aliases / merges) but must not appear in printed results or plots. The
+     * netlist builders skip them internally, so this is only used at the
+     * SimulatePacket display layer.
+     */
+    private static List<NetlistBuilder.ProbeInfo> plotted(
+        List<NetlistBuilder.ProbeInfo> probes
+    ) {
+        List<NetlistBuilder.ProbeInfo> out = new ArrayList<>(probes.size());
+        for (NetlistBuilder.ProbeInfo p : probes) {
+            if (!p.noPlot) out.add(p);
+        }
+        return out;
     }
 
     private List<NetlistBuilder.ProbeInfo> effectiveProbes(

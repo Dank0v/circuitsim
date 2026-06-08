@@ -212,13 +212,15 @@ public class CircuitExtractor {
                 int node = resolveNode(probeTarget, visited, nodeMap, nextNode);
 
                 String userLabel = null;
+                boolean noPlot = false;
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     String beLabel = be.getProbeLabel();
                     if (beLabel != null && !beLabel.isEmpty()) userLabel = beLabel;
+                    noPlot = be.isProbeNoPlot();
                 }
                 String displayLabel = userLabel != null ? userLabel : "Probe_" + pos.toShortString();
 
-                probes.add(new NetlistBuilder.ProbeInfo(node, displayLabel));
+                probes.add(new NetlistBuilder.ProbeInfo(node, displayLabel, Integer.toString(node), noPlot));
                 probeUserLabels.add(userLabel);
                 probeLabels.put(node, displayLabel);
 
@@ -455,6 +457,47 @@ public class CircuitExtractor {
                 components.add(NetlistBuilder.CircuitComponent.subcircuit(
                         block, pos, new int[]{nodeD, nodeG, nodeS}, modelName, compNum));
 
+            } else if (block instanceof DiscreteNpnBlock) {
+                // 3-pin discrete NPN: facing=collector, opposite=emitter,
+                // counter-clockwise=base. Clockwise face is insulated. Emitted
+                // as a native BJT device Q<n> collector base emitter MODEL (the
+                // standard SPICE BJT pin order C B E).
+                Direction facing = state.getValue(DiscreteNpnBlock.FACING);
+                int nodeC = resolveNode(pos.relative(facing),                       visited, nodeMap, nextNode);
+                int nodeE = resolveNode(pos.relative(facing.getOpposite()),         visited, nodeMap, nextNode);
+                int nodeB = resolveNode(pos.relative(facing.getCounterClockWise()), visited, nodeMap, nextNode);
+
+                String modelName = "";
+                int    compNum   = 0;
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    modelName = be.getModelName();
+                    compNum   = be.getComponentNumber();
+                }
+
+                components.add(NetlistBuilder.CircuitComponent.subcircuit(
+                        block, pos, new int[]{nodeC, nodeB, nodeE}, modelName, compNum));
+
+            } else if (block instanceof DiscretePnpBlock) {
+                // 3-pin discrete PNP — collector/emitter swapped vs NPN:
+                // facing=emitter, opposite=collector, counter-clockwise=base.
+                // The clockwise face is insulated. Emitted as a native BJT
+                // device Q<n> collector base emitter MODEL so a single C B E pin
+                // convention works for both discrete NPN and PNP.
+                Direction facing = state.getValue(DiscretePnpBlock.FACING);
+                int nodeE = resolveNode(pos.relative(facing),                       visited, nodeMap, nextNode);
+                int nodeC = resolveNode(pos.relative(facing.getOpposite()),         visited, nodeMap, nextNode);
+                int nodeB = resolveNode(pos.relative(facing.getCounterClockWise()), visited, nodeMap, nextNode);
+
+                String modelName = "";
+                int    compNum   = 0;
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    modelName = be.getModelName();
+                    compNum   = be.getComponentNumber();
+                }
+
+                components.add(NetlistBuilder.CircuitComponent.subcircuit(
+                        block, pos, new int[]{nodeC, nodeB, nodeE}, modelName, compNum));
+
             } else if (block instanceof AmplifierBlock) {
                 // Only emit one component per amp — at the anchor cell. Every
                 // other cell is part of the same structure.
@@ -533,21 +576,26 @@ public class CircuitExtractor {
         }
 
         // ── alias resolution ─────────────────────────────────────────────────
-        // Voltage-probe labels become ngspice net names. The first probe whose
-        // sanitised label is unique wins for that node; collisions (same alias
-        // already used for a different node) fall back to the integer node id.
+        // Voltage-probe labels become ngspice net names. The first label set on
+        // a given node wins for that node (putIfAbsent below).
+        //
+        // Crucially, the SAME alias may be assigned to SEVERAL distinct nodes:
+        // because two ngspice references that share a node name ARE the same
+        // node, emitting the same alias for two different nodes electrically
+        // shorts them together in the netlist. That is how giving two
+        // physically-separate nets (bridged only by a SimLink, which carries
+        // BFS but does not union nodes) the same probe name makes the
+        // simulation treat them as one net — "connected but not physically".
+        // Previously a duplicate label collided and the second node fell back
+        // to its bare integer id (e.g. node 3), leaving the nets unmerged.
         Map<Integer, String> nodeAliases = new HashMap<>();
-        Set<String> usedAliases = new HashSet<>();
         for (int i = 0; i < probes.size(); i++) {
             NetlistBuilder.ProbeInfo p = probes.get(i);
             String userLabel = probeUserLabels.get(i);
             if (p.node == 0 || userLabel == null) continue;
             String alias = NetlistBuilder.sanitizeNodeName(userLabel);
             if (alias.isEmpty()) continue;
-            if (usedAliases.contains(alias)) continue;
-            if (nodeAliases.containsKey(p.node)) continue;
-            nodeAliases.put(p.node, alias);
-            usedAliases.add(alias);
+            nodeAliases.putIfAbsent(p.node, alias);
         }
 
         // Re-emit probes with resolved netName so downstream code can lookup
@@ -555,7 +603,7 @@ public class CircuitExtractor {
         List<NetlistBuilder.ProbeInfo> aliasedProbes = new ArrayList<>(probes.size());
         for (NetlistBuilder.ProbeInfo p : probes) {
             String netName = nodeAliases.getOrDefault(p.node, Integer.toString(p.node));
-            aliasedProbes.add(new NetlistBuilder.ProbeInfo(p.node, p.label, netName));
+            aliasedProbes.add(new NetlistBuilder.ProbeInfo(p.node, p.label, netName, p.noPlot));
         }
 
         return new ExtractionResult(true, "", components, aliasedProbes, currentProbes, probeLabels, parametricBlocks, userCommands, userPlots);
@@ -732,6 +780,8 @@ public class CircuitExtractor {
                 || block instanceof AmplifierBlock
                 || block instanceof DiscreteNmosBlock
                 || block instanceof DiscretePmosBlock
+                || block instanceof DiscreteNpnBlock
+                || block instanceof DiscretePnpBlock
                 || block instanceof Controlled2x3Block
                 || block instanceof CcvsBlock
                 || block instanceof CccsBlock

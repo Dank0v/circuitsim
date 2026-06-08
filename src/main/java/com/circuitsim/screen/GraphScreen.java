@@ -27,6 +27,14 @@ import java.util.Set;
  *
  * <p>When {@code isLogFrequency} is true the shared X axis is rendered on a
  * log10 scale, the standard presentation for AC Bode-style plots.
+ *
+ * <p>Each plot carries its own top-right toolbar: <b>Log</b> switches that
+ * plot's Y axis to a log10 scale (falling back to linear when the data has no
+ * positive samples), and <b>Cur</b> shows a pair of vertical cursors. Cursor 1
+ * is dragged with the left mouse button and cursor 2 with the right
+ * (OrCAD-style), each snapping to the nearest sweep sample. The readout reports
+ * X and Y at both cursors plus the dx/dy between them. These toggles are
+ * independent for the top and bottom plots.
  */
 public class GraphScreen extends Screen {
 
@@ -118,6 +126,25 @@ public class GraphScreen extends Screen {
     };
 
     private int panelX, panelY;
+
+    // ── per-plot Y-axis log toggle and cursors ───────────────────────────────
+    // "Top" tracks slot1 (top plot), "Bot" tracks slot2 (bottom plot). Cursors
+    // are stored as sweep-sample indices (snapped to data points), max 2 per
+    // plot. With two cursors the readout reports dx / dy between them.
+    private boolean logYTop = false, logYBot = false;
+    private boolean cursorModeTop = false, cursorModeBot = false;
+    // {cursor1, cursor2} as sweep-sample indices, or -1 when unplaced. Cursor 1
+    // is dragged with the left mouse button, cursor 2 with the right
+    // (OrCAD-style); both appear when cursor mode is switched on.
+    private final int[] cursorsTop = { -1, -1 };
+    private final int[] cursorsBot = { -1, -1 };
+    private static final int[] CURSOR_COLOURS = { 0xFFFFEE58, 0xFF40C4FF };
+
+    // Hit rectangles {x, y, w, h} recomputed every render so mouseClicked can
+    // map clicks onto the on-plot toggle buttons and the plot interior. Null
+    // when the corresponding plot isn't currently drawn.
+    private int[] logBtnTop, curBtnTop, plotRectTop;
+    private int[] logBtnBot, curBtnBot, plotRectBot;
 
     public GraphScreen(String sweepComponentName, String sweepUnit, boolean isLogFrequency,
                        List<Double> sweepValues, List<String> probeNames,
@@ -305,6 +332,10 @@ public class GraphScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mx, double my, int btn) {
+        if (btn == 0 && handlePlotButtons(mx, my)) return true;
+        // Left button drives cursor 1, right button cursor 2 (OrCAD-style).
+        if (btn == 0 && updateCursor(mx, my, 0)) return true;
+        if (btn == 1 && updateCursor(mx, my, 1)) return true;
         if (btn == 0) {
             int sx = panelX + SIDEBAR_X;
             int sy = panelY + SIDEBAR_Y;
@@ -358,6 +389,83 @@ public class GraphScreen extends Screen {
             }
         }
         return super.mouseClicked(mx, my, btn);
+    }
+
+    @Override
+    public boolean mouseDragged(double mx, double my, int btn, double dx, double dy) {
+        // Drag cursor 1 with the left button, cursor 2 with the right.
+        if (btn == 0 && updateCursor(mx, my, 0)) return true;
+        if (btn == 1 && updateCursor(mx, my, 1)) return true;
+        return super.mouseDragged(mx, my, btn, dx, dy);
+    }
+
+    /**
+     * Handles clicks on the on-plot Log / Cursor toggle buttons. Returns true
+     * when the click landed on a button. Toggling Cursor on places both
+     * cursors at the sweep endpoints; toggling it off clears them.
+     */
+    private boolean handlePlotButtons(double mx, double my) {
+        if (hitRect(logBtnTop, mx, my)) { logYTop = !logYTop; return true; }
+        if (hitRect(curBtnTop, mx, my)) {
+            cursorModeTop = !cursorModeTop;
+            if (cursorModeTop) initCursors(cursorsTop); else clearCursors(cursorsTop);
+            return true;
+        }
+        if (hitRect(logBtnBot, mx, my)) { logYBot = !logYBot; return true; }
+        if (hitRect(curBtnBot, mx, my)) {
+            cursorModeBot = !cursorModeBot;
+            if (cursorModeBot) initCursors(cursorsBot); else clearCursors(cursorsBot);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Moves one cursor ({@code slot} 0 = cursor 1, 1 = cursor 2) to the sweep
+     * sample nearest the pointer, provided cursor mode is on and the pointer is
+     * over that plot. Returns true when a cursor was updated.
+     */
+    private boolean updateCursor(double mx, double my, int slot) {
+        if (cursorModeTop && hitRect(plotRectTop, mx, my)) {
+            cursorsTop[slot] = nearestSample(plotRectTop, mx);
+            return true;
+        }
+        if (cursorModeBot && hitRect(plotRectBot, mx, my)) {
+            cursorsBot[slot] = nearestSample(plotRectBot, mx);
+            return true;
+        }
+        return false;
+    }
+
+    /** Index of the sweep sample whose plotted X is closest to {@code mx}. */
+    private int nearestSample(int[] rect, double mx) {
+        int n = sweepValues.size();
+        if (n == 0) return -1;
+        int gx = rect[0], gw = rect[2];
+        double[] xr = xRange();
+        double xMin = xr[0], xMax = xr[1];
+        int best = 0;
+        double bestD = Double.MAX_VALUE;
+        for (int i = 0; i < n; i++) {
+            double xf = (scaleX(sweepValues.get(i)) - xMin) / (xMax - xMin);
+            int px = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
+            double d = Math.abs(mx - px);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        return best;
+    }
+
+    private void initCursors(int[] cursors) {
+        int n = sweepValues.size();
+        cursors[0] = n > 0 ? 0 : -1;
+        cursors[1] = n > 0 ? n - 1 : -1;
+    }
+
+    private static void clearCursors(int[] cursors) { cursors[0] = cursors[1] = -1; }
+
+    private static boolean hitRect(int[] r, double mx, double my) {
+        return r != null && mx >= r[0] && mx < r[0] + r[2]
+                && my >= r[1] && my < r[1] + r[3];
     }
 
     private void toggleExpanded(String group) {
@@ -594,6 +702,11 @@ public class GraphScreen extends Screen {
     // ── plot area ──────────────────────────────────────────────────────────
 
     private void drawPlots(GuiGraphics g, int mouseX, int mouseY) {
+        // Clear last frame's hit rectangles; each plot re-registers its own as
+        // it draws. Plots that aren't shown this frame leave theirs null.
+        logBtnTop = curBtnTop = plotRectTop = null;
+        logBtnBot = curBtnBot = plotRectBot = null;
+
         boolean haveTop = !slot1.isEmpty();
         boolean haveBot = !slot2.isEmpty();
         int plotTop    = panelY + GT;
@@ -618,52 +731,22 @@ public class GraphScreen extends Screen {
             int top1Bottom = plotTop + half - gap / 2;
             int top2Top    = plotTop + half + gap / 2;
             drawMultiCurvePlot(g, plotLeft, plotTop,    gw, top1Bottom - plotTop,
-                    slot1, PALETTE_TOP, false, mouseX, mouseY);
+                    slot1, PALETTE_TOP, false, true, mouseX, mouseY);
             drawMultiCurvePlot(g, plotLeft, top2Top,    gw, plotBottom  - top2Top,
-                    slot2, PALETTE_BOT, true,  mouseX, mouseY);
+                    slot2, PALETTE_BOT, true, false,  mouseX, mouseY);
         } else if (haveTop) {
             drawMultiCurvePlot(g, plotLeft, plotTop, gw, plotBottom - plotTop,
-                    slot1, PALETTE_TOP, true, mouseX, mouseY);
+                    slot1, PALETTE_TOP, true, true, mouseX, mouseY);
         } else {
             drawMultiCurvePlot(g, plotLeft, plotTop, gw, plotBottom - plotTop,
-                    slot2, PALETTE_BOT, true, mouseX, mouseY);
+                    slot2, PALETTE_BOT, true, false, mouseX, mouseY);
         }
     }
 
-    /**
-     * @param drawXAxis when true the X-axis tick labels and X-title are
-     *        rendered below the plot. Suppressed on the top plot in split
-     *        view since the bottom plot owns the shared X axis.
-     */
-    private void drawMultiCurvePlot(GuiGraphics g, int gx, int gy, int gw, int gh,
-                                     Set<Integer> slot, int[] palette,
-                                     boolean drawXAxis, int mouseX, int mouseY) {
-        if (slot.isEmpty()) return;
-
-        List<Integer> active = new ArrayList<>();
-        for (int idx : slot) {
-            if (probeData.get(idx).size() == sweepValues.size()) active.add(idx);
-        }
-        if (active.isEmpty() || sweepValues.isEmpty()) {
-            g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
-            g.drawCenteredString(font, "No data", gx + gw / 2, gy + gh / 2 - 4, 0xFFFF4444);
-            return;
-        }
-
+    /** Shared X-axis range (log-scaled and padded as appropriate). */
+    private double[] xRange() {
         double xMinRaw = sweepValues.stream().mapToDouble(d -> d).min().orElse(1);
         double xMaxRaw = sweepValues.stream().mapToDouble(d -> d).max().orElse(2);
-        double yMin = Double.POSITIVE_INFINITY, yMax = Double.NEGATIVE_INFINITY;
-        for (int idx : active) {
-            for (double v : probeData.get(idx)) {
-                if (v < yMin) yMin = v;
-                if (v > yMax) yMax = v;
-            }
-        }
-        if (!Double.isFinite(yMin) || !Double.isFinite(yMax)) { yMin = 0; yMax = 1; }
-        if (yMax == yMin) { yMin -= 1; yMax += 1; }
-        double yPad = (yMax - yMin) * 0.10;
-        yMin -= yPad; yMax += yPad;
-
         double xMin, xMax;
         if (isLogFrequency) {
             xMin = Math.log10(Math.max(xMinRaw, 1e-30));
@@ -677,22 +760,98 @@ public class GraphScreen extends Screen {
             double xPad = (xMax - xMin) * 0.05;
             xMin -= xPad; xMax += xPad;
         }
+        return new double[]{ xMin, xMax };
+    }
+
+    /** Maps a raw sweep value into scaled X space (log10 when on a log axis). */
+    private double scaleX(double rawX) {
+        return isLogFrequency ? Math.log10(Math.max(rawX, 1e-30)) : rawX;
+    }
+
+    /**
+     * @param drawXAxis when true the X-axis tick labels and X-title are
+     *        rendered below the plot. Suppressed on the top plot in split
+     *        view since the bottom plot owns the shared X axis.
+     * @param isTopSlot true for the slot1/top plot, false for slot2/bottom.
+     *        Selects which plot's log-Y toggle and cursor state to use, and
+     *        which hit-rect fields to register.
+     */
+    private void drawMultiCurvePlot(GuiGraphics g, int gx, int gy, int gw, int gh,
+                                     Set<Integer> slot, int[] palette,
+                                     boolean drawXAxis, boolean isTopSlot,
+                                     int mouseX, int mouseY) {
+        if (slot.isEmpty()) return;
+
+        boolean logY       = isTopSlot ? logYTop      : logYBot;
+        boolean cursorMode = isTopSlot ? cursorModeTop : cursorModeBot;
+        int[]   cursors    = isTopSlot ? cursorsTop   : cursorsBot;
+
+        List<Integer> active = new ArrayList<>();
+        for (int idx : slot) {
+            if (probeData.get(idx).size() == sweepValues.size()) active.add(idx);
+        }
+        if (active.isEmpty() || sweepValues.isEmpty()) {
+            g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
+            g.drawCenteredString(font, "No data", gx + gw / 2, gy + gh / 2 - 4, 0xFFFF4444);
+            return;
+        }
+
+        // Log Y needs a positive floor; if the data has no positive samples a
+        // log axis is meaningless, so quietly fall back to linear for this draw.
+        double yFloor = 1e-30;
+        boolean effLogY = logY;
+        if (effLogY) {
+            double posMin = Double.POSITIVE_INFINITY;
+            for (int idx : active)
+                for (double v : probeData.get(idx))
+                    if (v > 0 && v < posMin) posMin = v;
+            if (Double.isFinite(posMin)) yFloor = posMin;
+            else effLogY = false;
+        }
+
+        double yMin = Double.POSITIVE_INFINITY, yMax = Double.NEGATIVE_INFINITY;
+        for (int idx : active) {
+            for (double v : probeData.get(idx)) {
+                double s = scaleY(v, effLogY, yFloor);
+                if (s < yMin) yMin = s;
+                if (s > yMax) yMax = s;
+            }
+        }
+        if (!Double.isFinite(yMin) || !Double.isFinite(yMax)) { yMin = 0; yMax = 1; }
+        if (yMax == yMin) { yMin -= 1; yMax += 1; }
+        if (effLogY) {
+            // Snap the range out to whole decades so gridlines and labels land
+            // on clean powers of ten.
+            yMin = Math.floor(yMin);
+            yMax = Math.ceil(yMax);
+            if (yMax == yMin) yMax += 1;
+        } else {
+            double yPad = (yMax - yMin) * 0.10;
+            yMin -= yPad; yMax += yPad;
+        }
+
+        double[] xr = xRange();
+        double xMin = xr[0], xMax = xr[1];
 
         g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
 
-        int yTicks = gh < 160 ? 4 : 6;
-        double yStep = niceTickStep(yMax - yMin, yTicks);
-        // Snap to multiples of yStep so labels land on round numbers (e.g. 0,
-        // 1, 2, ...) instead of whatever value falls at each evenly-spaced
-        // position. The tiny epsilon protects the final tick from floating-
-        // point drift dropping it below xMax.
-        double yFirst = Math.ceil(yMin / yStep) * yStep;
-        for (double yVal = yFirst; yVal <= yMax + yStep * 1e-9; yVal += yStep) {
-            double t  = (yVal - yMin) / (yMax - yMin);
-            int    py = gy + (int)((1.0 - t) * gh);
-            g.fill(gx, py, gx + gw, py + 1, C_GRID);
-            String yLbl = fmtAxis(yVal);
-            g.drawString(font, yLbl, gx - font.width(yLbl) - 3, py - 4, C_LABEL);
+        if (effLogY) {
+            drawLogYTicks(g, gx, gy, gw, gh, yMin, yMax);
+        } else {
+            int yTicks = gh < 160 ? 4 : 6;
+            double yStep = niceTickStep(yMax - yMin, yTicks);
+            // Snap to multiples of yStep so labels land on round numbers (e.g.
+            // 0, 1, 2, ...) instead of whatever value falls at each evenly-
+            // spaced position. The tiny epsilon protects the final tick from
+            // floating-point drift dropping it below yMax.
+            double yFirst = Math.ceil(yMin / yStep) * yStep;
+            for (double yVal = yFirst; yVal <= yMax + yStep * 1e-9; yVal += yStep) {
+                double t  = (yVal - yMin) / (yMax - yMin);
+                int    py = gy + (int)((1.0 - t) * gh);
+                g.fill(gx, py, gx + gw, py + 1, C_GRID);
+                String yLbl = fmtAxis(yVal);
+                g.drawString(font, yLbl, gx - font.width(yLbl) - 3, py - 4, C_LABEL);
+            }
         }
 
         if (isLogFrequency) drawLogXTicks(g, gx, gy, gw, gh, xMin, xMax, drawXAxis);
@@ -704,7 +863,8 @@ public class GraphScreen extends Screen {
         String stem = slotGroup(slot);
         String yUnitLabel = commonUnit(active);
         String yLabel = (stem == null ? "" : stem)
-                + (yUnitLabel.isEmpty() ? "" : "  (" + yUnitLabel + ")");
+                + (yUnitLabel.isEmpty() ? "" : "  (" + yUnitLabel + ")")
+                + (effLogY ? "  [log]" : "");
         if (!yLabel.isEmpty()) {
             int yColour = active.size() == 1 ? palette[0] : C_LABEL;
             g.drawString(font, ellipsize(yLabel, gw - 4), gx + 2, gy - 9, yColour);
@@ -730,10 +890,8 @@ public class GraphScreen extends Screen {
             int[] px = new int[n];
             int[] py = new int[n];
             for (int i = 0; i < n; i++) {
-                double rawX = sweepValues.get(i);
-                double xScaled = isLogFrequency ? Math.log10(Math.max(rawX, 1e-30)) : rawX;
-                double xf   = (xScaled - xMin) / (xMax - xMin);
-                double yf   = (series.get(i) - yMin) / (yMax - yMin);
+                double xf   = (scaleX(sweepValues.get(i)) - xMin) / (xMax - xMin);
+                double yf   = (scaleY(series.get(i), effLogY, yFloor) - yMin) / (yMax - yMin);
                 px[i] = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
                 py[i] = clamp(gy + gh - 1 - (int)(yf * (gh - 1)), gy, gy + gh - 1);
                 if (Math.abs(mouseX - px[i]) <= 5 && Math.abs(mouseY - py[i]) <= 5) {
@@ -750,6 +908,10 @@ public class GraphScreen extends Screen {
             }
         }
 
+        // Cursors and their readout sit above the curves but below the hover
+        // highlight so a hovered point stays legible.
+        drawCursors(g, gx, gy, gw, gh, xMin, xMax, active, cursors);
+
         if (hoverIdx >= 0 && hoverCurve >= 0) {
             List<Double> series = probeData.get(hoverCurve);
             double rawXH = sweepValues.get(hoverIdx);
@@ -762,10 +924,8 @@ public class GraphScreen extends Screen {
             String name = probeNames.get(hoverCurve);
             String tip  = name + ": " + yStr + " at " + xStr;
             int tw = font.width(tip) + 6, th = 12;
-            double xf = isLogFrequency
-                    ? Math.log10(Math.max(rawXH, 1e-30)) : rawXH;
-            xf = (xf - xMin) / (xMax - xMin);
-            double yf = (series.get(hoverIdx) - yMin) / (yMax - yMin);
+            double xf = (scaleX(rawXH) - xMin) / (xMax - xMin);
+            double yf = (scaleY(series.get(hoverIdx), effLogY, yFloor) - yMin) / (yMax - yMin);
             int hx = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
             int hy = clamp(gy + gh - 1 - (int)(yf * (gh - 1)), gy, gy + gh - 1);
             int tx = clamp(hx + 6, gx, gx + gw - tw);
@@ -778,6 +938,162 @@ public class GraphScreen extends Screen {
             int orderHover = indexIn(slot, hoverCurve);
             int colourHover = orderHover >= 0 ? palette[orderHover % palette.length] : C_LABEL;
             g.fill(hx - 1, hy - 1, hx + 2, hy + 2, colourHover);
+        }
+
+        // On-plot toggle toolbar (top-right) plus the interior hit-rect that
+        // catches cursor-placement clicks. Drawn last so it sits on top.
+        int[] curBtn = drawToggle(g, gx + gw - 2,    gy + 2, "Cur", cursorMode, mouseX, mouseY);
+        int[] logBtn = drawToggle(g, curBtn[0] - 3,  gy + 2, "Log", logY,       mouseX, mouseY);
+        if (isTopSlot) {
+            curBtnTop = curBtn; logBtnTop = logBtn; plotRectTop = new int[]{ gx, gy, gw, gh };
+        } else {
+            curBtnBot = curBtn; logBtnBot = logBtn; plotRectBot = new int[]{ gx, gy, gw, gh };
+        }
+    }
+
+    /** Maps a raw value into scaled Y space (log10 above a floor when logarithmic). */
+    private static double scaleY(double v, boolean logY, double floor) {
+        return logY ? Math.log10(Math.max(v, floor)) : v;
+    }
+
+    /** Draws a small right-aligned toggle button, returning its {x,y,w,h} rect. */
+    private int[] drawToggle(GuiGraphics g, int rightX, int y, String label, boolean on,
+                              int mouseX, int mouseY) {
+        int w = font.width(label) + 6, h = 11;
+        int x = rightX - w;
+        boolean hover = mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + h;
+        int bg = on ? C_BORDER : (hover ? C_BTN_OFF_HV : C_BTN_OFF);
+        g.fill(x, y, x + w, y + h, bg);
+        drawRect(g, x, y, w, h, 1, C_SEP);
+        g.drawString(font, label, x + 3, y + (h - 8) / 2, on ? 0xFFFFFFFF : C_BTN_TXT_OFF);
+        return new int[]{ x, y, w, h };
+    }
+
+    /** Vertical decade gridlines + labels for a logarithmic Y axis. */
+    private void drawLogYTicks(GuiGraphics g, int gx, int gy, int gw, int gh,
+                                double yMin, double yMax) {
+        int decLo = (int) Math.floor(yMin);
+        int decHi = (int) Math.ceil(yMax);
+        // Minor (2..9) lines first so the decade lines paint over them.
+        for (int d = decLo; d < decHi; d++) {
+            for (int m = 2; m <= 9; m++) {
+                double yf = (Math.log10(m) + d - yMin) / (yMax - yMin);
+                if (yf < 0 || yf > 1) continue;
+                int py = gy + (int)((1.0 - yf) * gh);
+                g.fill(gx, py, gx + gw, py + 1, 0xFF20203A);
+            }
+        }
+        for (int d = decLo; d <= decHi; d++) {
+            double yf = (d - yMin) / (yMax - yMin);
+            if (yf < 0 || yf > 1) continue;
+            int py = gy + (int)((1.0 - yf) * gh);
+            g.fill(gx, py, gx + gw, py + 1, C_GRID);
+            String lbl = fmtAxis(Math.pow(10, d));
+            g.drawString(font, lbl, gx - font.width(lbl) - 3, py - 4, C_LABEL);
+        }
+    }
+
+    /**
+     * Draws the cursor lines and the X/Y (and dx/dy) readout. Cursors are
+     * sweep-sample indices in {@code {cursor1, cursor2}} order, -1 when unset;
+     * with both placed the readout reports absolute values for each plus deltas.
+     */
+    private void drawCursors(GuiGraphics g, int gx, int gy, int gw, int gh,
+                              double xMin, double xMax, List<Integer> active,
+                              int[] cursors) {
+        int n = sweepValues.size();
+        boolean any = false;
+        for (int k = 0; k < cursors.length; k++) {
+            int ci = cursors[k];
+            if (ci < 0 || ci >= n) continue;
+            any = true;
+            double xf = (scaleX(sweepValues.get(ci)) - xMin) / (xMax - xMin);
+            int px = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
+            int col = CURSOR_COLOURS[k % CURSOR_COLOURS.length];
+            g.fill(px, gy, px + 1, gy + gh, col);
+            String tag = String.valueOf(k + 1);
+            int tagX = clamp(px - 4, gx, gx + gw - 9);
+            g.fill(tagX, gy, tagX + 9, gy + 9, 0xCC000000);
+            g.drawString(font, tag, tagX + (9 - font.width(tag)) / 2, gy + 1, col);
+        }
+        if (!any) return;
+        drawReadout(g, gx, gy, gw, gh, cursorReadout(active, cursors));
+    }
+
+    /**
+     * Builds the cursor readout. With both cursors placed each line packs the
+     * cursor-1 value, cursor-2 value, and their delta side by side (X on the
+     * first line, then one line of Y per curve). With a single cursor it falls
+     * back to plain x / y.
+     */
+    private List<String> cursorReadout(List<Integer> active, int[] cursors) {
+        List<String> lines = new ArrayList<>();
+        int c1 = cursors[0], c2 = cursors[1];
+        boolean has1 = c1 >= 0, has2 = c2 >= 0;
+        boolean single = active.size() == 1;
+
+        if (has1 && has2) {
+            lines.add(col("x", fmtXVal(sweepValues.get(c1)),
+                              fmtXVal(sweepValues.get(c2)),
+                              fmtXVal(sweepValues.get(c2) - sweepValues.get(c1))));
+            for (int idx : active) {
+                List<Double> series = probeData.get(idx);
+                String unit = probeUnits.get(idx);
+                String prefix = single ? "" : variantLabel(idx) + ": ";
+                double y1 = series.get(c1), y2 = series.get(c2);
+                lines.add(prefix + col("y", fmtYVal(y1, unit), fmtYVal(y2, unit),
+                                            fmtYVal(y2 - y1, unit)));
+            }
+        } else {
+            int c = has1 ? c1 : c2;
+            lines.add("x = " + fmtXVal(sweepValues.get(c)));
+            for (int idx : active) {
+                String nm = single ? "y" : variantLabel(idx);
+                lines.add(nm + " = " + fmtYVal(probeData.get(idx).get(c), probeUnits.get(idx)));
+            }
+        }
+        return lines;
+    }
+
+    /** Packs a label and its cursor-1 / cursor-2 / delta values into one line. */
+    private static String col(String tag, String v1, String v2, String dv) {
+        return tag + "1=" + v1 + "  " + tag + "2=" + v2 + "  d" + tag + "=" + dv;
+    }
+
+    /** Short label for a probe in a multi-curve readout — the @-suffix, else the name. */
+    private String variantLabel(int idx) {
+        String full = probeNames.get(idx);
+        int at = suffixSplit(full);
+        return at >= 0 ? full.substring(at + 1) : full;
+    }
+
+    // Cursor values use the same 2-decimal SI formatting as the axis labels
+    // (fmtAxis) rather than the higher-precision ComponentEditScreen.formatValue.
+    private String fmtXVal(double v) {
+        return fmtAxis(v) + (isLogFrequency ? "Hz" : sweepUnit);
+    }
+
+    private static String fmtYVal(double v, String unit) {
+        return fmtAxis(v) + (unit.isEmpty() ? "" : " " + unit);
+    }
+
+    /** Translucent readout box anchored to the plot's top-left interior. */
+    private void drawReadout(GuiGraphics g, int gx, int gy, int gw, int gh, List<String> lines) {
+        if (lines.isEmpty()) return;
+        final int pad = 3, lh = 9;
+        int textW = 0;
+        for (String s : lines) textW = Math.max(textW, font.width(s));
+        int boxW = Math.min(textW + pad * 2, gw - 4);
+        int boxH = lines.size() * lh + pad;
+        int bx = gx + 3;
+        int by = gy + 3;
+        if (by + boxH > gy + gh) by = Math.max(gy + 1, gy + gh - boxH);
+        g.fill(bx - 1, by - 1, bx + boxW + 1, by + boxH + 1, C_BORDER);
+        g.fill(bx, by, bx + boxW, by + boxH, 0xE6101022);
+        int ty = by + pad - 1;
+        for (String s : lines) {
+            g.drawString(font, ellipsize(s, boxW - pad * 2), bx + pad, ty, 0xFFFFFFFF);
+            ty += lh;
         }
     }
 

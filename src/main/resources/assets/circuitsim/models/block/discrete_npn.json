@@ -1,0 +1,12 @@
+{
+    "parent": "minecraft:block/cube",
+    "textures": {
+        "particle": "circuitsim:block/discrete_npn_base",
+        "up":    "circuitsim:block/discrete_npn_top",
+        "down":  "circuitsim:block/discrete_npn_top",
+        "north": "circuitsim:block/discrete_npn_collector",
+        "south": "circuitsim:block/discrete_npn_emitter",
+        "west":  "circuitsim:block/discrete_npn_base",
+        "east":  "circuitsim:block/discrete_npn_side"
+    }
+}

@@ -124,6 +124,26 @@ public class WireBlock extends Block {
                     || facing.getCounterClockWise() == toWire;
         }
 
+        // Discrete 3-pin NPN: front (collector), back (emitter),
+        // counter-clockwise (base). Clockwise face is insulated.
+        if (neighbor instanceof DiscreteNpnBlock) {
+            Direction facing = neighborState.getValue(DiscreteNpnBlock.FACING);
+            Direction toWire = dir.getOpposite();
+            return facing == toWire
+                    || facing.getOpposite() == toWire
+                    || facing.getCounterClockWise() == toWire;
+        }
+
+        // Discrete 3-pin PNP: same connectable sides as NPN — front, back,
+        // and counter-clockwise — only the pin semantics differ.
+        if (neighbor instanceof DiscretePnpBlock) {
+            Direction facing = neighborState.getValue(DiscretePnpBlock.FACING);
+            Direction toWire = dir.getOpposite();
+            return facing == toWire
+                    || facing.getOpposite() == toWire
+                    || facing.getCounterClockWise() == toWire;
+        }
+
         // VCVS / VCCS 2×3 multi-block: same rule as the amplifier.
         if (neighbor instanceof Controlled2x3Block) {
             Controlled2x3Block.CellKind kind = neighborState.getValue(Controlled2x3Block.CELL_KIND);

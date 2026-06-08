@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "9";   // bumped for DiscretePmosUpdatePacket
+    private static final String PROTOCOL_VERSION = "10";  // bumped for Discrete NPN/PNP update packets
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -60,6 +60,18 @@ public class ModMessages {
                 .encoder(DiscretePmosUpdatePacket::encode)
                 .decoder(DiscretePmosUpdatePacket::decode)
                 .consumerMainThread(ModMessages::handleDiscretePmosUpdate)
+                .add();
+
+        INSTANCE.messageBuilder(DiscreteNpnUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(DiscreteNpnUpdatePacket::encode)
+                .decoder(DiscreteNpnUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleDiscreteNpnUpdate)
+                .add();
+
+        INSTANCE.messageBuilder(DiscretePnpUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(DiscretePnpUpdatePacket::encode)
+                .decoder(DiscretePnpUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleDiscretePnpUpdate)
                 .add();
 
         INSTANCE.messageBuilder(ControlledSourceUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
@@ -122,6 +134,18 @@ public class ModMessages {
 
     private static void handleDiscretePmosUpdate(DiscretePmosUpdatePacket msg,
                                                   Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleDiscreteNpnUpdate(DiscreteNpnUpdatePacket msg,
+                                                 Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleDiscretePnpUpdate(DiscretePnpUpdatePacket msg,
+                                                 Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }

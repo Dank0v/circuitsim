@@ -164,6 +164,9 @@ public class ComponentBlockEntityRenderer
         } else if (block == ModBlocks.PROBE.get()) {
             String lbl = be.getProbeLabel();
             lines.add((lbl == null || lbl.isEmpty()) ? "V Probe" : lbl);
+            // Name-only probes name/merge the net but aren't plotted; flag that
+            // on the floating label so it's distinguishable from a normal probe.
+            if (be.isProbeNoPlot()) lines.add("(no plot)");
         } else if (block == ModBlocks.CURRENT_PROBE.get()) {
             String lbl = be.getProbeLabel();
             lines.add((lbl == null || lbl.isEmpty()) ? "I Probe" : lbl);
@@ -227,6 +230,12 @@ public class ComponentBlockEntityRenderer
         } else if (block == ModBlocks.DISCRETE_PMOS.get()) {
             String model = be.getModelName();
             lines.add((model == null || model.isEmpty()) ? "PMOS" : model);
+        } else if (block == ModBlocks.DISCRETE_NPN.get()) {
+            String model = be.getModelName();
+            lines.add((model == null || model.isEmpty()) ? "NPN" : model);
+        } else if (block == ModBlocks.DISCRETE_PNP.get()) {
+            String model = be.getModelName();
+            lines.add((model == null || model.isEmpty()) ? "PNP" : model);
         } else if (block == ModBlocks.IC_NMOS4.get() || block == ModBlocks.IC_PMOS4.get()) {
             boolean isNmos     = block == ModBlocks.IC_NMOS4.get();
             String defaultModel = isNmos ? "nfet_01v8" : "pfet_01v8";

@@ -46,6 +46,9 @@ public class ComponentUpdatePacket {
     // Other component types ignore these — the editor sends 0 / "" for them.
     private final double   acValue;
     private final String   acValueExpr;
+    // Probe "name only" mode. Only meaningful for voltage probes; every other
+    // component type sends false.
+    private final boolean  probeNoPlot;
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label) {
@@ -124,6 +127,19 @@ public class ComponentUpdatePacket {
                                   String valueExpr,
                                   String wExpr, String lExpr, String multExpr, String nfExpr,
                                   double acValue, String acValueExpr) {
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam,
+                nfParam, pdkName, componentNumber, mirrored, pulseVLow, pulseTr, pulseTf, pulsePw,
+                valueExpr, wExpr, lExpr, multExpr, nfExpr, acValue, acValueExpr, false);
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  double nfParam, String pdkName, int componentNumber, boolean mirrored,
+                                  double pulseVLow, double pulseTr, double pulseTf, double pulsePw,
+                                  String valueExpr,
+                                  String wExpr, String lExpr, String multExpr, String nfExpr,
+                                  double acValue, String acValueExpr, boolean probeNoPlot) {
         this.pos             = pos;
         this.value           = value;
         this.sourceType      = sourceType;
@@ -148,6 +164,7 @@ public class ComponentUpdatePacket {
         this.nfExpr          = nfExpr    == null ? "" : nfExpr;
         this.acValue         = acValue;
         this.acValueExpr     = acValueExpr == null ? "" : acValueExpr;
+        this.probeNoPlot     = probeNoPlot;
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
@@ -175,6 +192,7 @@ public class ComponentUpdatePacket {
         this.nfExpr          = buf.readUtf(64);
         this.acValue         = buf.readDouble();
         this.acValueExpr     = buf.readUtf(64);
+        this.probeNoPlot     = buf.readBoolean();
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -202,6 +220,7 @@ public class ComponentUpdatePacket {
         buf.writeUtf(nfExpr    == null ? "" : nfExpr,    64);
         buf.writeDouble(acValue);
         buf.writeUtf(acValueExpr == null ? "" : acValueExpr, 64);
+        buf.writeBoolean(probeNoPlot);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -237,6 +256,7 @@ public class ComponentUpdatePacket {
             cbe.setNfExpr(nfExpr);
             cbe.setAcValue(acValue);
             cbe.setAcValueExpr(acValueExpr);
+            cbe.setProbeNoPlot(probeNoPlot);
             cbe.setChanged();
 
             BlockState curState = level.getBlockState(pos);

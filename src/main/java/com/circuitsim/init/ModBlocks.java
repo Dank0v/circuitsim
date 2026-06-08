@@ -104,6 +104,14 @@ public class ModBlocks {
             () -> new DiscretePmosBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_RED).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> DISCRETE_NPN = BLOCKS.register("discrete_npn",
+            () -> new DiscreteNpnBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_LIGHT_BLUE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> DISCRETE_PNP = BLOCKS.register("discrete_pnp",
+            () -> new DiscretePnpBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_ORANGE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static final RegistryObject<Block> CCVS = BLOCKS.register("ccvs",
             () -> new CcvsBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_YELLOW).strength(2.0f).pushReaction(PushReaction.BLOCK)));

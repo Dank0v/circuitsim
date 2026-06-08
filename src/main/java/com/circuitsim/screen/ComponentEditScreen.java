@@ -46,6 +46,10 @@ public class ComponentEditScreen
     private int     pdkRowY   = 0; // absolute Y of the PDK radio row (set during init)
     private int     mirrorRowY = 0; // absolute Y of the Mirror checkbox row (set during init)
     private boolean icMirrored = false;
+    // Probe "name only" toggle. When set, the probe names/merges its net but is
+    // excluded from simulation print/plot.
+    private int     noPlotRowY = 0; // absolute Y of the no-plot checkbox row (set during init)
+    private boolean probeNoPlot = false;
 
     private boolean showValue;
     private boolean showSourceType;
@@ -56,6 +60,8 @@ public class ComponentEditScreen
     private boolean showNf;
     private boolean showMirror;
     private boolean showNumber;
+    /** Voltage probe only: show the "name only (no plot)" checkbox row. */
+    private boolean showNoPlot;
     /** Voltage source: show the AC magnitude field below the DC value field. */
     private boolean showAcValue;
     /** True for CCVS/CCCS: show a "Control voltage source (vnam)" text field,
@@ -142,6 +148,7 @@ public class ComponentEditScreen
             currentNfExpr    = cbe.getNfExpr();
             currentAcValue     = cbe.getAcValue();
             currentAcValueExpr = cbe.getAcValueExpr();
+            probeNoPlot        = cbe.isProbeNoPlot();
             // For pulse sources the period lives in the BE's frequency slot;
             // pre-fill the editor with a sensible default (matches the BE
             // default) if the player just placed the block.
@@ -183,6 +190,9 @@ public class ComponentEditScreen
         showFrequency = isSinSrc;
         showPulse     = isPulseSrc;
         showLabel = isProbe || isCurrentProbe;
+        // "Name only" mode is a voltage-probe concept: it suppresses the
+        // print/plot while still letting the probe name (and merge) its net.
+        showNoPlot = isProbe;
         showSky130 = isSky130 || isIcCap || isNmos4 || isPmos4;
         showNf = isNmos4 || isPmos4;
         showMirror = isNmos4 || isPmos4;
@@ -199,6 +209,7 @@ public class ComponentEditScreen
         if (showFrequency) rowCount++;
         if (showPulse) rowCount += 5;        // V_2, Period, Time-high, TR, TF (V1 reuses valueField)
         if (showLabel) rowCount++;
+        if (showNoPlot) rowCount++;
         if (showSky130) rowCount += 5 + (showNf ? 1 : 0) + (showMirror ? 1 : 0); // pdk, model, W, L, mult [, NF] [, Mirror]
         if (showControlSource) rowCount++;
         if (showDiodeModel) rowCount++;
@@ -337,6 +348,13 @@ public class ComponentEditScreen
                 currentLabel,
                 64
             );
+            cursorY += ROW_H;
+        }
+
+        if (showNoPlot) {
+            // No EditBox — a clickable checkbox row rendered in render()/handled
+            // in mouseClicked(), mirroring the Mirror toggle pattern.
+            noPlotRowY = cursorY;
             cursorY += ROW_H;
         }
 
@@ -631,6 +649,18 @@ public class ComponentEditScreen
             );
             cursorY += ROW_H;
         }
+        if (showNoPlot) {
+            g.drawString(Minecraft.getInstance().font, "Plot mode:", labelX, cursorY, LABEL_COLOR);
+            int npCheckY = cursorY + LABEL_H + GAP;
+            drawCheckbox(g, panelX + 12, npCheckY, probeNoPlot);
+            g.drawString(
+                Minecraft.getInstance().font,
+                probeNoPlot ? "name only (no plot)" : "name + plot net",
+                panelX + 26, npCheckY + 1,
+                probeNoPlot ? 0xFF4FC3F7 : 0xFF666666
+            );
+            cursorY += ROW_H;
+        }
         if (showControlSource) {
             g.drawString(
                 Minecraft.getInstance().font,
@@ -746,6 +776,11 @@ public class ComponentEditScreen
             int checkY = mirrorRowY + LABEL_H + GAP;
             int panelX = (this.width - this.imageWidth) / 2;
             if (hitBox(mx, my, panelX + 12, checkY, 200, 12)) { icMirrored = !icMirrored; return true; }
+        }
+        if (showNoPlot && noPlotRowY > 0) {
+            int checkY = noPlotRowY + LABEL_H + GAP;
+            int panelX = (this.width - this.imageWidth) / 2;
+            if (hitBox(mx, my, panelX + 12, checkY, 200, 12)) { probeNoPlot = !probeNoPlot; return true; }
         }
         return super.mouseClicked(mx, my, btn);
     }
@@ -973,7 +1008,8 @@ public class ComponentEditScreen
                 multExpr,
                 nfExpr,
                 acValue,
-                acValueExpr
+                acValueExpr,
+                probeNoPlot
             )
         );
     }

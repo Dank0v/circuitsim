@@ -1,0 +1,8 @@
+{
+    "variants": {
+        "facing=north": { "model": "circuitsim:block/discrete_npn" },
+        "facing=south": { "model": "circuitsim:block/discrete_npn", "y": 180 },
+        "facing=east":  { "model": "circuitsim:block/discrete_npn", "y": 90 },
+        "facing=west":  { "model": "circuitsim:block/discrete_npn", "y": 270 }
+    }
+}
