@@ -21,7 +21,8 @@ public class SimulateEditScreen extends Screen {
     // PDK state
     private String pdkName    = "none"; // "none", "sky130A", "placeholder"
     private String ngBehavior = "none";
-    // Single-line lib path used by non-psa modes (sky130A flow).
+    // Newline-separated lib paths used by the hsa (sky130A) flow; one .lib
+    // directive is emitted per line.
     private String pdkLibPath  = "";
     // Newline-separated lib paths used by psa mode (one .INCLUDE per line).
     private String pdkLibPaths = "";
@@ -45,7 +46,7 @@ public class SimulateEditScreen extends Screen {
     // instead of re-reading from the block entity.
     private boolean loadedFromBe = false;
 
-    private EditBox pdkLibField;
+    private MultiLineEditBox pdkLibField;
     private MultiLineEditBox pdkLibPathsField;
 
     // "none" = strict ngspice, no compatibility tweaks (default for new
@@ -115,14 +116,15 @@ public class SimulateEditScreen extends Screen {
     private static final int Y_COMPAT_LABEL = 174;
     private static final int Y_COMPAT_CHIPS = 188;
     private static final int Y_DIV_AFTER_COMPAT = 211;
-    // PDK/lib section (depends on mode)
-    private static final int Y_PDK_LABEL  = 218;
-    private static final int Y_PDK_CHIPS  = 232;
-    private static final int Y_LIB_LABEL  = 250;
-    private static final int Y_LIB_FIELD  = 263;
-    // psa multi-line field spans the entire mode-dependent slot:
-    private static final int Y_PSA_FIELD       = 232;
-    private static final int H_PSA_FIELD       = 58;
+    // Library section (hsa/psa only). A single label + multi-line box, one
+    // include path per line. No PDK selector here anymore — the model prefix
+    // is chosen per IC component block.
+    private static final int Y_LIB_LABEL2  = 218;
+    private static final int Y_LIB_FIELD2  = 232;
+    // MultiLineEditBox draws its "chars/limit" counter at (bottom + 4), so the
+    // box must end well above the Simulate/Cancel row (at H-28 = 330) or the
+    // counter overlaps the buttons. 232 + 78 = 310 leaves the counter clear.
+    private static final int H_LIB_FIELD   = 78;
 
     public SimulateEditScreen(BlockPos pos) {
         super(Component.literal("Circuit Analysis"));
@@ -167,25 +169,32 @@ public class SimulateEditScreen extends Screen {
         boolean psa = "psa".equals(ngBehavior);
         boolean hsa = "hsa".equals(ngBehavior);
 
-        // PDK / library widgets are only relevant for the two modes we
-        // actually support libraries for. The other compat modes (none, ki,
-        // va) leave this section empty — no widget is created and the
-        // render path skips its labels/chips.
+        // Library widgets are only relevant for the two modes that emit
+        // includes (hsa → .lib, psa → .INCLUDE). Both present a single
+        // multi-line box (one path per line); the choice of model prefix
+        // (e.g. sky130_fd_pr__) now lives on the IC component blocks, so the
+        // sim block no longer has a PDK selector. Other compat modes (none,
+        // va) leave this section empty.
         if (psa) {
             String hint = "C:\\path\\to\\OPAMP.LIB\nC:\\path\\to\\models.lib";
             pdkLibPathsField = new MultiLineEditBox(
                 Minecraft.getInstance().font,
-                px + 16, py + Y_PSA_FIELD, W - 32, H_PSA_FIELD,
+                px + 16, py + Y_LIB_FIELD2, W - 32, H_LIB_FIELD,
                 Component.literal(hint),
                 Component.literal(".include paths"));
             pdkLibPathsField.setCharacterLimit(8000);
             pdkLibPathsField.setValue(pdkLibPaths);
             addRenderableWidget(pdkLibPathsField);
         } else if (hsa) {
-            pdkLibField = box(px + 16, py + Y_LIB_FIELD, W - 32, pdkLibPath);
-            String libHint = "C:\\path\\to\\sky130.lib.spice tt";
-            pdkLibField.setSuggestion(pdkLibPath.isEmpty() ? libHint : "");
-            pdkLibField.setResponder(text -> pdkLibField.setSuggestion(text.isEmpty() ? libHint : ""));
+            String libHint = "C:\\path\\to\\sky130.lib.spice tt\nC:\\path\\to\\models.lib typical";
+            pdkLibField = new MultiLineEditBox(
+                Minecraft.getInstance().font,
+                px + 16, py + Y_LIB_FIELD2, W - 32, H_LIB_FIELD,
+                Component.literal(libHint),
+                Component.literal(".lib paths"));
+            pdkLibField.setCharacterLimit(4000);
+            pdkLibField.setValue(pdkLibPath);
+            addRenderableWidget(pdkLibField);
         }
 
         // Always create the DC widgets; visibility is toggled in refreshFields().
@@ -209,7 +218,6 @@ public class SimulateEditScreen extends Screen {
         tempField.setSuggestion(savedTemp.isEmpty() ? tempHint : "");
         tempField.setResponder(text -> tempField.setSuggestion(text.isEmpty() ? tempHint : ""));
         refreshFields();
-        refreshPdkField();
 
         addRenderableWidget(
             Button.builder(Component.literal("Simulate"), b -> {
@@ -312,13 +320,6 @@ public class SimulateEditScreen extends Screen {
         }
     }
 
-    private void refreshPdkField() {
-        if (pdkLibField == null) return; // psa mode — no single-line field
-        boolean hasPdk = !"none".equals(pdkName);
-        pdkLibField.setEditable(hasPdk);
-        pdkLibField.setTextColor(hasPdk ? 0xFFFFFFFF : DIM);
-    }
-
     private void setAnalysis(String newAnalysis) {
         if (newAnalysis.equals(analysis)) return;
         captureWidgetState();
@@ -338,11 +339,6 @@ public class SimulateEditScreen extends Screen {
             }
         }
         refreshFields();
-    }
-
-    private void setPdk(String name) {
-        pdkName = name;
-        refreshPdkField();
     }
 
     /**
@@ -412,27 +408,10 @@ public class SimulateEditScreen extends Screen {
                 return true;
             }
         }
-        // ngbehavior compat chips (now placed above PDK)
+        // ngbehavior compat chips
         for (int i = 0; i < NG_MODES.length; i++) {
             if (hit(mx, my, px + 70 + i * 34, py + Y_COMPAT_CHIPS, 30, 14)) {
                 setNgBehavior(NG_MODES[i]);
-                return true;
-            }
-        }
-        // PDK radio options — only present in hsa mode. psa replaces this
-        // area with a multi-line .INCLUDE box; the other compat modes draw
-        // nothing here so there's nothing to hit-test.
-        if ("hsa".equals(ngBehavior)) {
-            if (hit(mx, my, px + 14, py + Y_PDK_CHIPS, 84, 16)) {
-                setPdk("none");
-                return true;
-            }
-            if (hit(mx, my, px + 98, py + Y_PDK_CHIPS, 75, 16)) {
-                setPdk("sky130A");
-                return true;
-            }
-            if (hit(mx, my, px + 173, py + Y_PDK_CHIPS, 110, 16)) {
-                setPdk("placeholder");
                 return true;
             }
         }
@@ -558,29 +537,13 @@ public class SimulateEditScreen extends Screen {
             g.drawCenteredString(f, NG_MODES[i], cx + 15, cy + 3, sel ? SEL : DIM);
         }
 
-        // PDK / library section — only rendered for hsa (single-line .lib) or
-        // psa (multi-line .INCLUDE). Other compat modes (none, ki, va) leave
-        // the area blank; their netlists don't need library config.
+        // Library section — only rendered for hsa (.lib) or psa (.INCLUDE).
+        // A single label above the multi-line box; one path per line. Other
+        // compat modes (none, va) leave the area blank.
         if ("psa".equals(ngBehavior)) {
-            g.drawString(f, ".lib paths (.INCLUDE, one per line):", px + 14, py + Y_PDK_LABEL, LABEL);
+            g.drawString(f, ".include paths (one per line):", px + 14, py + Y_LIB_LABEL2, LABEL);
         } else if ("hsa".equals(ngBehavior)) {
-            g.drawString(f, "PDK:", px + 14, py + Y_PDK_LABEL, LABEL);
-
-            boolean isNone        = "none".equals(pdkName);
-            boolean isSky130      = "sky130A".equals(pdkName);
-            boolean isPlaceholder = "placeholder".equals(pdkName);
-
-            checkbox(g, px + 16, py + Y_PDK_CHIPS + 2, isNone);
-            g.drawString(f, "no pdk", px + 30, py + Y_PDK_CHIPS + 1, isNone ? CHK_ON : DIM);
-
-            checkbox(g, px + 100, py + Y_PDK_CHIPS + 2, isSky130);
-            g.drawString(f, "sky130A", px + 114, py + Y_PDK_CHIPS + 1, isSky130 ? CHK_ON : DIM);
-
-            checkbox(g, px + 175, py + Y_PDK_CHIPS + 2, isPlaceholder);
-            g.drawString(f, "placeholder", px + 189, py + Y_PDK_CHIPS + 1, isPlaceholder ? CHK_ON : DIM);
-
-            boolean hasPdk = !"none".equals(pdkName);
-            g.drawString(f, ".lib path:", px + 16, py + Y_LIB_LABEL, hasPdk ? LABEL : DIM);
+            g.drawString(f, ".lib paths (one per line):", px + 14, py + Y_LIB_LABEL2, LABEL);
         }
     }
 

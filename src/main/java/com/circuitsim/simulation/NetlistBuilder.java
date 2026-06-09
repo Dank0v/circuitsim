@@ -206,13 +206,13 @@ public class NetlistBuilder {
             if (comp.subcircuitNodes != null) {
                 line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcResistorBlock) {
-                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
-                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcNmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false, aliases);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof IcPmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true, aliases);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -367,13 +367,13 @@ public class NetlistBuilder {
             if (comp.subcircuitNodes != null) {
                 line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcResistorBlock) {
-                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
-                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcNmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false, aliases);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof IcPmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true, aliases);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -526,13 +526,13 @@ public class NetlistBuilder {
             if (comp.subcircuitNodes != null) {
                 line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcResistorBlock) {
-                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
-                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcNmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false, aliases);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof IcPmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true, aliases);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -678,13 +678,13 @@ public class NetlistBuilder {
             if (comp.subcircuitNodes != null) {
                 line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcResistorBlock) {
-                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcCapacitorBlock) {
-                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, pdkName, aliases);
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof IcNmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, false, aliases);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof IcPmos4Block) {
-                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, pdkName, true, aliases);
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
                 line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
             } else if (comp.block instanceof CapacitorBlock) {
@@ -800,9 +800,10 @@ public class NetlistBuilder {
      * directive — psa collapses {@code .lib} to {@code .include} anyway and
      * has no hierarchical section support, so we emit .INCLUDE directly.
      *
-     * <p>In any other mode (the sky130A HSPICE path) we emit a single
-     * {@code .lib <path>} line as before; this preserves section lookup
-     * required by HSPICE-style PDKs.
+     * <p>In any other mode (the sky130A HSPICE path) each non-empty line of
+     * {@code pdkLibPath} becomes its own {@code .lib <path>} directive; this
+     * preserves the section lookup required by HSPICE-style PDKs while
+     * allowing several libraries to be included.
      */
     private static void appendPdkLib(StringBuilder sb, String pdkName, String pdkLibPath,
                                      String pdkLibPaths, String ngBehavior) {
@@ -821,8 +822,16 @@ public class NetlistBuilder {
             }
             return;
         }
-        if (!"none".equals(pdkName) && pdkLibPath != null && !pdkLibPath.isBlank()) {
-            sb.append(".lib ").append(pdkLibPath).append("\n");
+        if (pdkLibPath != null && !pdkLibPath.isBlank()) {
+            // hsa accepts multiple libraries — one .lib directive per non-empty
+            // line, mirroring the psa .INCLUDE handling above. Emitted
+            // regardless of any PDK selection (the model prefix is now chosen
+            // per-component, so the sim block no longer gates lib includes).
+            for (String raw : pdkLibPath.split("\\r?\\n")) {
+                String line = raw.strip();
+                if (line.isEmpty()) continue;
+                sb.append(".lib ").append(line).append("\n");
+            }
         }
     }
 
@@ -961,17 +970,20 @@ public class NetlistBuilder {
      * The model prefix is determined by the active PDK (e.g. sky130_fd_pr__ for sky130A).
      * Resistance formula for display (W, L in µm): R = (378.3 + 317.17*L) / W / mult
      */
-    private static String formatIcResistor(int idx, CircuitComponent comp, String pdkName,
+    private static String formatIcResistor(int idx, CircuitComponent comp,
                                             java.util.Map<Integer, String> aliases) {
-        String prefix = pdkModelPrefix(pdkName);
+        String prefix = pdkModelPrefix(comp.pdkName);
         String name   = comp.modelName.isBlank() ? "res_high_po" : comp.modelName;
         String model  = prefix + name;
         double w    = comp.wParam    > 0 ? comp.wParam    : 1.0;
         double l    = comp.lParam    > 0 ? comp.lParam    : 1.0;
         double mult = comp.multParam > 0 ? comp.multParam : 1.0;
-        // 3-pin subcircuit: p+ p- bulk
+        // 3-pin subcircuit: p+ p- bulk. The multiplier is ngspice's built-in
+        // subcircuit `m` (parallel copies → R/m), which matches the displayed
+        // R = (...)/mult; the subckt's own `mult` param only scales its
+        // mismatch term and leaves the nominal resistance unchanged.
         int bulk = comp.nodeC >= 0 ? comp.nodeC : 0;
-        return String.format("XR%d %s %s %s %s W=%g L=%g mult=%g",
+        return String.format("XR%d %s %s %s %s W=%g L=%g m=%g",
                 idx, nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
                 nodeRef(bulk, aliases), model, w, l, mult);
     }
@@ -983,9 +995,27 @@ public class NetlistBuilder {
      * For PMOS: nodeA=source(front), nodeB=drain(back), nodeC=bulk(right), nodeD=gate(left).
      * Derived area/perimeter params computed from W, L, NF per the sky130 HDK formulas.
      */
-    private static String formatIcMosfet(int idx, CircuitComponent comp, String pdkName, boolean isPmos,
+    /**
+     * Per-PDK MOSFET geometry constants. The derived area/perimeter params
+     * (AD/AS/PD/PS/NRD/NRS) are computed from these; a {@code null} lookup
+     * means the PDK has no geometry model, so only W/L/mult are emitted.
+     *
+     * <p>This is the per-PDK "dictionary" — add a {@code case} here to give a
+     * new PDK its own constants. {@code none}/{@code placeholder} resolve to
+     * {@code null} and emit a bare instance.
+     */
+    private record MosfetGeometry(double hdif) {}
+
+    private static MosfetGeometry mosfetGeometry(String pdkName) {
+        return switch (pdkName == null ? "none" : pdkName) {
+            case "sky130A" -> new MosfetGeometry(0.29); // sky130 HDK standard
+            default        -> null;                     // none / placeholder
+        };
+    }
+
+    private static String formatIcMosfet(int idx, CircuitComponent comp, boolean isPmos,
                                           java.util.Map<Integer, String> aliases) {
-        String prefix = pdkModelPrefix(pdkName);
+        String prefix = pdkModelPrefix(comp.pdkName);
         String defaultModel = isPmos ? "pfet_01v8" : "nfet_01v8";
         String name  = comp.modelName.isBlank() ? defaultModel : comp.modelName;
         String model = prefix + name;
@@ -993,27 +1023,48 @@ public class NetlistBuilder {
         double w    = comp.wParam    > 0 ? comp.wParam    : 1.0;
         double l    = comp.lParam    > 0 ? comp.lParam    : 1.0;
         double mult = comp.multParam > 0 ? comp.multParam : 1.0;
-        int    nf   = (int) Math.max(1, Math.round(comp.nfParam));
 
         int drain = isPmos ? comp.nodeB : comp.nodeA;
         int src   = isPmos ? comp.nodeA : comp.nodeB;
         int bulk  = comp.nodeC >= 0 ? comp.nodeC : 0;
         int gate  = comp.nodeD >= 0 ? comp.nodeD : 0;
 
-        // sky130 HDK standard area/perimeter formulas
-        double hdif = 0.29;
+        MosfetGeometry geo = mosfetGeometry(comp.pdkName);
+        if (geo == null) {
+            // No PDK geometry model (none/placeholder): emit a bare instance
+            // with only W/L and the device multiplier — no NF and no derived
+            // area/perimeter params. The multiplier is ngspice's built-in
+            // subcircuit `m` (parallel copies), which actually scales the
+            // device — unlike the subckt's own `mult` param.
+            return String.format(
+                "XM%d %s %s %s %s %s%n+ L=%g W=%g m=%g",
+                idx,
+                nodeRef(drain, aliases), nodeRef(gate, aliases),
+                nodeRef(src, aliases),   nodeRef(bulk, aliases),
+                model,
+                l, w, mult
+            );
+        }
+
+        int    nf   = (int) Math.max(1, Math.round(comp.nfParam));
+        // area/perimeter formulas, parameterised by the PDK's hdif
         double w_f  = w / nf;
         int    n_d  = (nf + 1) / 2;
         int    n_s  = (nf + 2) / 2;
-        double ad   = w_f * hdif * n_d;
-        double as_  = w_f * hdif * n_s;
-        double pd   = 2.0 * n_d * (w_f + hdif);
-        double ps   = 2.0 * n_s * (w_f + hdif);
-        double nrd  = hdif / w;
-        double nrs  = hdif / w;
+        double ad   = w_f * geo.hdif() * n_d;
+        double as_  = w_f * geo.hdif() * n_s;
+        double pd   = 2.0 * n_d * (w_f + geo.hdif());
+        double ps   = 2.0 * n_s * (w_f + geo.hdif());
+        double nrd  = geo.hdif() / w;
+        double nrs  = geo.hdif() / w;
 
+        // The multiplier is emitted as ngspice's built-in subcircuit `m`
+        // (parallel copies), NOT the sky130 subckt's `mult` param: `mult` only
+        // scales the (disabled-by-default) Monte-Carlo mismatch term and leaves
+        // the operating point unchanged, whereas `m` actually multiplies the
+        // device current/area.
         return String.format(
-            "XM%d %s %s %s %s %s%n+ L=%g W=%g NF=%d%n+ AD=%g AS=%g%n+ PD=%g PS=%g%n+ NRD=%g NRS=%g%n+ SA=0 SB=0 SD=0 MULT=%g",
+            "XM%d %s %s %s %s %s%n+ L=%g W=%g NF=%d%n+ AD=%g AS=%g%n+ PD=%g PS=%g%n+ NRD=%g NRS=%g%n+ SA=0 SB=0 SD=0 m=%g",
             idx,
             nodeRef(drain, aliases), nodeRef(gate, aliases),
             nodeRef(src, aliases),   nodeRef(bulk, aliases),
@@ -1027,17 +1078,19 @@ public class NetlistBuilder {
     }
 
     /** Formats a 2-pin IC capacitor subcircuit line. */
-    private static String formatIcCapacitor(int idx, CircuitComponent comp, String pdkName,
+    private static String formatIcCapacitor(int idx, CircuitComponent comp,
                                              java.util.Map<Integer, String> aliases) {
-        String prefix = pdkModelPrefix(pdkName);
+        String prefix = pdkModelPrefix(comp.pdkName);
         String name   = comp.modelName.isBlank() ? "cap_mim_m3_1" : comp.modelName;
         String model  = prefix + name;
         double w  = comp.wParam    > 0 ? comp.wParam    : 1.0;
         double l  = comp.lParam    > 0 ? comp.lParam    : 1.0;
         double mf = comp.multParam > 0 ? comp.multParam : 1.0;
-        return String.format("XC%d %s %s %s W=%g L=%g MF=%g m=%g",
+        // `m` (ngspice subcircuit multiplier) scales the nominal capacitance;
+        // the subckt's own `mf` only feeds its mismatch term, so we drop it.
+        return String.format("XC%d %s %s %s W=%g L=%g m=%g",
                 idx, nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
-                model, w, l, mf, mf);
+                model, w, l, mf);
     }
 
     /**
@@ -1106,6 +1159,13 @@ public class NetlistBuilder {
         public final double   lParam;
         public final double   multParam;
         public final double   nfParam;
+        // Per-component process PDK (e.g. "sky130A"). Drives the model-name
+        // prefix and the MOSFET geometry-param formula set. "none"/"placeholder"
+        // emit a bare W/L/mult instance with no prefix and no derived params.
+        // Non-final because it's attached post-construction via withPdkName()
+        // to avoid threading it through the telescoping constructor chain; the
+        // copy helpers (withValue/substituteVariable) carry it forward.
+        public String         pdkName = "none";
         // user-chosen index in the netlist (e.g. R5). 0 = auto-assigned.
         public final int      componentNumber;
         /**
@@ -1236,6 +1296,12 @@ public class NetlistBuilder {
                     1.0, 1.0, 1.0, 1.0, componentNumber, pinNodes);
         }
 
+        /** Attaches the process PDK and returns {@code this} (fluent). */
+        public CircuitComponent withPdkName(String pdk) {
+            this.pdkName = (pdk == null || pdk.isBlank()) ? "none" : pdk;
+            return this;
+        }
+
         /** Copy of {@code base} with the numeric {@link #value} replaced. Used by parametric sweep substitution. */
         public CircuitComponent withValue(double newValue) {
             return new CircuitComponent(block, pos, nodeA, nodeB, nodeC, nodeD,
@@ -1243,7 +1309,7 @@ public class NetlistBuilder {
                     modelName, wParam, lParam, multParam, nfParam,
                     componentNumber, subcircuitNodes, "",
                     wExpr, lExpr, multExpr, nfExpr,
-                    acValue, acValueExpr);
+                    acValue, acValueExpr).withPdkName(pdkName);
         }
 
         /** True if any expression slot references {@code varName}. */
@@ -1273,7 +1339,7 @@ public class NetlistBuilder {
                     modelName, w, l, m, n,
                     componentNumber, subcircuitNodes, ve,
                     we, le, me, ne,
-                    ac, ace);
+                    ac, ace).withPdkName(pdkName);
         }
 
         /** Which slot of this component references {@code varName}, or null. */

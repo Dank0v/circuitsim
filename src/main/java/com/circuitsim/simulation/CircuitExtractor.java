@@ -272,6 +272,7 @@ public class CircuitExtractor {
                 double multParam = 1.0;
                 int    compNum   = 0;
                 String wExpr = "", lExpr = "", multExpr = "";
+                String pdkName = "none";
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     modelName = be.getModelName();
@@ -282,12 +283,13 @@ public class CircuitExtractor {
                     wExpr     = be.getWExpr();
                     lExpr     = be.getLExpr();
                     multExpr  = be.getMultExpr();
+                    pdkName   = be.getPdkName();
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, nodeC, -1, 0, "DC", 0,
                         modelName, wParam, lParam, multParam, 1.0, compNum,
-                        null, "", wExpr, lExpr, multExpr, ""));
+                        null, "", wExpr, lExpr, multExpr, "").withPdkName(pdkName));
 
             } else if (block instanceof IcCapacitorBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
@@ -300,6 +302,7 @@ public class CircuitExtractor {
                 double multParam = 1.0;
                 int    compNum   = 0;
                 String wExpr = "", lExpr = "", multExpr = "";
+                String pdkName = "none";
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     modelName = be.getModelName();
@@ -310,12 +313,13 @@ public class CircuitExtractor {
                     wExpr     = be.getWExpr();
                     lExpr     = be.getLExpr();
                     multExpr  = be.getMultExpr();
+                    pdkName   = be.getPdkName();
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, -1, -1, 0, "DC", 0,
                         modelName, wParam, lParam, multParam, 1.0, compNum,
-                        null, "", wExpr, lExpr, multExpr, ""));
+                        null, "", wExpr, lExpr, multExpr, "").withPdkName(pdkName));
 
             } else if (block instanceof IcNmos4Block || block instanceof IcPmos4Block) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
@@ -345,6 +349,7 @@ public class CircuitExtractor {
                 double nfParam   = 1.0;
                 int    compNum   = 0;
                 String wExpr = "", lExpr = "", multExpr = "", nfExpr = "";
+                String pdkName = "none";
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     modelName = be.getModelName();
@@ -357,13 +362,14 @@ public class CircuitExtractor {
                     lExpr     = be.getLExpr();
                     multExpr  = be.getMultExpr();
                     nfExpr    = be.getNfExpr();
+                    pdkName   = be.getPdkName();
                 }
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, nodeC, nodeD,
                         0, "DC", 0,
                         modelName, wParam, lParam, multParam, nfParam, compNum,
-                        null, "", wExpr, lExpr, multExpr, nfExpr));
+                        null, "", wExpr, lExpr, multExpr, nfExpr).withPdkName(pdkName));
 
             } else if (block instanceof CcvsBlock || block instanceof CccsBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);

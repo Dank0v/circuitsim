@@ -244,13 +244,10 @@ public class ComponentBlockEntityRenderer
             double l    = be.getLParam();
             double mult = be.getMultParam();
             int    nf   = (int) Math.max(1, Math.round(be.getNfParam()));
+            boolean um = "sky130A".equals(be.getPdkName());
             lines.add((model == null || model.isEmpty()) ? defaultModel : model);
-            lines.add("W: " + (!wExpr.isEmpty()
-                    ? wExpr
-                    : ComponentEditScreen.trimTrailingZeros(String.format("%.6f", w)) + "u"));
-            lines.add("L: " + (!lExpr.isEmpty()
-                    ? lExpr
-                    : ComponentEditScreen.trimTrailingZeros(String.format("%.6f", l)) + "u"));
+            lines.add("W: " + (!wExpr.isEmpty() ? wExpr : formatIcLength(w, um)));
+            lines.add("L: " + (!lExpr.isEmpty() ? lExpr : formatIcLength(l, um)));
             lines.add("mult: " + (!multExpr.isEmpty()
                     ? multExpr
                     : ComponentEditScreen.trimTrailingZeros(String.format("%.6f", mult))));
@@ -258,6 +255,18 @@ public class ComponentBlockEntityRenderer
         }
 
         return lines;
+    }
+
+    /**
+     * Formats a MOSFET W/L for the floating label. sky130A stores microns, so
+     * the value is shown verbatim with a "um" suffix (e.g. 0.15 -> "0.15um").
+     * Meter-based PDKs (none/placeholder) store SI meters, so the value gets
+     * an SI prefix plus the "m" unit (e.g. 5e-6 -> "5um", 1.0 -> "1m").
+     */
+    private static String formatIcLength(double v, boolean microns) {
+        return microns
+                ? ComponentEditScreen.trimTrailingZeros(String.format("%.6f", v)) + "um"
+                : ComponentEditScreen.formatValue(v) + "m";
     }
 
     /**

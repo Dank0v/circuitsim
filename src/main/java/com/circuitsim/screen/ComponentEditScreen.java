@@ -410,7 +410,7 @@ public class ComponentEditScreen
                 fieldX,
                 cursorY + LABEL_H + GAP,
                 fieldW,
-                !currentWExpr.isEmpty() ? currentWExpr : String.valueOf(currentW),
+                !currentWExpr.isEmpty() ? currentWExpr : formatLengthForField(currentW),
                 32
             );
             cursorY += ROW_H;
@@ -418,7 +418,7 @@ public class ComponentEditScreen
                 fieldX,
                 cursorY + LABEL_H + GAP,
                 fieldW,
-                !currentLExpr.isEmpty() ? currentLExpr : String.valueOf(currentL),
+                !currentLExpr.isEmpty() ? currentLExpr : formatLengthForField(currentL),
                 32
             );
             cursorY += ROW_H;
@@ -441,6 +441,7 @@ public class ComponentEditScreen
                     nfInit,
                     16
                 );
+                updateNfEditable();
                 cursorY += ROW_H;
             }
             if (showMirror) {
@@ -708,7 +709,7 @@ public class ComponentEditScreen
             cursorY += ROW_H;
             g.drawString(
                 Minecraft.getInstance().font,
-                "W (um):",
+                "W (" + lengthUnit() + "):",
                 labelX,
                 cursorY,
                 LABEL_COLOR
@@ -716,7 +717,7 @@ public class ComponentEditScreen
             cursorY += ROW_H;
             g.drawString(
                 Minecraft.getInstance().font,
-                "L (um):",
+                "L (" + lengthUnit() + "):",
                 labelX,
                 cursorY,
                 LABEL_COLOR
@@ -754,6 +755,18 @@ public class ComponentEditScreen
         }
     }
 
+    /**
+     * NF only has meaning when the component's PDK supplies a geometry model
+     * (sky130A). For "none"/"placeholder" the netlist emits a bare W/L/mult
+     * instance with no NF, so the box is disabled and dimmed to match.
+     */
+    private void updateNfEditable() {
+        if (nfField == null) return;
+        boolean editable = "sky130A".equals(icPdkName);
+        nfField.setEditable(editable);
+        nfField.setTextColor(editable ? FIELD_COLOR : 0xFF666666);
+    }
+
     private void drawCheckbox(GuiGraphics g, int x, int y, boolean sel) {
         g.fill(x, y, x + 10, y + 10, 0xFF888888);
         g.fill(x + 1, y + 1, x + 9, y + 9, BG_COLOR);
@@ -765,12 +778,18 @@ public class ComponentEditScreen
         if (showSky130 && pdkRowY > 0) {
             int checkY = pdkRowY + LABEL_H + GAP;
             int panelX = (this.width - this.imageWidth) / 2;
+            String newPdk = null;
             // none checkbox: x=panelX+12, w covers label too (~50px)
-            if (hitBox(mx, my, panelX + 12, checkY, 58, 12)) { icPdkName = "none";        return true; }
-            // sky130A checkbox
-            if (hitBox(mx, my, panelX + 70, checkY, 68, 12)) { icPdkName = "sky130A";     return true; }
-            // placeholder checkbox
-            if (hitBox(mx, my, panelX + 140, checkY, 72, 12)) { icPdkName = "placeholder"; return true; }
+            if (hitBox(mx, my, panelX + 12, checkY, 58, 12))       newPdk = "none";
+            else if (hitBox(mx, my, panelX + 70, checkY, 68, 12))  newPdk = "sky130A";
+            else if (hitBox(mx, my, panelX + 140, checkY, 72, 12)) newPdk = "placeholder";
+            if (newPdk != null) {
+                String oldPdk = icPdkName;
+                icPdkName = newPdk;
+                reformatLengthFields(oldPdk, newPdk); // keep W/L physical size across the unit change
+                updateNfEditable();                   // NF is only editable under a geometry PDK
+                return true;
+            }
         }
         if (showMirror && mirrorRowY > 0) {
             int checkY = mirrorRowY + LABEL_H + GAP;
@@ -939,9 +958,9 @@ public class ComponentEditScreen
             if (modelNameField != null) modelName = modelNameField
                 .getValue()
                 .trim();
-            ParsedSlot ws = parseSlot(wField, 1.0);
+            ParsedSlot ws = parseLengthSlot(wField, 1.0);
             w = ws.value; wExpr = ws.expr;
-            ParsedSlot ls = parseSlot(lField, 1.0);
+            ParsedSlot ls = parseLengthSlot(lField, 1.0);
             l = ls.value; lExpr = ls.expr;
             ParsedSlot ms = parseSlot(multField, 1.0);
             mult = ms.value; multExpr = ms.expr;
@@ -1042,6 +1061,74 @@ public class ComponentEditScreen
                 if (isIdentifier(raw)) return new ParsedSlot(defaultVal, raw);
                 return new ParsedSlot(defaultVal, "");
             }
+        }
+    }
+
+    /**
+     * W/L unit handling is PDK-dependent. sky130A's ngspice models take W/L in
+     * microns, so a bare "5" means 5 µm and is emitted as-is. Every other PDK
+     * (none/placeholder, and any future meter-based PDK) follows the SPICE
+     * default of meters, so the user writes "5u" for 5 µm and the value is
+     * stored/emitted in meters.
+     */
+    private boolean lengthInMicrons() {
+        return "sky130A".equals(icPdkName);
+    }
+
+    /** Unit suffix shown in the W/L row labels for the active PDK. */
+    private String lengthUnit() {
+        return lengthInMicrons() ? "um" : "m";
+    }
+
+    /** Formats a stored W/L for its text box per the active unit convention. */
+    private String formatLengthForField(double v) {
+        return lengthInMicrons()
+                ? trimTrailingZeros(String.format("%.6f", v)) // micron magnitude, e.g. "0.15"
+                : formatValue(v);                              // SI meters, e.g. "150n"
+    }
+
+    /**
+     * Parses a W/L field per the active unit: microns take a plain number (no
+     * SI scaling — the value already is in µm); meters use the SI parser so
+     * "5u" becomes 5e-6. Variable names are honoured in both modes.
+     */
+    private ParsedSlot parseLengthSlot(EditBox box, double defaultVal) {
+        if (!lengthInMicrons()) return parseSlot(box, defaultVal);
+        if (box == null) return new ParsedSlot(defaultVal, "");
+        String raw = box.getValue().trim();
+        if (raw.isEmpty()) return new ParsedSlot(defaultVal, "");
+        try {
+            return new ParsedSlot(Double.parseDouble(raw), "");
+        } catch (NumberFormatException nfe) {
+            if (isIdentifier(raw)) return new ParsedSlot(defaultVal, raw);
+            return new ParsedSlot(defaultVal, "");
+        }
+    }
+
+    /**
+     * Rewrites the W/L text boxes when the PDK's length unit changes (microns
+     * <-> meters) so the physical size is preserved rather than the digits.
+     * e.g. "5u" (meters) becomes "5" when switching to sky130A's microns.
+     * Variable names and unparseable text are left untouched.
+     */
+    private void reformatLengthFields(String oldPdk, String newPdk) {
+        boolean oldUm = "sky130A".equals(oldPdk);
+        boolean newUm = "sky130A".equals(newPdk);
+        if (oldUm == newUm) return; // same unit — nothing to convert
+        for (EditBox box : new EditBox[]{wField, lField}) {
+            if (box == null) continue;
+            String raw = box.getValue().trim();
+            if (raw.isEmpty() || isIdentifier(raw)) continue;
+            double meters;
+            try {
+                meters = oldUm ? Double.parseDouble(raw) * 1e-6 // µm magnitude -> m
+                               : parseSI(raw);                  // SI meters
+            } catch (NumberFormatException nfe) {
+                continue; // leave whatever the user typed
+            }
+            box.setValue(newUm
+                    ? trimTrailingZeros(String.format("%.6f", meters * 1e6)) // m -> µm magnitude
+                    : formatValue(meters));                                   // SI meters
         }
     }
 

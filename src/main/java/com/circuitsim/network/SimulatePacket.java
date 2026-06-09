@@ -140,7 +140,7 @@ public class SimulatePacket {
         this.fStop = buf.readDouble();
         this.ptsPerDec = buf.readInt();
         this.pdkName = buf.readUtf(32);
-        this.pdkLibPath = buf.readUtf(512);
+        this.pdkLibPath = buf.readUtf(4096);
         this.pdkLibPaths = buf.readUtf(8192);
         this.ngBehavior = buf.readUtf(8);
         this.rawParam1 = buf.readUtf(32);
@@ -165,7 +165,7 @@ public class SimulatePacket {
         buf.writeDouble(fStop);
         buf.writeInt(ptsPerDec);
         buf.writeUtf(pdkName, 32);
-        buf.writeUtf(pdkLibPath, 512);
+        buf.writeUtf(pdkLibPath, 4096);
         buf.writeUtf(pdkLibPaths, 8192);
         buf.writeUtf(ngBehavior, 8);
         buf.writeUtf(rawParam1, 32);
