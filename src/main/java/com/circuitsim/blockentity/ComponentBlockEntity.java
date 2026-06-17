@@ -23,6 +23,13 @@ public class ComponentBlockEntity extends BlockEntity {
     // but is excluded from simulation print/plot. Only meaningful for voltage
     // probes; ignored by every other component type.
     private boolean probeNoPlot = false;
+    // Probe "subcircuit pin" mode: when true, the net this probe labels is
+    // exported as an external terminal when the connected circuit is converted
+    // to a subcircuit. subcktPinOrder gives the terminal's position in the
+    // .subckt pin list (1-based; 0 = unordered, sorted after numbered pins).
+    // Only meaningful for voltage probes.
+    private boolean subcktPin      = false;
+    private int     subcktPinOrder = 0;
     // Resistor "noiseless" mode: when true the resistor line carries the
     // ngspice instance flag `noisy=0`, excluding its thermal noise from
     // .noise analysis. Only meaningful for plain resistors.
@@ -169,6 +176,10 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setProbeLabel(String l)  { this.label = l; setChanged(); }
     public boolean isProbeNoPlot()       { return probeNoPlot; }
     public void setProbeNoPlot(boolean b){ this.probeNoPlot = b; setChanged(); }
+    public boolean isSubcktPin()         { return subcktPin; }
+    public void setSubcktPin(boolean b)  { this.subcktPin = b; setChanged(); }
+    public int getSubcktPinOrder()       { return subcktPinOrder; }
+    public void setSubcktPinOrder(int n) { this.subcktPinOrder = Math.max(0, n); setChanged(); }
     public boolean isRNoiseless()        { return rNoiseless; }
     public void setRNoiseless(boolean b) { this.rNoiseless = b; setChanged(); }
     public int getComponentNumber()        { return componentNumber; }
@@ -284,6 +295,8 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("frequency", frequency);
         tag.putString("label", label);
         tag.putBoolean("probeNoPlot", probeNoPlot);
+        tag.putBoolean("subcktPin", subcktPin);
+        tag.putInt("subcktPinOrder", subcktPinOrder);
         tag.putBoolean("rNoiseless", rNoiseless);
         tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
@@ -345,6 +358,8 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("frequency"))  frequency  = tag.getDouble("frequency");
         if (tag.contains("label"))      label      = tag.getString("label");
         if (tag.contains("probeNoPlot")) probeNoPlot = tag.getBoolean("probeNoPlot");
+        if (tag.contains("subcktPin"))      subcktPin      = tag.getBoolean("subcktPin");
+        if (tag.contains("subcktPinOrder")) subcktPinOrder = tag.getInt("subcktPinOrder");
         if (tag.contains("rNoiseless"))  rNoiseless  = tag.getBoolean("rNoiseless");
         if (tag.contains("componentNumber")) componentNumber = tag.getInt("componentNumber");
         if (tag.contains("modelName"))  modelName  = tag.getString("modelName");
@@ -424,6 +439,8 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("frequency", frequency);
         tag.putString("label", label);
         tag.putBoolean("probeNoPlot", probeNoPlot);
+        tag.putBoolean("subcktPin", subcktPin);
+        tag.putInt("subcktPinOrder", subcktPinOrder);
         tag.putBoolean("rNoiseless", rNoiseless);
         tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);

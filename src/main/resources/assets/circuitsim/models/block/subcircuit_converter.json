@@ -1,0 +1,7 @@
+{
+    "parent": "minecraft:block/cube_column",
+    "textures": {
+        "end": "circuitsim:block/subcircuit_converter",
+        "side": "circuitsim:block/subcircuit_converter_side"
+    }
+}

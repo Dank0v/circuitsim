@@ -144,6 +144,14 @@ public class ModBlocks {
             () -> new SimLinkBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_MAGENTA).strength(1.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> SUBCIRCUIT = BLOCKS.register("subcircuit",
+            () -> new SubcircuitBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.METAL).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> SUBCIRCUIT_CONVERTER = BLOCKS.register("subcircuit_converter",
+            () -> new SubcircuitConverterBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_MAGENTA).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static void register(IEventBus eventBus) {
         BLOCKS.register(eventBus);
     }

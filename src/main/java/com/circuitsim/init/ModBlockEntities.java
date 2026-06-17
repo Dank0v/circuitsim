@@ -2,6 +2,7 @@ package com.circuitsim.init;
 
 import com.circuitsim.CircuitSimMod;
 import com.circuitsim.blockentity.ComponentBlockEntity;
+import com.circuitsim.blockentity.SubcircuitBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.registries.DeferredRegister;
@@ -46,6 +47,13 @@ public class ModBlockEntities {
                             ModBlocks.VCVS.get(),
                             ModBlocks.VCCS.get(),
                             ModBlocks.VSWITCH.get()
+                    ).build(null)
+            );
+
+    public static final RegistryObject<BlockEntityType<SubcircuitBlockEntity>> SUBCIRCUIT_BE =
+            BLOCK_ENTITIES.register("subcircuit_be", () ->
+                    BlockEntityType.Builder.of(SubcircuitBlockEntity::new,
+                            ModBlocks.SUBCIRCUIT.get()
                     ).build(null)
             );
 

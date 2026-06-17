@@ -52,6 +52,10 @@ public class ComponentUpdatePacket {
     // Resistor "noiseless" mode (emits `noisy=0` on the R line). Only
     // meaningful for plain resistors; every other component type sends false.
     private final boolean  rNoiseless;
+    // Probe "subcircuit pin" mode + its ordering. Only meaningful for voltage
+    // probes; every other component type sends false / 0.
+    private final boolean  subcktPin;
+    private final int      subcktPinOrder;
 
     public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
                                   double frequency, String label) {
@@ -157,6 +161,21 @@ public class ComponentUpdatePacket {
                                   String wExpr, String lExpr, String multExpr, String nfExpr,
                                   double acValue, String acValueExpr, boolean probeNoPlot,
                                   boolean rNoiseless) {
+        this(pos, value, sourceType, frequency, label, modelName, wParam, lParam, multParam,
+                nfParam, pdkName, componentNumber, mirrored, pulseVLow, pulseTr, pulseTf, pulsePw,
+                valueExpr, wExpr, lExpr, multExpr, nfExpr, acValue, acValueExpr, probeNoPlot,
+                rNoiseless, false, 0);
+    }
+
+    public ComponentUpdatePacket(BlockPos pos, double value, String sourceType,
+                                  double frequency, String label,
+                                  String modelName, double wParam, double lParam, double multParam,
+                                  double nfParam, String pdkName, int componentNumber, boolean mirrored,
+                                  double pulseVLow, double pulseTr, double pulseTf, double pulsePw,
+                                  String valueExpr,
+                                  String wExpr, String lExpr, String multExpr, String nfExpr,
+                                  double acValue, String acValueExpr, boolean probeNoPlot,
+                                  boolean rNoiseless, boolean subcktPin, int subcktPinOrder) {
         this.pos             = pos;
         this.value           = value;
         this.sourceType      = sourceType;
@@ -183,6 +202,8 @@ public class ComponentUpdatePacket {
         this.acValueExpr     = acValueExpr == null ? "" : acValueExpr;
         this.probeNoPlot     = probeNoPlot;
         this.rNoiseless      = rNoiseless;
+        this.subcktPin       = subcktPin;
+        this.subcktPinOrder  = Math.max(0, subcktPinOrder);
     }
 
     public ComponentUpdatePacket(FriendlyByteBuf buf) {
@@ -212,6 +233,8 @@ public class ComponentUpdatePacket {
         this.acValueExpr     = buf.readUtf(64);
         this.probeNoPlot     = buf.readBoolean();
         this.rNoiseless      = buf.readBoolean();
+        this.subcktPin       = buf.readBoolean();
+        this.subcktPinOrder  = buf.readVarInt();
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -241,6 +264,8 @@ public class ComponentUpdatePacket {
         buf.writeUtf(acValueExpr == null ? "" : acValueExpr, 64);
         buf.writeBoolean(probeNoPlot);
         buf.writeBoolean(rNoiseless);
+        buf.writeBoolean(subcktPin);
+        buf.writeVarInt(subcktPinOrder);
     }
 
     public static ComponentUpdatePacket decode(FriendlyByteBuf buf) {
@@ -278,6 +303,8 @@ public class ComponentUpdatePacket {
             cbe.setAcValueExpr(acValueExpr);
             cbe.setProbeNoPlot(probeNoPlot);
             cbe.setRNoiseless(rNoiseless);
+            cbe.setSubcktPin(subcktPin);
+            cbe.setSubcktPinOrder(subcktPinOrder);
             cbe.setChanged();
 
             BlockState curState = level.getBlockState(pos);

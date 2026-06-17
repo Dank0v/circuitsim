@@ -245,6 +245,122 @@ public class NetlistBuilder {
     }
 
     // -------------------------------------------------------------------------
+    // .SUBCKT definition (user-defined subcircuits)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Builds a self-contained {@code .subckt <name> <pins…> … .ends} block from
+     * an extracted circuit. The device lines mirror the analysis-independent
+     * forms used by {@link #buildTranNetlist} (full SIN/PULSE specs, etc.) so
+     * the resulting subcircuit behaves correctly under any analysis once
+     * instantiated. Current probes, analysis directives, and the control block
+     * are intentionally omitted — a subcircuit is just a device list.
+     *
+     * <p>{@code pinNames} are the external terminals in declaration order; they
+     * must be the sanitized probe-label aliases that also appear in the body
+     * (via {@link #aliasesFromProbes}), so node references resolve to the pin
+     * names. Node {@code 0} stays global ground inside the subcircuit.
+     */
+    public static String buildSubcktDefinition(String name, List<String> pinNames,
+                                               List<CircuitComponent> components,
+                                               List<ProbeInfo> probes) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(".subckt ").append(name);
+        if (pinNames != null) {
+            for (String p : pinNames) sb.append(' ').append(p);
+        }
+        sb.append('\n');
+
+        java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
+
+        IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
+                      lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
+                      iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
+                      eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+        java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
+        boolean hasDiode = false;
+
+        for (CircuitComponent comp : components) {
+            String line;
+            if (comp.subcircuitNodes != null) {
+                line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcResistorBlock) {
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcCapacitorBlock) {
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcNmos4Block) {
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof IcPmos4Block) {
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof ResistorBlock) {
+                line = formatResistor(rIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof CapacitorBlock) {
+                line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof InductorBlock) {
+                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof VoltageSourceBlock) {
+                // Carry both DC bias and (when set) AC magnitude so the subckt
+                // is usable in .op AND .ac without re-extraction.
+                StringBuilder v = new StringBuilder();
+                v.append(String.format("V%d %s %s DC %s",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        num(comp.value, comp.valueExpr)));
+                if (comp.acValue != 0 || (comp.acValueExpr != null && !comp.acValueExpr.isBlank())) {
+                    v.append(" AC ").append(num(comp.acValue, comp.acValueExpr));
+                }
+                line = v.toString();
+            } else if (comp.block instanceof VoltageSourceSinBlock) {
+                double freq = (comp.frequency > 0) ? comp.frequency : 1.0;
+                line = String.format("V%d %s %s SIN(0 %s %g)",
+                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr), freq);
+            } else if (comp.block instanceof VoltageSourcePulseBlock) {
+                double v1  = comp.wParam;
+                double tr  = comp.lParam    > 0 ? comp.lParam    : 1e-9;
+                double tf  = comp.multParam > 0 ? comp.multParam : 1e-9;
+                double pw  = comp.nfParam   > 0 ? comp.nfParam   : 1e-6;
+                double per = comp.frequency > 0 ? comp.frequency : 2e-6;
+                line = String.format("V%d %s %s PULSE(%g %s 0 %g %g %g %g)",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        v1, num(comp.value, comp.valueExpr), tr, tf, pw, per);
+            } else if (comp.block instanceof CurrentSourceBlock) {
+                line = String.format("I%d %s %s DC %s", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof DiodeBlock) {
+                String dmodel = (comp.modelName == null || comp.modelName.isBlank())
+                        ? "DMOD" : comp.modelName.trim();
+                line = String.format("D%d %s %s %s",
+                        dIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
+                if ("DMOD".equals(dmodel)) hasDiode = true;
+            } else if (comp.block instanceof BehavioralVoltageSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof BehavioralCurrentSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof VSwitchBlock) {
+                line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else {
+                String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
+                if (controlled == null) continue;
+                line = controlled;
+            }
+            sb.append(line).append('\n');
+        }
+
+        // Models local to the subcircuit (legal in ngspice — scoped to the subckt).
+        if (hasDiode) sb.append(".MODEL DMOD D\n");
+        appendSwitchModels(sb, swModels);
+
+        sb.append(".ends ").append(name).append('\n');
+        return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
     // .OP
     // -------------------------------------------------------------------------
 

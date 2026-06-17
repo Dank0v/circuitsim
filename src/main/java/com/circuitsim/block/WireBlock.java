@@ -104,6 +104,17 @@ public class WireBlock extends Block {
             return outward == dir.getOpposite();
         }
 
+        // Subcircuit 5×5: a wire connects to a cell only on a pin face, and only
+        // if that pin index is within the loaded subcircuit's live pin count.
+        if (neighbor instanceof SubcircuitBlock) {
+            int col = neighborState.getValue(SubcircuitBlock.LOCAL_X);
+            int row = neighborState.getValue(SubcircuitBlock.LOCAL_Z);
+            Direction facing = neighborState.getValue(SubcircuitBlock.FACING);
+            int pinIndex = SubcircuitBlock.pinIndexAt(col, row, dir.getOpposite(), facing);
+            if (pinIndex == 0) return false;
+            return pinIndex <= SubcircuitBlock.activePinCount(level, neighborPos);
+        }
+
         // Discrete 3-pin NMOS: front (drain), back (source), counter-clockwise (gate).
         // Clockwise face is insulated.
         if (neighbor instanceof DiscreteNmosBlock) {

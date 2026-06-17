@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "11";  // bumped for VC switch + noise analysis + Param block
+    private static final String PROTOCOL_VERSION = "12";  // bumped for user-defined subcircuits
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -84,6 +84,12 @@ public class ModMessages {
                 .encoder(VSwitchUpdatePacket::encode)
                 .decoder(VSwitchUpdatePacket::decode)
                 .consumerMainThread(ModMessages::handleVSwitchUpdate)
+                .add();
+
+        INSTANCE.messageBuilder(SubcircuitConvertPacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SubcircuitConvertPacket::encode)
+                .decoder(SubcircuitConvertPacket::decode)
+                .consumerMainThread(ModMessages::handleSubcircuitConvert)
                 .add();
 
         // ── client-bound ──────────────────────────────────────────────────────
@@ -164,6 +170,12 @@ public class ModMessages {
 
     private static void handleVSwitchUpdate(VSwitchUpdatePacket msg,
                                              Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleSubcircuitConvert(SubcircuitConvertPacket msg,
+                                                 Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }

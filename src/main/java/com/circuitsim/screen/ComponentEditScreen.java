@@ -54,6 +54,12 @@ public class ComponentEditScreen
     // the resistor contributes no thermal noise to .noise analysis.
     private int     rNoiseRowY = 0; // absolute Y of the noiseless checkbox row (set during init)
     private boolean rNoiseless = false;
+    // Probe "subcircuit pin" toggle + ordering. When set, the probe's net is
+    // exported as a subcircuit terminal on conversion; the order field places it
+    // in the .subckt pin list.
+    private int     subcktPinRowY = 0; // absolute Y of the subckt-pin checkbox row (set during init)
+    private boolean subcktPin = false;
+    private EditBox subcktOrderField;
 
     private boolean showValue;
     private boolean showSourceType;
@@ -66,6 +72,8 @@ public class ComponentEditScreen
     private boolean showNumber;
     /** Voltage probe only: show the "name only (no plot)" checkbox row. */
     private boolean showNoPlot;
+    /** Voltage probe only: show the "subcircuit pin" checkbox + order field. */
+    private boolean showSubcktPin;
     /** Plain resistor only: show the "noiseless (noisy=0)" checkbox row. */
     private boolean showRNoise;
     /** Voltage source: show the AC magnitude field below the DC value field. */
@@ -131,6 +139,7 @@ public class ComponentEditScreen
         double currentMult = 1.0;
         double currentNf = 1.0;
         int    currentNumber = 0;
+        int    currentSubcktOrder = 0;
         String currentValueExpr = "";
         String currentWExpr = "";
         String currentLExpr = "";
@@ -161,6 +170,8 @@ public class ComponentEditScreen
             currentAcValue     = cbe.getAcValue();
             currentAcValueExpr = cbe.getAcValueExpr();
             probeNoPlot        = cbe.isProbeNoPlot();
+            subcktPin          = cbe.isSubcktPin();
+            currentSubcktOrder = cbe.getSubcktPinOrder();
             rNoiseless         = cbe.isRNoiseless();
             // For pulse sources the period lives in the BE's frequency slot;
             // pre-fill the editor with a sensible default (matches the BE
@@ -209,6 +220,8 @@ public class ComponentEditScreen
         // "Name only" mode is a voltage-probe concept: it suppresses the
         // print/plot while still letting the probe name (and merge) its net.
         showNoPlot = isProbe;
+        // Subcircuit-pin toggle is also a voltage-probe concept.
+        showSubcktPin = isProbe;
         showRNoise = "resistor".equals(componentType);
         showSky130 = isSky130 || isIcCap || isNmos4 || isPmos4;
         showNf = isNmos4 || isPmos4;
@@ -229,6 +242,7 @@ public class ComponentEditScreen
         if (showPulse) rowCount += 5;        // V_2, Period, Time-high, TR, TF (V1 reuses valueField)
         if (showLabel) rowCount++;
         if (showNoPlot) rowCount++;
+        if (showSubcktPin) rowCount += 2; // checkbox row + order field row
         if (showRNoise) rowCount++;
         if (showSky130) rowCount += 5 + (showNf ? 1 : 0) + (showMirror ? 1 : 0); // pdk, model, W, L, mult [, NF] [, Mirror]
         if (showControlSource) rowCount++;
@@ -383,6 +397,21 @@ public class ComponentEditScreen
             // No EditBox — a clickable checkbox row rendered in render()/handled
             // in mouseClicked(), mirroring the Mirror toggle pattern.
             noPlotRowY = cursorY;
+            cursorY += ROW_H;
+        }
+
+        if (showSubcktPin) {
+            // Checkbox row (toggled in mouseClicked) ...
+            subcktPinRowY = cursorY;
+            cursorY += ROW_H;
+            // ... followed by the pin-order field.
+            subcktOrderField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                currentSubcktOrder > 0 ? Integer.toString(currentSubcktOrder) : "",
+                4
+            );
             cursorY += ROW_H;
         }
 
@@ -720,6 +749,20 @@ public class ComponentEditScreen
             );
             cursorY += ROW_H;
         }
+        if (showSubcktPin) {
+            g.drawString(Minecraft.getInstance().font, "Subcircuit:", labelX, cursorY, LABEL_COLOR);
+            int spCheckY = cursorY + LABEL_H + GAP;
+            drawCheckbox(g, panelX + 12, spCheckY, subcktPin);
+            g.drawString(
+                Minecraft.getInstance().font,
+                subcktPin ? "export net as subcircuit pin" : "not a subcircuit pin",
+                panelX + 26, spCheckY + 1,
+                subcktPin ? 0xFF4FC3F7 : 0xFF666666
+            );
+            cursorY += ROW_H;
+            g.drawString(Minecraft.getInstance().font, "Pin order:", labelX, cursorY, LABEL_COLOR);
+            cursorY += ROW_H;
+        }
         if (showControlSource) {
             g.drawString(
                 Minecraft.getInstance().font,
@@ -868,6 +911,11 @@ public class ComponentEditScreen
             int checkY = noPlotRowY + LABEL_H + GAP;
             int panelX = (this.width - this.imageWidth) / 2;
             if (hitBox(mx, my, panelX + 12, checkY, 200, 12)) { probeNoPlot = !probeNoPlot; return true; }
+        }
+        if (showSubcktPin && subcktPinRowY > 0) {
+            int checkY = subcktPinRowY + LABEL_H + GAP;
+            int panelX = (this.width - this.imageWidth) / 2;
+            if (hitBox(mx, my, panelX + 12, checkY, 200, 12)) { subcktPin = !subcktPin; return true; }
         }
         if (showRNoise && rNoiseRowY > 0) {
             int checkY = rNoiseRowY + LABEL_H + GAP;
@@ -1052,6 +1100,15 @@ public class ComponentEditScreen
             }
         }
 
+        int subcktOrder = 0;
+        if (showSubcktPin && subcktOrderField != null) {
+            String raw = subcktOrderField.getValue().trim();
+            if (!raw.isEmpty()) {
+                try { subcktOrder = Math.max(0, Integer.parseInt(raw)); }
+                catch (NumberFormatException ignored) {}
+            }
+        }
+
         // Pulse-source extra params (only meaningful when showPulse is set,
         // but always sent so the packet shape is constant). Defaults match
         // the BE defaults so non-pulse blocks don't accidentally wipe them.
@@ -1102,7 +1159,9 @@ public class ComponentEditScreen
                 acValue,
                 acValueExpr,
                 probeNoPlot,
-                rNoiseless
+                rNoiseless,
+                subcktPin,
+                subcktOrder
             )
         );
     }

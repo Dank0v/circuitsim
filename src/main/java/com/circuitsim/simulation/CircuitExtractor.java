@@ -49,6 +49,32 @@ public class CircuitExtractor {
         return new CircuitExtractor().extractCircuit(level, startPos);
     }
 
+    /**
+     * BFS the connected circuit reachable from {@code startPos}, returning every
+     * circuit-block position found. {@code startPos} itself is included only if
+     * it is a circuit block. Used by the Subcircuit Converter to snapshot the
+     * exact schematic it should turn into a chip.
+     */
+    public static Set<BlockPos> connectedCircuitBlocks(Level level, BlockPos startPos) {
+        CircuitExtractor ex = new CircuitExtractor();
+        Set<BlockPos> visited = new HashSet<>();
+        Queue<BlockPos> queue = new LinkedList<>();
+        queue.add(startPos);
+        visited.add(startPos);
+        while (!queue.isEmpty()) {
+            BlockPos current = queue.poll();
+            for (Direction dir : Direction.values()) {
+                BlockPos neighbor = current.relative(dir);
+                if (!visited.contains(neighbor) && ex.isCircuitBlock(level, neighbor)) {
+                    visited.add(neighbor);
+                    queue.add(neighbor);
+                }
+            }
+        }
+        visited.removeIf(p -> !ex.isCircuitBlock(level, p));
+        return visited;
+    }
+
     private ExtractionResult extractCircuit(Level level, BlockPos startPos) {
         Set<BlockPos> visited = new HashSet<>();
         Queue<BlockPos> queue = new LinkedList<>();
@@ -173,6 +199,10 @@ public class CircuitExtractor {
         List<NetlistBuilder.UserPlot> userPlots = new ArrayList<>();
         Set<String> usedPlotNames = new HashSet<>();
         Map<Integer, String> probeLabels = new HashMap<>();
+        // Distinct user-defined subcircuit definitions ( .subckt … .ends ),
+        // keyed by subckt name so multiple instances of the same subcircuit
+        // embed the definition only once. Populated by the SubcircuitBlock branch.
+        java.util.LinkedHashMap<String, String> subcktDefs = new java.util.LinkedHashMap<>();
 
         for (BlockPos pos : visited) {
             Block block = level.getBlockState(pos).getBlock();
@@ -595,6 +625,22 @@ public class CircuitExtractor {
                 components.add(NetlistBuilder.CircuitComponent.subcircuit(
                         block, pos, pinNodes, modelName, compNum));
 
+            } else if (block instanceof SubcircuitBlock) {
+                // User-defined subcircuit instance. Only the anchor cell emits
+                // the X line; it also contributes the .subckt definition once.
+                if (state.getValue(SubcircuitBlock.CELL_KIND) != SubcircuitBlock.CellKind.ANCHOR) continue;
+                if (!(level.getBlockEntity(pos)
+                        instanceof com.circuitsim.blockentity.SubcircuitBlockEntity sbe)) continue;
+                int pinCount = sbe.getActivePinCount();
+                if (!sbe.hasChip() || pinCount == 0) continue;
+
+                Direction facing = state.getValue(SubcircuitBlock.FACING);
+                int[] pinNodes = resolveSubcircuitPinNodes(pos, facing, pinCount,
+                        visited, nodeMap, nextNode);
+                components.add(NetlistBuilder.CircuitComponent.subcircuit(
+                        block, pos, pinNodes, sbe.getSubcktName(), 0));
+                subcktDefs.putIfAbsent(sbe.getSubcktName(), sbe.getSubcktDef());
+
             } else if (block instanceof BaseComponentBlock) {
                 // GroundBlock is also a BaseComponentBlock but already
                 // handled in the union-find pass above as a node anchor.
@@ -718,7 +764,8 @@ public class CircuitExtractor {
             aliasedProbes.add(new NetlistBuilder.ProbeInfo(p.node, p.label, netName, p.noPlot));
         }
 
-        return new ExtractionResult(true, "", components, aliasedProbes, currentProbes, probeLabels, parametricBlocks, userCommands, userPlots);
+        return new ExtractionResult(true, "", components, aliasedProbes, currentProbes, probeLabels, parametricBlocks, userCommands, userPlots,
+                new ArrayList<>(subcktDefs.values()));
     }
 
     /**
@@ -839,6 +886,30 @@ public class CircuitExtractor {
     }
 
     /**
+     * Resolves the live pin nodes of a {@link SubcircuitBlock} instance, in
+     * physical pin order (pin 1 → {@code nodes[0]}, …). Unlike the amplifier,
+     * each pin's node is read from the wire <i>adjacent to that pin face</i> —
+     * NOT from the cell — so the two pins sharing a corner cell stay
+     * electrically independent. A pin with no adjacent wire gets a fresh
+     * (floating) node.
+     */
+    private int[] resolveSubcircuitPinNodes(BlockPos anchor, Direction facing, int pinCount,
+                                            Set<BlockPos> visited,
+                                            Map<BlockPos, Integer> nodeMap, int[] nextNode) {
+        int[] nodes = new int[pinCount];
+        for (int i = 0; i < pinCount; i++) {
+            SubcircuitBlock.Pin pin = SubcircuitBlock.PINS[i];
+            BlockPos cell = SubcircuitBlock.cellAt(anchor, pin.col(), pin.row(), facing);
+            Direction outward = SubcircuitBlock.rotateDir(pin.outward(), facing);
+            BlockPos wirePos = cell.relative(outward);
+            nodes[i] = visited.contains(wirePos)
+                    ? resolveNode(wirePos, visited, nodeMap, nextNode)
+                    : nextNode[0]++;
+        }
+        return nodes;
+    }
+
+    /**
      * Returns the node id of one specific pin cell of a Controlled2x3Block
      * instance whose anchor is {@code anchor}. If the pin cell is not in the
      * visited set (shouldn't normally happen — the instance is atomic), a
@@ -892,6 +963,7 @@ public class CircuitExtractor {
                 || block instanceof ParametricBlock
                 || block instanceof CommandsBlock
                 || block instanceof AmplifierBlock
+                || block instanceof SubcircuitBlock
                 || block instanceof DiscreteNmosBlock
                 || block instanceof DiscretePmosBlock
                 || block instanceof DiscreteNpnBlock
@@ -929,6 +1001,13 @@ public class CircuitExtractor {
         public final List<String>                            userCommands;
         /** {@code plot NAME = EXPR} directives extracted from Commands blocks. */
         public final List<NetlistBuilder.UserPlot>           userPlots;
+        /**
+         * Full {@code .subckt … .ends} definition text for every distinct
+         * user-defined subcircuit instantiated in this circuit (one per unique
+         * subckt name). Spliced into the netlist deck at simulation time. Empty
+         * when no {@link com.circuitsim.block.SubcircuitBlock} carries a chip.
+         */
+        public final List<String>                            subcktDefs;
 
         public ExtractionResult(boolean success, String errorMessage,
                                 List<NetlistBuilder.CircuitComponent> components,
@@ -938,6 +1017,19 @@ public class CircuitExtractor {
                                 List<ParametricInfo>                  parametricBlocks,
                                 List<String>                          userCommands,
                                 List<NetlistBuilder.UserPlot>         userPlots) {
+            this(success, errorMessage, components, probes, currentProbes, probeLabels,
+                    parametricBlocks, userCommands, userPlots, Collections.emptyList());
+        }
+
+        public ExtractionResult(boolean success, String errorMessage,
+                                List<NetlistBuilder.CircuitComponent> components,
+                                List<NetlistBuilder.ProbeInfo>        probes,
+                                List<NetlistBuilder.CurrentProbeInfo> currentProbes,
+                                Map<Integer, String>                  probeLabels,
+                                List<ParametricInfo>                  parametricBlocks,
+                                List<String>                          userCommands,
+                                List<NetlistBuilder.UserPlot>         userPlots,
+                                List<String>                          subcktDefs) {
             this.success          = success;
             this.errorMessage     = errorMessage;
             this.components       = components;
@@ -947,6 +1039,7 @@ public class CircuitExtractor {
             this.parametricBlocks = parametricBlocks;
             this.userCommands     = userCommands;
             this.userPlots        = userPlots;
+            this.subcktDefs       = subcktDefs == null ? Collections.emptyList() : subcktDefs;
         }
     }
 }

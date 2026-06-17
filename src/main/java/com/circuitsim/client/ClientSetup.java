@@ -2,9 +2,11 @@ package com.circuitsim.client;
 
 import com.circuitsim.CircuitSimMod;
 import com.circuitsim.client.renderer.ComponentBlockEntityRenderer;
+import com.circuitsim.client.renderer.SubcircuitBlockEntityRenderer;
 import com.circuitsim.init.ModBlockEntities;
 import com.circuitsim.init.ModMenuTypes;
 import com.circuitsim.screen.ComponentEditScreen;
+import com.circuitsim.screen.SubcircuitScreen;
 import net.minecraft.client.gui.screens.MenuScreens;
 import net.minecraft.core.BlockPos;
 import net.minecraftforge.api.distmarker.Dist;
@@ -38,6 +40,10 @@ public class ClientSetup {
                 ModMenuTypes.COMPONENT_EDIT.get(),
                 ComponentEditScreen::new
             );
+            MenuScreens.register(
+                ModMenuTypes.SUBCIRCUIT.get(),
+                SubcircuitScreen::new
+            );
         });
     }
 
@@ -48,6 +54,10 @@ public class ClientSetup {
         event.registerBlockEntityRenderer(
             ModBlockEntities.COMPONENT_BE.get(),
             ComponentBlockEntityRenderer::new
+        );
+        event.registerBlockEntityRenderer(
+            ModBlockEntities.SUBCIRCUIT_BE.get(),
+            SubcircuitBlockEntityRenderer::new
         );
     }
 

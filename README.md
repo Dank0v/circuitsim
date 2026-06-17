@@ -47,7 +47,7 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
   - `.TRAN` — transient analysis (time step, stop time)
   - `.NOISE` — small-signal noise analysis (output node, input source, dec/lin/oct sweep)
 - **Temperature** — single value (e.g. `27`) or sweep spec (e.g. `20:40:5` or `20,30,40`) for one run per temperature
-- **ngspice compat modes:** `hsa`, `psa`, `lt`, `ki`, `va`
+- **ngspice compat modes:** `none`, `hsa`, `psa`
 - **Param Block** — declares variables, one per line: scalars become `.param` lines, a single `start:stop:step` range or comma list sweeps that variable across runs
 - **Commands Block** — multi-line block of raw ngspice commands injected verbatim into the netlist `.control` section
 - **Sim Link Block** — bridges two physically-disconnected sub-circuits into the same netlist without unioning their nodes (useful for routing a CCVS/CCCS controlling source from a remote region)

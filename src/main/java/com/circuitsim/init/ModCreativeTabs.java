@@ -52,6 +52,9 @@ public class ModCreativeTabs {
                                 output.accept(ModItems.CCVS.get());
                                 output.accept(ModItems.CCCS.get());
                                 output.accept(ModItems.SIM_LINK.get());
+                                output.accept(ModItems.SUBCIRCUIT.get());
+                                output.accept(ModItems.SUBCIRCUIT_CONVERTER.get());
+                                output.accept(ModItems.SUBCIRCUIT_CHIP.get());
                             })
                             .build()
             );

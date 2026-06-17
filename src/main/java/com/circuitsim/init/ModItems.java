@@ -1,6 +1,7 @@
 package com.circuitsim.init;
 
 import com.circuitsim.CircuitSimMod;
+import com.circuitsim.item.SubcircuitItem;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
@@ -46,6 +47,13 @@ public class ModItems {
     public static final RegistryObject<Item> VCCS                  = blockItem(ModBlocks.VCCS);
     public static final RegistryObject<Item> VSWITCH               = blockItem(ModBlocks.VSWITCH);
     public static final RegistryObject<Item> SIM_LINK              = blockItem(ModBlocks.SIM_LINK);
+    public static final RegistryObject<Item> SUBCIRCUIT            = blockItem(ModBlocks.SUBCIRCUIT);
+    public static final RegistryObject<Item> SUBCIRCUIT_CONVERTER  = blockItem(ModBlocks.SUBCIRCUIT_CONVERTER);
+
+    // The Subcircuit Chip is a plain (non-block) item carrying NBT.
+    public static final RegistryObject<Item> SUBCIRCUIT_CHIP =
+            ITEMS.register("subcircuit_chip",
+                    () -> new SubcircuitItem(new Item.Properties().stacksTo(1)));
 
     private static RegistryObject<Item> blockItem(RegistryObject<Block> block) {
         return ITEMS.register(block.getId().getPath(),

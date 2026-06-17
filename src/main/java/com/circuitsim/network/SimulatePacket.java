@@ -71,6 +71,10 @@ public class SimulatePacket {
      * built; stays empty when the circuit has no Param blocks.
      */
     private List<String> activeParamDefs = Collections.emptyList();
+    // User-defined subcircuit definitions ( .subckt … .ends ) for every distinct
+    // SubcircuitBlock chip in the circuit. Captured once from the top-level
+    // extraction and spliced into every netlist this packet builds.
+    private List<String> activeSubcktDefs = Collections.emptyList();
 
     // .NOISE analysis config — raw UI strings (parsed at sim time).
     private final String noiseOut;     // output node (probe label or node id)
@@ -330,6 +334,10 @@ public class SimulatePacket {
             );
             return;
         }
+        // Subckt defs don't change under parametric substitution (substitution
+        // only rewrites component values), so capture them from the top-level
+        // extraction before the worker thread starts.
+        activeSubcktDefs = extraction.subcktDefs;
 
         final MinecraftServer server = player.getServer();
         final String timestamp = LocalDateTime.now().format(
@@ -1773,7 +1781,7 @@ public class SimulatePacket {
         // seeded with its first value (alterparam re-drives it per step).
         List<String> defs = new ArrayList<>(activeParamDefs);
         defs.add(String.format(java.util.Locale.ROOT, "%s=%g", varName, sweepValues.get(0)));
-        netlist = injectTemp(injectParams(netlist, defs), tempC);
+        netlist = injectTemp(injectParams(injectSubcktDefs(netlist, activeSubcktDefs), defs), tempC);
         netlist = wrapControlWithSweep(netlist, varName, sweepValues);
         printNetlist(player, netlist, bookLines);
 
@@ -3432,7 +3440,28 @@ public class SimulatePacket {
      * {@code .temp} override.
      */
     private String prepareNetlist(String netlist, double tempC) {
-        return injectTemp(injectParams(netlist, activeParamDefs), tempC);
+        return injectTemp(injectParams(injectSubcktDefs(netlist, activeSubcktDefs), activeParamDefs), tempC);
+    }
+
+    /**
+     * Splices each user-defined {@code .subckt … .ends} block into the deck
+     * right after the title line (top level, ahead of the components that
+     * instantiate them via {@code X…}). ngspice gathers subcircuit definitions
+     * during parsing regardless of position; top placement keeps the deck
+     * readable. No-op when there are no subcircuits.
+     */
+    private static String injectSubcktDefs(String netlist, List<String> defs) {
+        if (defs == null || defs.isEmpty()) return netlist;
+        int nl = netlist.indexOf('\n');
+        if (nl < 0) return netlist;
+        StringBuilder sb = new StringBuilder(netlist.length() + 256);
+        sb.append(netlist, 0, nl + 1);
+        for (String d : defs) {
+            sb.append(d);
+            if (!d.endsWith("\n")) sb.append('\n');
+        }
+        sb.append(netlist, nl + 1, netlist.length());
+        return sb.toString();
     }
 
     /**
