@@ -12,10 +12,13 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 
 /**
- * Parametric (variable) block. Right-clicking opens a client-side screen where
- * the player sets a variable name and one or more values. At simulation time
- * every component whose value field references that variable gets its value
- * substituted; multiple values trigger a parametric sweep. The block extends
+ * Param block. Right-clicking opens a client-side screen with one multi-line
+ * text box; each non-empty line declares a variable as {@code name = value}.
+ * Scalars become {@code .param} netlist lines (and substitute into any
+ * component slot referencing the name); a {@code start:stop:step} range or
+ * comma list makes that variable a parametric sweep — at most one variable
+ * may sweep per circuit. The registry key stays {@code "parametric"} so
+ * already-saved worlds keep loading. The block extends
  * {@link BaseComponentBlock} only so it inherits {@code FACING} for visual
  * model rotation — facing is otherwise ignored.
  */

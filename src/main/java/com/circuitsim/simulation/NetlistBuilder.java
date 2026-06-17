@@ -29,8 +29,11 @@ public class NetlistBuilder {
 
     private static int rIndexFamily(CircuitComponent c) {
         // returns 0 for none, 1=R, 2=C, 3=L, 4=V, 5=I, 6=D, 7=M, 8=X (subcircuits)
-        // 9=E (VCVS), 10=F (CCCS), 11=G (VCCS), 12=H (CCVS)
+        // 9=E (VCVS), 10=F (CCCS), 11=G (VCCS), 12=H (CCVS), 13=S (switch),
+        // 14=B (behavioral V/I sources — both share the B namespace)
         if (c.subcircuitNodes != null) return 8;
+        if (c.block instanceof BehavioralVoltageSourceBlock
+                || c.block instanceof BehavioralCurrentSourceBlock) return 14;
         if (c.block instanceof ResistorBlock || c.block instanceof IcResistorBlock) return 1;
         if (c.block instanceof CapacitorBlock || c.block instanceof IcCapacitorBlock) return 2;
         if (c.block instanceof InductorBlock) return 3;
@@ -44,6 +47,7 @@ public class NetlistBuilder {
         if (c.block instanceof CccsBlock) return 10;
         if (c.block instanceof VccsBlock) return 11;
         if (c.block instanceof CcvsBlock) return 12;
+        if (c.block instanceof VSwitchBlock) return 13;
         return 0;
     }
 
@@ -53,7 +57,8 @@ public class NetlistBuilder {
                                     IndexAssigner v, IndexAssigner i, IndexAssigner d,
                                     IndexAssigner m, IndexAssigner x,
                                     IndexAssigner e, IndexAssigner f,
-                                    IndexAssigner g, IndexAssigner h) {
+                                    IndexAssigner g, IndexAssigner h,
+                                    IndexAssigner s, IndexAssigner b) {
         for (CircuitComponent comp : components) {
             int n = comp.componentNumber;
             if (n <= 0) continue;
@@ -70,9 +75,83 @@ public class NetlistBuilder {
                 case 10 -> f.claim(n);
                 case 11 -> g.claim(n);
                 case 12 -> h.claim(n);
+                case 13 -> s.claim(n);
+                case 14 -> b.claim(n);
                 default -> {}
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Voltage-controlled switch (S device + .model SW)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Formats an {@code S<n> n+ n- nc+ nc- MODEL [on|off]} line. Model
+     * parameters travel in the sky130 carrier slots (the same trick the pulse
+     * source uses): wParam=Vt, lParam=Vh, multParam=Ron, nfParam=Roff;
+     * modelName holds the optional initial state.
+     *
+     * <p>Switches with identical parameters share one {@code .model} — the
+     * {@code swModels} map is keyed by the canonical parameter string and
+     * grows a fresh {@code SWMOD<k>} name per distinct set. The caller emits
+     * the collected models via {@link #appendSwitchModels}.
+     */
+    private static String formatSwitch(CircuitComponent comp, IndexAssigner sIdx,
+                                       java.util.Map<Integer, String> aliases,
+                                       java.util.Map<String, String> swModels) {
+        double vt   = comp.wParam;
+        double vh   = comp.lParam;
+        double ron  = comp.multParam > 0 ? comp.multParam : 1.0;
+        double roff = comp.nfParam   > 0 ? comp.nfParam   : 1e12;
+        String params = String.format(java.util.Locale.ROOT,
+                "Vt=%g Vh=%g Ron=%g Roff=%g", vt, vh, ron, roff);
+        String model = swModels.computeIfAbsent(params,
+                k -> "SWMOD" + (swModels.size() + 1));
+        String init = comp.modelName;
+        String initSuffix = ("on".equalsIgnoreCase(init) || "off".equalsIgnoreCase(init))
+                ? " " + init.toLowerCase(java.util.Locale.ROOT) : "";
+        return String.format("S%d %s %s %s %s %s%s",
+                sIdx.assign(comp.componentNumber),
+                nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                nodeRef(comp.nodeC, aliases), nodeRef(comp.nodeD, aliases),
+                model, initSuffix);
+    }
+
+    /** Emits one {@code .model NAME SW(...)} line per distinct switch parameter set. */
+    private static void appendSwitchModels(StringBuilder sb,
+                                           java.util.Map<String, String> swModels) {
+        for (java.util.Map.Entry<String, String> e : swModels.entrySet()) {
+            sb.append(".model ").append(e.getValue())
+              .append(" SW(").append(e.getKey()).append(")\n");
+        }
+    }
+
+    /**
+     * Value token for a device line: when the slot is driven by a Param
+     * variable that survived constant substitution (i.e. the one being swept
+     * by the {@code .control}-loop runner), emit a brace expression
+     * {@code {name}} that ngspice re-evaluates from its {@code .param} on
+     * every {@code alterparam}/{@code reset}; otherwise the plain number.
+     */
+    private static String num(double v, String expr) {
+        if (expr != null && !expr.isEmpty()) return "{" + expr + "}";
+        return String.format(java.util.Locale.ROOT, "%g", v);
+    }
+
+    /**
+     * Formats a plain resistor line. When the block's "noiseless" toggle is
+     * set (carried in the otherwise-unused modelName slot), the line gets the
+     * ngspice instance flag {@code noisy=0}, which removes this resistor's
+     * thermal noise from .noise analysis (verified against ngspice-46). The
+     * flag is harmless in every other analysis, so it is emitted everywhere.
+     */
+    private static String formatResistor(int idx, CircuitComponent comp,
+                                         java.util.Map<Integer, String> aliases) {
+        String noisy = "noiseless".equals(comp.modelName) ? " noisy=0" : "";
+        return String.format("R%d %s %s %s%s", idx,
+                nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                num(comp.value, comp.valueExpr), noisy);
     }
 
     /**
@@ -90,36 +169,58 @@ public class NetlistBuilder {
                                                   IndexAssigner gIdx, IndexAssigner hIdx,
                                                   java.util.Map<Integer, String> aliases) {
         if (comp.block instanceof VcvsBlock) {
-            return String.format("E%d %s %s %s %s %g",
+            return String.format("E%d %s %s %s %s %s",
                     eIdx.assign(comp.componentNumber),
                     nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
                     nodeRef(comp.nodeC, aliases), nodeRef(comp.nodeD, aliases),
-                    comp.value);
+                    num(comp.value, comp.valueExpr));
         }
         if (comp.block instanceof VccsBlock) {
-            return String.format("G%d %s %s %s %s %g",
+            return String.format("G%d %s %s %s %s %s",
                     gIdx.assign(comp.componentNumber),
                     nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
                     nodeRef(comp.nodeC, aliases), nodeRef(comp.nodeD, aliases),
-                    comp.value);
+                    num(comp.value, comp.valueExpr));
         }
         if (comp.block instanceof CcvsBlock) {
             String vnam = (comp.modelName == null || comp.modelName.isBlank())
                     ? "VUNDEFINED" : comp.modelName.trim();
-            return String.format("H%d %s %s %s %g",
+            return String.format("H%d %s %s %s %s",
                     hIdx.assign(comp.componentNumber),
                     nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
-                    vnam, comp.value);
+                    vnam, num(comp.value, comp.valueExpr));
         }
         if (comp.block instanceof CccsBlock) {
             String vnam = (comp.modelName == null || comp.modelName.isBlank())
                     ? "VUNDEFINED" : comp.modelName.trim();
-            return String.format("F%d %s %s %s %g",
+            return String.format("F%d %s %s %s %s",
                     fIdx.assign(comp.componentNumber),
                     nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
-                    vnam, comp.value);
+                    vnam, num(comp.value, comp.valueExpr));
         }
         return null;
+    }
+
+    /**
+     * Formats a behavioral (arbitrary) source line:
+     * {@code B<n> n+ n- V=<expr>} for a behavioral voltage source, or
+     * {@code B<n> n+ n- I=<expr>} for a behavioral current source. Both forms
+     * share the single ngspice {@code B} device namespace, so they draw from
+     * one index family.
+     *
+     * <p>The expression is the raw text the player typed (carried in
+     * {@code comp.modelName}); it is emitted verbatim so any ngspice-legal
+     * expression — node voltages {@code v(a)}, branch currents {@code i(Vx)},
+     * {@code time}, {@code hertz}, math functions, etc. — works. An empty
+     * expression falls back to {@code 0} so the netlist stays valid.
+     */
+    private static String formatBehavioral(int idx, CircuitComponent comp, boolean isVoltage,
+                                           java.util.Map<Integer, String> aliases) {
+        String expr = (comp.modelName == null || comp.modelName.isBlank())
+                ? "0" : comp.modelName.trim();
+        return String.format("B%d %s %s %s=%s", idx,
+                nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                isVoltage ? "V" : "I", expr);
     }
 
     /**
@@ -195,9 +296,11 @@ public class NetlistBuilder {
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
-                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner();
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+        java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
 
@@ -214,18 +317,18 @@ public class NetlistBuilder {
             } else if (comp.block instanceof IcPmos4Block) {
                 line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
-                line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = formatResistor(rIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof CapacitorBlock) {
-                line = String.format("C%d %s %s %g", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // OP analysis cares only about the DC bias; the AC magnitude is
                 // a small-signal perturbation that is meaningless here.
-                line = String.format("V%d %s %s DC %g",
+                line = String.format("V%d %s %s DC %s",
                         vIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
-                        comp.value);
+                        num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceSinBlock) {
                 line = String.format("V%d %s %s DC 0", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else if (comp.block instanceof VoltageSourcePulseBlock) {
@@ -238,7 +341,7 @@ public class NetlistBuilder {
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
                         comp.wParam);
             } else if (comp.block instanceof CurrentSourceBlock) {
-                line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("I%d %s %s DC %s", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof DiodeBlock) {
                 // No user model → fall back to the built-in DMOD (.MODEL D)
                 // emitted below. A user-typed model name is assumed to be
@@ -249,6 +352,12 @@ public class NetlistBuilder {
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
+            } else if (comp.block instanceof BehavioralVoltageSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof BehavioralCurrentSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof VSwitchBlock) {
+                line = formatSwitch(comp, sIdx, aliases, swModels);
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -262,6 +371,7 @@ public class NetlistBuilder {
         }
 
         if (hasDiode) sb.append(".MODEL DMOD D\n");
+        appendSwitchModels(sb, swModels);
 
         sb.append(".op\n");
         sb.append(".control\n");
@@ -355,9 +465,11 @@ public class NetlistBuilder {
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
-                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner();
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+        java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode    = false;
         boolean hasAcSource = false;
@@ -375,22 +487,22 @@ public class NetlistBuilder {
             } else if (comp.block instanceof IcPmos4Block) {
                 line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
-                line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = formatResistor(rIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof CapacitorBlock) {
-                line = String.format("C%d %s %s %g", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // Both halves are independent: DC sets the bias point that the
                 // small-signal solver linearises around, AC is the perturbation.
-                line = String.format("V%d %s %s DC %g AC %g",
+                line = String.format("V%d %s %s DC %s AC %s",
                         vIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
-                        comp.value, comp.acValue);
+                        num(comp.value, comp.valueExpr), num(comp.acValue, comp.acValueExpr));
                 if (comp.acValue != 0.0) hasAcSource = true;
             } else if (comp.block instanceof VoltageSourceSinBlock) {
-                line = String.format("V%d %s %s DC 0 AC %g",
-                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("V%d %s %s DC 0 AC %s",
+                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
                 hasAcSource = true;
             } else if (comp.block instanceof VoltageSourcePulseBlock) {
                 // A pulse train has no defined small-signal AC component; we
@@ -403,12 +515,12 @@ public class NetlistBuilder {
                         comp.wParam);
             } else if (comp.block instanceof CurrentSourceBlock) {
                 if ("AC".equalsIgnoreCase(comp.sourceType)) {
-                    line = String.format("I%d %s %s DC 0 AC %g",
-                            iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                    line = String.format("I%d %s %s DC 0 AC %s",
+                            iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
                     hasAcSource = true;
                 } else {
-                    line = String.format("I%d %s %s DC %g AC 0",
-                            iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                    line = String.format("I%d %s %s DC %s AC 0",
+                            iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
                 }
             } else if (comp.block instanceof DiodeBlock) {
                 // No user model → fall back to the built-in DMOD (.MODEL D)
@@ -420,6 +532,12 @@ public class NetlistBuilder {
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
+            } else if (comp.block instanceof BehavioralVoltageSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof BehavioralCurrentSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof VSwitchBlock) {
+                line = formatSwitch(comp, sIdx, aliases, swModels);
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -442,6 +560,7 @@ public class NetlistBuilder {
         }
 
         if (hasDiode) sb.append(".MODEL DMOD D\n");
+        appendSwitchModels(sb, swModels);
 
         sb.append(String.format(".ac dec %d %g %g\n", ptsPerDec, fStart, fStop));
 
@@ -486,6 +605,133 @@ public class NetlistBuilder {
     }
 
     // -------------------------------------------------------------------------
+    // .NOISE
+    // -------------------------------------------------------------------------
+
+    /**
+     * Builds a netlist with a {@code .noise v(OUT[,REF]) SRC TYPE PTS FSTART
+     * FSTOP [PTS_PER_SUMMARY]} card. Components are emitted exactly like the
+     * AC builder (the DC values fix the operating point ngspice linearises
+     * around); no AC excitation is required — the named independent source
+     * only serves as the reference for input-referred noise.
+     *
+     * <p>ngspice puts the results into two plots: the spectral densities land
+     * in {@code noiseN} ("Noise Spectral Density Curves") and the integrated
+     * totals in {@code noiseN+1} ("Integrated Noise"), which is the current
+     * plot after {@code run}. The control block therefore prints the totals
+     * first, then steps back with {@code setplot previous} for the spectrum
+     * table (verified against ngspice-46).
+     */
+    public static String buildNoiseNetlist(List<CircuitComponent> components,
+                                            List<ProbeInfo>        probes,
+                                            List<CurrentProbeInfo> currentProbes,
+                                            String outNode, String refNode, String srcName,
+                                            String sweepType, int pts,
+                                            double fStart, double fStop, int ptsPerSummary,
+                                            String pdkName, String pdkLibPath,
+                                            String pdkLibPaths, String ngBehavior,
+                                            List<String> userCommands) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("* CircuitSim NOISE Netlist\n");
+        appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+
+        java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
+
+        IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
+                      lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
+                      iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
+                      eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+        java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
+        int vmCount = 1;
+        boolean hasDiode = false;
+
+        for (CircuitComponent comp : components) {
+            String line;
+            if (comp.subcircuitNodes != null) {
+                line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcResistorBlock) {
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcCapacitorBlock) {
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcNmos4Block) {
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof IcPmos4Block) {
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof ResistorBlock) {
+                line = formatResistor(rIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof CapacitorBlock) {
+                line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof InductorBlock) {
+                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof VoltageSourceBlock) {
+                line = String.format("V%d %s %s DC %s AC %s",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        num(comp.value, comp.valueExpr), num(comp.acValue, comp.acValueExpr));
+            } else if (comp.block instanceof VoltageSourceSinBlock) {
+                line = String.format("V%d %s %s DC 0 AC %s",
+                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof VoltageSourcePulseBlock) {
+                line = String.format("V%d %s %s DC %g AC 0",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        comp.wParam);
+            } else if (comp.block instanceof CurrentSourceBlock) {
+                line = String.format("I%d %s %s DC %s", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof DiodeBlock) {
+                String dmodel = (comp.modelName == null || comp.modelName.isBlank())
+                        ? "DMOD" : comp.modelName.trim();
+                line = String.format("D%d %s %s %s",
+                        dIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
+                if ("DMOD".equals(dmodel)) hasDiode = true;
+            } else if (comp.block instanceof BehavioralVoltageSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof BehavioralCurrentSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof VSwitchBlock) {
+                line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else {
+                String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
+                if (controlled == null) continue;
+                line = controlled;
+            }
+            sb.append(line).append("\n");
+        }
+
+        for (CurrentProbeInfo cp : currentProbes) {
+            sb.append(String.format("VM%d %s %s DC 0\n", vmCount++, nodeRef(cp.nodeA, aliases), nodeRef(cp.nodeB, aliases)));
+        }
+
+        if (hasDiode) sb.append(".MODEL DMOD D\n");
+        appendSwitchModels(sb, swModels);
+
+        String outSpec = (refNode == null || refNode.isBlank())
+                ? "v(" + outNode + ")"
+                : "v(" + outNode + "," + refNode + ")";
+        sb.append(String.format(".noise %s %s %s %d %g %g",
+                outSpec, srcName, sweepType, pts, fStart, fStop));
+        if (ptsPerSummary > 0) sb.append(' ').append(ptsPerSummary);
+        sb.append('\n');
+
+        sb.append(".control\n");
+        appendPreRunCommands(sb, userCommands);
+        sb.append("  run\n");
+        sb.append("  print onoise_total inoise_total\n");
+        sb.append("  setplot previous\n");
+        sb.append("  print onoise_spectrum inoise_spectrum\n");
+        appendUserCommands(sb, userCommands);
+        sb.append(".endc\n");
+        sb.append(".end\n");
+        return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
     // .DC
     // -------------------------------------------------------------------------
 
@@ -515,9 +761,11 @@ public class NetlistBuilder {
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
-                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner();
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+        java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
 
@@ -534,13 +782,13 @@ public class NetlistBuilder {
             } else if (comp.block instanceof IcPmos4Block) {
                 line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
-                line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = formatResistor(rIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof CapacitorBlock) {
-                line = String.format("C%d %s %s %g", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceBlock) {
-                line = String.format("V%d %s %s DC %g", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("V%d %s %s DC %s", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceSinBlock) {
                 // SIN sources reduce to their DC offset for .dc (they're
                 // small-signal AC during .ac and time-varying during .tran).
@@ -551,7 +799,7 @@ public class NetlistBuilder {
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
                         comp.wParam);
             } else if (comp.block instanceof CurrentSourceBlock) {
-                line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("I%d %s %s DC %s", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof DiodeBlock) {
                 // No user model → fall back to the built-in DMOD (.MODEL D)
                 // emitted below. A user-typed model name is assumed to be
@@ -562,6 +810,12 @@ public class NetlistBuilder {
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
+            } else if (comp.block instanceof BehavioralVoltageSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof BehavioralCurrentSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof VSwitchBlock) {
+                line = formatSwitch(comp, sIdx, aliases, swModels);
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -575,6 +829,7 @@ public class NetlistBuilder {
         }
 
         if (hasDiode) sb.append(".MODEL DMOD D\n");
+        appendSwitchModels(sb, swModels);
 
         if (enable2D && src2 != null && !src2.isEmpty()) {
             sb.append(String.format(".dc %s %g %g %g %s %g %g %g\n",
@@ -667,9 +922,11 @@ public class NetlistBuilder {
                       iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
-                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner();
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+        java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
 
@@ -686,17 +943,17 @@ public class NetlistBuilder {
             } else if (comp.block instanceof IcPmos4Block) {
                 line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
             } else if (comp.block instanceof ResistorBlock) {
-                line = String.format("R%d %s %s %g", rIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = formatResistor(rIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof CapacitorBlock) {
-                line = String.format("C%d %s %s %g", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %g", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceBlock) {
-                line = String.format("V%d %s %s DC %g", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("V%d %s %s DC %s", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceSinBlock) {
                 double freq = (comp.frequency > 0) ? comp.frequency : 1.0;
-                line = String.format("V%d %s %s SIN(0 %g %g)",
-                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value, freq);
+                line = String.format("V%d %s %s SIN(0 %s %g)",
+                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr), freq);
             } else if (comp.block instanceof VoltageSourcePulseBlock) {
                 // PULSE(V1 V2 TD TR TF PW PER) — TD fixed at 0, NP omitted
                 // (unlimited repeats). Slot map (set in CircuitExtractor):
@@ -707,17 +964,16 @@ public class NetlistBuilder {
                 //   comp.multParam = TF (fall time)
                 //   comp.nfParam = PW (pulse width / time-high)
                 double v1  = comp.wParam;
-                double v2  = comp.value;
                 double tr  = comp.lParam   > 0 ? comp.lParam   : 1e-9;
                 double tf  = comp.multParam > 0 ? comp.multParam : 1e-9;
                 double pw  = comp.nfParam   > 0 ? comp.nfParam   : 1e-6;
                 double per = comp.frequency > 0 ? comp.frequency : 2e-6;
-                line = String.format("V%d %s %s PULSE(%g %g 0 %g %g %g %g)",
+                line = String.format("V%d %s %s PULSE(%g %s 0 %g %g %g %g)",
                         vIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
-                        v1, v2, tr, tf, pw, per);
+                        v1, num(comp.value, comp.valueExpr), tr, tf, pw, per);
             } else if (comp.block instanceof CurrentSourceBlock) {
-                line = String.format("I%d %s %s DC %g", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), comp.value);
+                line = String.format("I%d %s %s DC %s", iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof DiodeBlock) {
                 // No user model → fall back to the built-in DMOD (.MODEL D)
                 // emitted below. A user-typed model name is assumed to be
@@ -728,6 +984,12 @@ public class NetlistBuilder {
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
+            } else if (comp.block instanceof BehavioralVoltageSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof BehavioralCurrentSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof VSwitchBlock) {
+                line = formatSwitch(comp, sIdx, aliases, swModels);
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -741,6 +1003,7 @@ public class NetlistBuilder {
         }
 
         if (hasDiode) sb.append(".MODEL DMOD D\n");
+        appendSwitchModels(sb, swModels);
 
         sb.append(String.format(".tran %g %g\n", tstep, tstop));
 
@@ -755,21 +1018,44 @@ public class NetlistBuilder {
 
         boolean hasUserPlots = userPlots != null && !userPlots.isEmpty();
         if (!probes.isEmpty() || !currentProbes.isEmpty() || hasUserPlots) {
-            StringBuilder printLine = new StringBuilder("  print");
+            // One shared signal list: every probed voltage, every current
+            // probe, every user plot — used for the tran print AND the FFT.
+            java.util.List<String> vecs = new java.util.ArrayList<>();
             for (ProbeInfo probe : probes) {
                 if (probe.noPlot) continue;   // name-only probe: alias the net, don't print it
-                printLine.append(String.format(" v(%s)", probe.netName));
+                vecs.add(String.format("v(%s)", probe.netName));
             }
             int vmIdx = 1;
             for (int k = 0; k < currentProbes.size(); k++) {
-                printLine.append(String.format(" i(VM%d)", vmIdx++));
+                vecs.add(String.format("i(VM%d)", vmIdx++));
             }
             if (hasUserPlots) {
                 for (UserPlot p : userPlots) {
-                    if (p != null && p.name != null) printLine.append(' ').append(p.name);
+                    if (p != null && p.name != null) vecs.add(p.name);
                 }
             }
-            sb.append(printLine).append("\n");
+            sb.append("  print");
+            for (String v : vecs) sb.append(' ').append(v);
+            sb.append('\n');
+
+            // ngspice-side FFT of every probed signal. `linearize` resamples
+            // the variable-timestep transient onto an equidistant grid (a
+            // DFT needs uniform sampling) and `fft` transforms the copies
+            // into a spectrum plot. Each vector is printed in its own table
+            // with an explicit `frequency` column: the spec plot's print
+            // omits the scale by default, and page-wrapped multi-vector
+            // prints drop it from continuation chunks — one print per vector
+            // keeps every chunk parseable into Result.fftData. The window is
+            // ngspice's default hanning; a `set specwindow=blackman` (etc.)
+            // line in a Commands block overrides it, since user commands are
+            // emitted above.
+            sb.append("  linearize\n");
+            sb.append("  fft");
+            for (String v : vecs) sb.append(' ').append(v);
+            sb.append('\n');
+            for (String v : vecs) {
+                sb.append("  print frequency ").append(v).append('\n');
+            }
         }
 
         sb.append(".endc\n");

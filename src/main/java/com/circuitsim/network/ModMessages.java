@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "10";  // bumped for Discrete NPN/PNP update packets
+    private static final String PROTOCOL_VERSION = "11";  // bumped for VC switch + noise analysis + Param block
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -78,6 +78,12 @@ public class ModMessages {
                 .encoder(ControlledSourceUpdatePacket::encode)
                 .decoder(ControlledSourceUpdatePacket::decode)
                 .consumerMainThread(ModMessages::handleControlledSourceUpdate)
+                .add();
+
+        INSTANCE.messageBuilder(VSwitchUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(VSwitchUpdatePacket::encode)
+                .decoder(VSwitchUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleVSwitchUpdate)
                 .add();
 
         // ── client-bound ──────────────────────────────────────────────────────
@@ -152,6 +158,12 @@ public class ModMessages {
 
     private static void handleControlledSourceUpdate(ControlledSourceUpdatePacket msg,
                                                       Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleVSwitchUpdate(VSwitchUpdatePacket msg,
+                                             Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }

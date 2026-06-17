@@ -166,6 +166,9 @@ public class CircuitExtractor {
         List<String> probeUserLabels = new ArrayList<>();
         List<NetlistBuilder.CurrentProbeInfo> currentProbes = new ArrayList<>();
         List<ParametricInfo> parametricBlocks = new ArrayList<>();
+        // Param-block parse errors — a malformed block must fail extraction
+        // (no netlist gets generated) with the per-line messages.
+        List<String> paramErrors = new ArrayList<>();
         List<String> userCommands = new ArrayList<>();
         List<NetlistBuilder.UserPlot> userPlots = new ArrayList<>();
         Set<String> usedPlotNames = new HashSet<>();
@@ -176,17 +179,26 @@ public class CircuitExtractor {
             BlockState state = level.getBlockState(pos);
 
             if (block instanceof ParametricBlock) {
-                String spec = "";
+                // Param block: one "name = value" declaration per line in the
+                // commands slot. Old saves carried a single "name=values"
+                // spec in the label slot — fall back to it so existing worlds
+                // keep working without re-editing the block.
+                String text = "";
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
-                    spec = be.getLabel();
+                    text = be.getCommands();
+                    if (text == null || text.isBlank()) {
+                        String[] legacy = com.circuitsim.screen.ParametricEditScreen.parseSpec(be.getLabel());
+                        text = legacy[0].isEmpty() ? "" : legacy[0] + " = " + legacy[1];
+                    }
                 }
-                // Spec is "name=values" - skip when either side is empty so an
-                // unconfigured Parametric block doesn't hijack regular sims.
-                String[] parsed = com.circuitsim.screen.ParametricEditScreen.parseSpec(spec);
-                String varName  = parsed[0];
-                String values   = parsed[1];
-                if (!varName.isEmpty() && !values.isEmpty()) {
-                    parametricBlocks.add(new ParametricInfo(pos, varName, values));
+                if (!text.isBlank()) {
+                    ParamSpec.ParseResult parsed = ParamSpec.parse(text);
+                    for (String err : parsed.errors) {
+                        paramErrors.add("Param block at " + pos.toShortString() + ": " + err);
+                    }
+                    for (ParamSpec.Entry entry : parsed.entries) {
+                        parametricBlocks.add(new ParametricInfo(pos, entry.name, entry.rawValue));
+                    }
                 }
 
             } else if (block instanceof CommandsBlock) {
@@ -371,6 +383,41 @@ public class CircuitExtractor {
                         modelName, wParam, lParam, multParam, nfParam, compNum,
                         null, "", wExpr, lExpr, multExpr, nfExpr).withPdkName(pdkName));
 
+            } else if (block instanceof VSwitchBlock) {
+                Direction facing = state.getValue(VSwitchBlock.FACING);
+                // Switched path: facing = n+, opposite = n-. Control sense:
+                // counter-clockwise = nc+, clockwise = nc- (gate-on-the-left,
+                // matching the IC MOSFET convention).
+                int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
+                int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
+                BlockPos ctlPPos = pos.relative(facing.getCounterClockWise());
+                BlockPos ctlNPos = pos.relative(facing.getClockWise());
+                int nodeC = visited.contains(ctlPPos)
+                        ? resolveNode(ctlPPos, visited, nodeMap, nextNode)
+                        : 0;
+                int nodeD = visited.contains(ctlNPos)
+                        ? resolveNode(ctlNPos, visited, nodeMap, nextNode)
+                        : 0;
+
+                double vt = 2.5, vh = 0.0, ron = 1.0, roff = 1e12;
+                String initState = "";
+                int    compNum   = 0;
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    vt        = be.getSwVt();
+                    vh        = be.getSwVh();
+                    ron       = be.getSwRon();
+                    roff      = be.getSwRoff();
+                    initState = be.getSwInit();
+                    compNum   = be.getComponentNumber();
+                }
+
+                // SW model params ride the sky130 carrier slots (same trick as
+                // the pulse source): wParam=Vt, lParam=Vh, multParam=Ron,
+                // nfParam=Roff; modelName carries the initial on/off state.
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, nodeA, nodeB, nodeC, nodeD, 0, "DC", 0,
+                        initState, vt, vh, ron, roff, compNum));
+
             } else if (block instanceof CcvsBlock || block instanceof CccsBlock) {
                 Direction facing = state.getValue(BaseComponentBlock.FACING);
                 int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
@@ -391,6 +438,28 @@ public class CircuitExtractor {
                         block, pos, nodeA, nodeB, -1, -1, value, "DC", 0,
                         controlV == null ? "" : controlV,
                         1.0, 1.0, 1.0, 1.0, compNum, null, valueExpr));
+
+            } else if (block instanceof BehavioralVoltageSourceBlock
+                    || block instanceof BehavioralCurrentSourceBlock) {
+                // Behavioral B-source: front = n+, back = n-. The arbitrary
+                // expression is free text carried in the modelName slot (same
+                // carrier CCVS/CCCS use); the netlist builder emits it after
+                // the V= / I= keyword. No numeric value / valueExpr is used.
+                Direction facing = state.getValue(BaseComponentBlock.FACING);
+                int nodeA = resolveNode(pos.relative(facing),               visited, nodeMap, nextNode);
+                int nodeB = resolveNode(pos.relative(facing.getOpposite()), visited, nodeMap, nextNode);
+
+                String expr    = "";
+                int    compNum = 0;
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    expr    = be.getModelName();
+                    compNum = be.getComponentNumber();
+                }
+
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, nodeA, nodeB, -1, -1, 0, "DC", 0,
+                        expr == null ? "" : expr,
+                        1.0, 1.0, 1.0, 1.0, compNum));
 
             } else if (block instanceof Controlled2x3Block) {
                 // Only emit one component per 2×3 instance — at the anchor cell.
@@ -548,6 +617,9 @@ public class CircuitExtractor {
                 double wSlot = 1.0, lSlot = 1.0, multSlot = 1.0, nfSlot = 1.0;
                 double acValueSlot   = 0.0;
                 String acValueExprSlot = "";
+                // Resistor-only: the modelName carrier slot flags the
+                // noiseless toggle (plain resistors have no model otherwise).
+                String modelSlot = "";
 
                 if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
                     value      = be.getValue();
@@ -555,6 +627,9 @@ public class CircuitExtractor {
                     frequency  = be.getFrequency();
                     compNum    = be.getComponentNumber();
                     valueExpr  = be.getValueExpr();
+                    if (block instanceof ResistorBlock && be.isRNoiseless()) {
+                        modelSlot = "noiseless";
+                    }
                     if (block instanceof VoltageSourcePulseBlock) {
                         // Repurpose the otherwise-idle sky130 carrier slots so
                         // we don't need to widen CircuitComponent for pulse:
@@ -575,10 +650,41 @@ public class CircuitExtractor {
 
                 components.add(new NetlistBuilder.CircuitComponent(
                         block, pos, nodeA, nodeB, -1, -1, value, sourceType, frequency,
-                        "", wSlot, lSlot, multSlot, nfSlot, compNum, null, valueExpr,
+                        modelSlot, wSlot, lSlot, multSlot, nfSlot, compNum, null, valueExpr,
                         "", "", "", "",
                         acValueSlot, acValueExprSlot));
             }
+        }
+
+        // Malformed Param-block lines abort extraction — no netlist may be
+        // generated from an invalid declaration set.
+        if (!paramErrors.isEmpty()) {
+            return new ExtractionResult(false, String.join("; ", paramErrors),
+                    Collections.emptyList(), Collections.emptyList(),
+                    Collections.emptyList(), Collections.emptyMap(),
+                    Collections.emptyList(), Collections.emptyList(),
+                    Collections.emptyList());
+        }
+
+        // Cross-block sweep check: ParamSpec.parse enforces one sweep per
+        // block, but two blocks could each declare one. Catch it here, naming
+        // both variables, before any netlist is built.
+        String firstSweep = null;
+        for (ParametricInfo p : parametricBlocks) {
+            ParamSpec.ParseResult pr = ParamSpec.parse(p.varName + " = " + p.valuesString);
+            boolean isSweep = pr.ok() && !pr.entries.isEmpty()
+                    && pr.entries.get(0).isSweep && pr.entries.get(0).values.size() > 1;
+            if (!isSweep) continue;
+            if (firstSweep != null) {
+                return new ExtractionResult(false,
+                        "Only ONE variable may be swept at a time: '" + firstSweep
+                                + "' and '" + p.varName + "' both sweep.",
+                        Collections.emptyList(), Collections.emptyList(),
+                        Collections.emptyList(), Collections.emptyMap(),
+                        Collections.emptyList(), Collections.emptyList(),
+                        Collections.emptyList());
+            }
+            firstSweep = p.varName;
         }
 
         // ── alias resolution ─────────────────────────────────────────────────
@@ -775,6 +881,8 @@ public class CircuitExtractor {
                 || block instanceof VoltageSourceSinBlock
                 || block instanceof VoltageSourcePulseBlock
                 || block instanceof CurrentSourceBlock
+                || block instanceof BehavioralVoltageSourceBlock
+                || block instanceof BehavioralCurrentSourceBlock
                 || block instanceof DiodeBlock
                 || block instanceof WireBlock
                 || block instanceof GroundBlock
@@ -791,6 +899,7 @@ public class CircuitExtractor {
                 || block instanceof Controlled2x3Block
                 || block instanceof CcvsBlock
                 || block instanceof CccsBlock
+                || block instanceof VSwitchBlock
                 || block instanceof SimLinkBlock;
     }
 

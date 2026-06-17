@@ -30,6 +30,12 @@ public class ParametricResultCache {
          */
         public final boolean isLogFrequency;
         /**
+         * When true GraphScreen opens with the Y-axis log toggle already on
+         * (the user can still flip it off). Used by noise analysis, whose
+         * spectral densities are conventionally read on a log-log plot.
+         */
+        public final boolean defaultLogY;
+        /**
          * Lines of formatted output (the same text written to the result book).
          * Optional — populated so {@code /circuitsim output <id>} can re-open
          * the {@link com.circuitsim.screen.SimulationOutputScreen} on demand
@@ -38,6 +44,13 @@ public class ParametricResultCache {
         public List<String> outputLines = java.util.Collections.emptyList();
         /** Display title for the output viewer when reopened. */
         public String       outputTitle = "";
+        /**
+         * Session id of the companion FFT result set (the ngspice-computed
+         * spectra of a transient run's probed signals), or -1 when none.
+         * Set after both sessions are stored; drives the GraphScreen's FFT
+         * button.
+         */
+        public int          fftSessionId = -1;
 
         public ResultSet(String sweepComponentName, String sweepUnit,
                          List<Double> sweepValues,
@@ -54,6 +67,17 @@ public class ParametricResultCache {
                          Map<String, List<Double>> probeCurrents,
                          Map<String, String> probeUnits,
                          boolean isLogFrequency) {
+            this(sweepComponentName, sweepUnit, sweepValues,
+                    probeVoltages, probeCurrents, probeUnits, isLogFrequency, false);
+        }
+
+        public ResultSet(String sweepComponentName, String sweepUnit,
+                         List<Double> sweepValues,
+                         Map<String, List<Double>> probeVoltages,
+                         Map<String, List<Double>> probeCurrents,
+                         Map<String, String> probeUnits,
+                         boolean isLogFrequency,
+                         boolean defaultLogY) {
             this.sweepComponentName = sweepComponentName;
             this.sweepUnit          = sweepUnit;
             this.sweepValues        = Collections.unmodifiableList(new ArrayList<>(sweepValues));
@@ -63,6 +87,7 @@ public class ParametricResultCache {
                     ? Collections.emptyMap()
                     : Collections.unmodifiableMap(new LinkedHashMap<>(probeUnits));
             this.isLogFrequency     = isLogFrequency;
+            this.defaultLogY        = defaultLogY;
         }
 
         /** Ordered list of all probe names (voltage first, then current). */

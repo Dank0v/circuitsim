@@ -23,6 +23,10 @@ public class ComponentBlockEntity extends BlockEntity {
     // but is excluded from simulation print/plot. Only meaningful for voltage
     // probes; ignored by every other component type.
     private boolean probeNoPlot = false;
+    // Resistor "noiseless" mode: when true the resistor line carries the
+    // ngspice instance flag `noisy=0`, excluding its thermal noise from
+    // .noise analysis. Only meaningful for plain resistors.
+    private boolean rNoiseless = false;
     private int    componentNumber = 0;   // 0 = auto, otherwise R<N>/C<N>/etc. in netlist
     // When non-empty, the component's "value" is sourced at simulation time
     // from a Parametric block defining this variable name. Empty means use
@@ -97,6 +101,26 @@ public class ComponentBlockEntity extends BlockEntity {
     private double pulseTf   = 1e-9;    // fall time   (1 ns)
     private double pulsePw   = 1e-6;    // pulse width / time-high (1 us)
 
+    // Voltage-controlled switch (.model SW) parameters. Defaults give a usable
+    // logic-level switch out of the box: threshold mid-way through a 0..5 V
+    // control swing, no hysteresis, 1 ohm on / 1 TOhm off.
+    private double swVt   = 2.5;        // threshold voltage  (V)
+    private double swVh   = 0.0;        // hysteresis voltage (V)
+    private double swRon  = 1.0;        // on resistance      (Ohm)
+    private double swRoff = 1e12;       // off resistance     (Ohm)
+    private String swInit = "";         // initial state: "", "on", "off"
+
+    // Simulate block: .noise analysis configuration. All raw UI strings so the
+    // dialog round-trips exactly what the player typed.
+    private String noiseOut   = "";     // output node (probe label or node id)
+    private String noiseRef   = "";     // optional reference node (differential)
+    private String noiseSrc   = "";     // input source name (e.g. V1)
+    private String noiseSweep = "dec";  // sweep type: dec / lin / oct
+    private String noisePts   = "20";   // points (per dec/oct, or total for lin)
+    private String noiseFstart = "1";   // sweep start frequency (Hz)
+    private String noiseFstop  = "1Meg";// sweep stop frequency (Hz)
+    private String noisePtsSum = "";    // optional pts-per-summary (device breakdown)
+
     public ComponentBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.COMPONENT_BE.get(), pos, state);
     }
@@ -110,6 +134,8 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) return "voltage_source_sin";
         if (block == ModBlocks.VOLTAGE_SOURCE_PULSE.get()) return "voltage_source_pulse";
         if (block == ModBlocks.CURRENT_SOURCE.get())     return "current_source";
+        if (block == ModBlocks.BEHAVIORAL_VOLTAGE_SOURCE.get()) return "behavioral_voltage_source";
+        if (block == ModBlocks.BEHAVIORAL_CURRENT_SOURCE.get()) return "behavioral_current_source";
         if (block == ModBlocks.DIODE.get())              return "diode";
         if (block == ModBlocks.PROBE.get())              return "probe";
         if (block == ModBlocks.CURRENT_PROBE.get())      return "current_probe";
@@ -143,6 +169,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setProbeLabel(String l)  { this.label = l; setChanged(); }
     public boolean isProbeNoPlot()       { return probeNoPlot; }
     public void setProbeNoPlot(boolean b){ this.probeNoPlot = b; setChanged(); }
+    public boolean isRNoiseless()        { return rNoiseless; }
+    public void setRNoiseless(boolean b) { this.rNoiseless = b; setChanged(); }
     public int getComponentNumber()        { return componentNumber; }
     public void setComponentNumber(int n)  { this.componentNumber = Math.max(0, n); setChanged(); }
     public String getValueExpr()           { return valueExpr == null ? "" : valueExpr; }
@@ -220,6 +248,34 @@ public class ComponentBlockEntity extends BlockEntity {
     public double getPulsePw()               { return pulsePw; }
     public void setPulsePw(double v)         { this.pulsePw = v; setChanged(); }
 
+    public double getSwVt()                  { return swVt; }
+    public void setSwVt(double v)            { this.swVt = v; setChanged(); }
+    public double getSwVh()                  { return swVh; }
+    public void setSwVh(double v)            { this.swVh = v; setChanged(); }
+    public double getSwRon()                 { return swRon; }
+    public void setSwRon(double v)           { this.swRon = v; setChanged(); }
+    public double getSwRoff()                { return swRoff; }
+    public void setSwRoff(double v)          { this.swRoff = v; setChanged(); }
+    public String getSwInit()                { return swInit == null ? "" : swInit; }
+    public void setSwInit(String s)          { this.swInit = s == null ? "" : s; setChanged(); }
+
+    public String getNoiseOut()              { return noiseOut == null ? "" : noiseOut; }
+    public void setNoiseOut(String v)        { this.noiseOut = v == null ? "" : v; setChanged(); }
+    public String getNoiseRef()              { return noiseRef == null ? "" : noiseRef; }
+    public void setNoiseRef(String v)        { this.noiseRef = v == null ? "" : v; setChanged(); }
+    public String getNoiseSrc()              { return noiseSrc == null ? "" : noiseSrc; }
+    public void setNoiseSrc(String v)        { this.noiseSrc = v == null ? "" : v; setChanged(); }
+    public String getNoiseSweep()            { return (noiseSweep == null || noiseSweep.isEmpty()) ? "dec" : noiseSweep; }
+    public void setNoiseSweep(String v)      { this.noiseSweep = v == null ? "dec" : v; setChanged(); }
+    public String getNoisePts()              { return noisePts == null ? "20" : noisePts; }
+    public void setNoisePts(String v)        { this.noisePts = v == null ? "20" : v; setChanged(); }
+    public String getNoiseFstart()           { return noiseFstart == null ? "1" : noiseFstart; }
+    public void setNoiseFstart(String v)     { this.noiseFstart = v == null ? "1" : v; setChanged(); }
+    public String getNoiseFstop()            { return noiseFstop == null ? "1Meg" : noiseFstop; }
+    public void setNoiseFstop(String v)      { this.noiseFstop = v == null ? "1Meg" : v; setChanged(); }
+    public String getNoisePtsSum()           { return noisePtsSum == null ? "" : noisePtsSum; }
+    public void setNoisePtsSum(String v)     { this.noisePtsSum = v == null ? "" : v; setChanged(); }
+
     @Override
     protected void saveAdditional(CompoundTag tag) {
         super.saveAdditional(tag);
@@ -228,6 +284,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("frequency", frequency);
         tag.putString("label", label);
         tag.putBoolean("probeNoPlot", probeNoPlot);
+        tag.putBoolean("rNoiseless", rNoiseless);
         tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
         tag.putDouble("wParam",     wParam);
@@ -249,6 +306,19 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("pulseTr",   pulseTr);
         tag.putDouble("pulseTf",   pulseTf);
         tag.putDouble("pulsePw",   pulsePw);
+        tag.putDouble("swVt",   swVt);
+        tag.putDouble("swVh",   swVh);
+        tag.putDouble("swRon",  swRon);
+        tag.putDouble("swRoff", swRoff);
+        tag.putString("swInit", swInit == null ? "" : swInit);
+        tag.putString("noiseOut",    noiseOut    == null ? "" : noiseOut);
+        tag.putString("noiseRef",    noiseRef    == null ? "" : noiseRef);
+        tag.putString("noiseSrc",    noiseSrc    == null ? "" : noiseSrc);
+        tag.putString("noiseSweep",  noiseSweep  == null ? "dec" : noiseSweep);
+        tag.putString("noisePts",    noisePts    == null ? "20" : noisePts);
+        tag.putString("noiseFstart", noiseFstart == null ? "1" : noiseFstart);
+        tag.putString("noiseFstop",  noiseFstop  == null ? "1Meg" : noiseFstop);
+        tag.putString("noisePtsSum", noisePtsSum == null ? "" : noisePtsSum);
         tag.putString("valueExpr", valueExpr == null ? "" : valueExpr);
         tag.putString("wExpr",     wExpr     == null ? "" : wExpr);
         tag.putString("lExpr",     lExpr     == null ? "" : lExpr);
@@ -275,6 +345,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("frequency"))  frequency  = tag.getDouble("frequency");
         if (tag.contains("label"))      label      = tag.getString("label");
         if (tag.contains("probeNoPlot")) probeNoPlot = tag.getBoolean("probeNoPlot");
+        if (tag.contains("rNoiseless"))  rNoiseless  = tag.getBoolean("rNoiseless");
         if (tag.contains("componentNumber")) componentNumber = tag.getInt("componentNumber");
         if (tag.contains("modelName"))  modelName  = tag.getString("modelName");
         if (tag.contains("wParam"))     wParam     = tag.getDouble("wParam");
@@ -303,6 +374,19 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("pulseTr"))     pulseTr     = tag.getDouble("pulseTr");
         if (tag.contains("pulseTf"))     pulseTf     = tag.getDouble("pulseTf");
         if (tag.contains("pulsePw"))     pulsePw     = tag.getDouble("pulsePw");
+        if (tag.contains("swVt"))        swVt        = tag.getDouble("swVt");
+        if (tag.contains("swVh"))        swVh        = tag.getDouble("swVh");
+        if (tag.contains("swRon"))       swRon       = tag.getDouble("swRon");
+        if (tag.contains("swRoff"))      swRoff      = tag.getDouble("swRoff");
+        if (tag.contains("swInit"))      swInit      = tag.getString("swInit");
+        if (tag.contains("noiseOut"))    noiseOut    = tag.getString("noiseOut");
+        if (tag.contains("noiseRef"))    noiseRef    = tag.getString("noiseRef");
+        if (tag.contains("noiseSrc"))    noiseSrc    = tag.getString("noiseSrc");
+        if (tag.contains("noiseSweep"))  noiseSweep  = tag.getString("noiseSweep");
+        if (tag.contains("noisePts"))    noisePts    = tag.getString("noisePts");
+        if (tag.contains("noiseFstart")) noiseFstart = tag.getString("noiseFstart");
+        if (tag.contains("noiseFstop"))  noiseFstop  = tag.getString("noiseFstop");
+        if (tag.contains("noisePtsSum")) noisePtsSum = tag.getString("noisePtsSum");
         if (tag.contains("valueExpr"))   valueExpr   = tag.getString("valueExpr");
         if (tag.contains("wExpr"))       wExpr       = tag.getString("wExpr");
         if (tag.contains("lExpr"))       lExpr       = tag.getString("lExpr");
@@ -340,6 +424,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("frequency", frequency);
         tag.putString("label", label);
         tag.putBoolean("probeNoPlot", probeNoPlot);
+        tag.putBoolean("rNoiseless", rNoiseless);
         tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
         tag.putDouble("wParam",     wParam);
@@ -361,6 +446,19 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putDouble("pulseTr",   pulseTr);
         tag.putDouble("pulseTf",   pulseTf);
         tag.putDouble("pulsePw",   pulsePw);
+        tag.putDouble("swVt",   swVt);
+        tag.putDouble("swVh",   swVh);
+        tag.putDouble("swRon",  swRon);
+        tag.putDouble("swRoff", swRoff);
+        tag.putString("swInit", swInit == null ? "" : swInit);
+        tag.putString("noiseOut",    noiseOut    == null ? "" : noiseOut);
+        tag.putString("noiseRef",    noiseRef    == null ? "" : noiseRef);
+        tag.putString("noiseSrc",    noiseSrc    == null ? "" : noiseSrc);
+        tag.putString("noiseSweep",  noiseSweep  == null ? "dec" : noiseSweep);
+        tag.putString("noisePts",    noisePts    == null ? "20" : noisePts);
+        tag.putString("noiseFstart", noiseFstart == null ? "1" : noiseFstart);
+        tag.putString("noiseFstop",  noiseFstop  == null ? "1Meg" : noiseFstop);
+        tag.putString("noisePtsSum", noisePtsSum == null ? "" : noisePtsSum);
         tag.putString("valueExpr", valueExpr == null ? "" : valueExpr);
         tag.putString("wExpr",     wExpr     == null ? "" : wExpr);
         tag.putString("lExpr",     lExpr     == null ? "" : lExpr);

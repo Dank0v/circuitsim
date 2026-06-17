@@ -42,6 +42,15 @@ public class SimulateEditScreen extends Screen {
     private String  savedDcStart2 = "0";
     private String  savedDcStop2  = "1";
     private String  savedDcStep2  = "0.25";
+    // NOISE analysis state — raw UI strings, cached across widget rebuilds.
+    private String savedNoiseOut    = "";
+    private String savedNoiseRef    = "";
+    private String savedNoiseSrc    = "";
+    private String savedNoiseSweep  = "dec";
+    private String savedNoisePts    = "20";
+    private String savedNoiseFstart = "1";
+    private String savedNoiseFstop  = "1Meg";
+    private String savedNoiseSum    = "";
     // Set after the first init() so subsequent rebuilds preserve in-flight edits
     // instead of re-reading from the block entity.
     private boolean loadedFromBe = false;
@@ -61,6 +70,11 @@ public class SimulateEditScreen extends Screen {
     // DC widgets — populated when DC fields are visible in the layout.
     private EditBox dcSrc1Field, dcStart1Field, dcStop1Field, dcStep1Field;
     private EditBox dcSrc2Field, dcStart2Field, dcStop2Field, dcStep2Field;
+    // NOISE widgets — visible only when the NOISE analysis tab is active.
+    private EditBox noiseOutField, noiseRefField, noiseSrcField;
+    private EditBox noisePtsField, noiseFstartField, noiseFstopField, noiseSumField;
+
+    private static final String[] NOISE_SWEEPS = {"dec", "lin", "oct"};
 
     private static final int W = 290,
         H = 358;
@@ -68,15 +82,16 @@ public class SimulateEditScreen extends Screen {
     // Analysis types live in an array so the selector scales: add an entry
     // here (plus a description and a refreshFields()/setAnalysis() branch) and
     // it shows up as another tab — no layout/height changes required.
-    private static final String[] ANALYSES = {"OP", "DC", "AC", "TRAN"};
+    private static final String[] ANALYSES = {"OP", "DC", "AC", "TRAN", "NOISE"};
     private static final String[] ANALYSIS_DESC = {
         ".OP — DC operating point",
         ".DC — DC sweep",
         ".AC — frequency sweep",
         ".TRAN — transient analysis",
+        ".NOISE — small-signal noise analysis",
     };
     // Tab-strip geometry (constant height regardless of analysis count).
-    private static final int TAB_W = 60, TAB_GAP = 6, TAB_H = 16;
+    private static final int TAB_W = 48, TAB_GAP = 6, TAB_H = 16;
 
     private static final int BG = 0xFF1E1E1E;
     private static final int BORDER = 0xFF4A90D9;
@@ -110,6 +125,10 @@ public class SimulateEditScreen extends Screen {
     private static final int Y_DC_ROW1     = 88;
     private static final int Y_DC_2DTOGGLE = 108;
     private static final int Y_DC_ROW2     = 125;
+    // NOISE sub-panel shares the DC rows' Y offsets: row 1 = output / ref /
+    // source, row 2 = sweep-type chips plus pts / fstart / fstop / summary.
+    private static final int Y_NOISE_ROW1  = 88;
+    private static final int Y_NOISE_ROW2  = 125;
     private static final int Y_PARAM_TEMP = 147;       // temperature override (single value or sweep spec)
     private static final int Y_DIV_AFTER_PARAMS = 167;
     // Compat section
@@ -158,6 +177,14 @@ public class SimulateEditScreen extends Screen {
                 savedDcStart2 = cbe.getDcStart2();
                 savedDcStop2  = cbe.getDcStop2();
                 savedDcStep2  = cbe.getDcStep2();
+                savedNoiseOut    = cbe.getNoiseOut();
+                savedNoiseRef    = cbe.getNoiseRef();
+                savedNoiseSrc    = cbe.getNoiseSrc();
+                savedNoiseSweep  = cbe.getNoiseSweep();
+                savedNoisePts    = cbe.getNoisePts();
+                savedNoiseFstart = cbe.getNoiseFstart();
+                savedNoiseFstop  = cbe.getNoiseFstop();
+                savedNoiseSum    = cbe.getNoisePtsSum();
             }
             // Migrate any saved world that still has the now-removed
             // dedicated TEMP analysis to plain OP — the temperature field
@@ -207,6 +234,20 @@ public class SimulateEditScreen extends Screen {
         dcStart2Field = small(px + 116, py + Y_DC_ROW2, 40, savedDcStart2);
         dcStop2Field  = small(px + 176, py + Y_DC_ROW2, 40, savedDcStop2);
         dcStep2Field  = small(px + 236, py + Y_DC_ROW2, 40, savedDcStep2);
+
+        // NOISE widgets share the DC rows' vertical space; refreshFields()
+        // ensures only one analysis's widget set is visible at a time.
+        noiseOutField    = small(px + 16,  py + Y_NOISE_ROW1, 78, savedNoiseOut);
+        noiseRefField    = small(px + 102, py + Y_NOISE_ROW1, 78, savedNoiseRef);
+        noiseSrcField    = small(px + 188, py + Y_NOISE_ROW1, 78, savedNoiseSrc);
+        noisePtsField    = small(px + 112, py + Y_NOISE_ROW2, 28, savedNoisePts);
+        noiseFstartField = small(px + 144, py + Y_NOISE_ROW2, 50, savedNoiseFstart);
+        noiseFstopField  = small(px + 198, py + Y_NOISE_ROW2, 50, savedNoiseFstop);
+        noiseSumField    = small(px + 252, py + Y_NOISE_ROW2, 24, savedNoiseSum);
+        noiseOutField.setSuggestion(savedNoiseOut.isEmpty() ? "vout" : "");
+        noiseOutField.setResponder(t -> noiseOutField.setSuggestion(t.isEmpty() ? "vout" : ""));
+        noiseSrcField.setSuggestion(savedNoiseSrc.isEmpty() ? "V1" : "");
+        noiseSrcField.setResponder(t -> noiseSrcField.setSuggestion(t.isEmpty() ? "V1" : ""));
 
         param1Field = box(px + 166, py + Y_PARAM1, 90, savedParam1);
         param2Field = box(px + 166, py + Y_PARAM2, 90, savedParam2);
@@ -284,6 +325,7 @@ public class SimulateEditScreen extends Screen {
         boolean ac    = "AC".equals(analysis);
         boolean tran  = "TRAN".equals(analysis);
         boolean dc    = "DC".equals(analysis);
+        boolean noise = "NOISE".equals(analysis);
         boolean acTran = ac || tran;
 
         // AC/TRAN param row widgets — visible (and editable) only for those
@@ -313,6 +355,16 @@ public class SimulateEditScreen extends Screen {
             }
         }
         refreshDcFields();   // gates the source-2 row on the 2D checkbox
+
+        // NOISE widgets — visible only when NOISE is selected.
+        for (EditBox f : new EditBox[]{noiseOutField, noiseRefField, noiseSrcField,
+                noisePtsField, noiseFstartField, noiseFstopField, noiseSumField}) {
+            if (f != null) {
+                f.visible = noise;
+                f.setEditable(noise);
+                f.setTextColor(noise ? 0xFFFFFFFF : DIM);
+            }
+        }
 
         if (tempField != null) {
             tempField.setEditable(true);
@@ -385,6 +437,13 @@ public class SimulateEditScreen extends Screen {
         if (dcStart2Field != null) savedDcStart2 = dcStart2Field.getValue();
         if (dcStop2Field  != null) savedDcStop2  = dcStop2Field.getValue();
         if (dcStep2Field  != null) savedDcStep2  = dcStep2Field.getValue();
+        if (noiseOutField    != null) savedNoiseOut    = noiseOutField.getValue();
+        if (noiseRefField    != null) savedNoiseRef    = noiseRefField.getValue();
+        if (noiseSrcField    != null) savedNoiseSrc    = noiseSrcField.getValue();
+        if (noisePtsField    != null) savedNoisePts    = noisePtsField.getValue();
+        if (noiseFstartField != null) savedNoiseFstart = noiseFstartField.getValue();
+        if (noiseFstopField  != null) savedNoiseFstop  = noiseFstopField.getValue();
+        if (noiseSumField    != null) savedNoiseSum    = noiseSumField.getValue();
     }
 
     @Override
@@ -406,6 +465,15 @@ public class SimulateEditScreen extends Screen {
                 savedDc2D = !savedDc2D;
                 refreshDcFields();
                 return true;
+            }
+        }
+        // NOISE sweep-type chips (dec / lin / oct).
+        if ("NOISE".equals(analysis)) {
+            for (int i = 0; i < NOISE_SWEEPS.length; i++) {
+                if (hit(mx, my, px + 16 + i * 31, py + Y_NOISE_ROW2 + 2, 28, 14)) {
+                    savedNoiseSweep = NOISE_SWEEPS[i];
+                    return true;
+                }
             }
         }
         // ngbehavior compat chips
@@ -469,9 +537,10 @@ public class SimulateEditScreen extends Screen {
         g.drawCenteredString(f, "Circuit Analysis", width / 2, py + 7, TITLE);
         g.drawString(f, "Analysis Type:", px + 14, py + Y_ANALYSIS_LABEL, LABEL);
 
-        boolean dc   = "DC".equals(analysis);
-        boolean ac   = "AC".equals(analysis);
-        boolean tran = "TRAN".equals(analysis);
+        boolean dc    = "DC".equals(analysis);
+        boolean ac    = "AC".equals(analysis);
+        boolean tran  = "TRAN".equals(analysis);
+        boolean noise = "NOISE".equals(analysis);
 
         // Analysis-type tab strip — one row, constant height however many
         // analyses exist (see ANALYSES). Selected tab is highlighted like the
@@ -506,6 +575,25 @@ public class SimulateEditScreen extends Screen {
             // Row-2 label (dimmed when 2D is off, hidden when DC isn't active).
             int row2Label = savedDc2D ? LABEL : DIM;
             g.drawString(f, "2:", px + 14, py + Y_DC_ROW2 + 5, row2Label);
+        }
+
+        // NOISE sub-panel — column headers plus the sweep-type chips.
+        if (noise) {
+            g.drawString(f, "Output",    px + 16,  py + Y_NOISE_ROW1 - 10, LABEL);
+            g.drawString(f, "Ref (opt)", px + 102, py + Y_NOISE_ROW1 - 10, LABEL);
+            g.drawString(f, "Source",    px + 188, py + Y_NOISE_ROW1 - 10, LABEL);
+            g.drawString(f, "Pts",    px + 112, py + Y_NOISE_ROW2 - 10, LABEL);
+            g.drawString(f, "Fstart", px + 144, py + Y_NOISE_ROW2 - 10, LABEL);
+            g.drawString(f, "Fstop",  px + 198, py + Y_NOISE_ROW2 - 10, LABEL);
+            g.drawString(f, "Sum",    px + 252, py + Y_NOISE_ROW2 - 10, LABEL);
+            for (int i = 0; i < NOISE_SWEEPS.length; i++) {
+                int cx = px + 16 + i * 31;
+                int cy = py + Y_NOISE_ROW2 + 2;
+                boolean sel = NOISE_SWEEPS[i].equals(savedNoiseSweep);
+                g.fill(cx, cy, cx + 28, cy + 14, sel ? 0xFF1A4A6A : 0xFF333333);
+                g.fill(cx + 1, cy + 1, cx + 27, cy + 13, sel ? 0xFF2A6A9A : 0xFF444444);
+                g.drawCenteredString(f, NOISE_SWEEPS[i], cx + 14, cy + 3, sel ? SEL : DIM);
+            }
         }
 
         // AC/TRAN param labels — rendered only when the matching analysis is
@@ -612,7 +700,9 @@ public class SimulateEditScreen extends Screen {
                 tempValue,
                 savedDcSrc1, savedDcStart1, savedDcStop1, savedDcStep1,
                 savedDc2D,
-                savedDcSrc2, savedDcStart2, savedDcStop2, savedDcStep2)
+                savedDcSrc2, savedDcStart2, savedDcStop2, savedDcStep2,
+                savedNoiseOut, savedNoiseRef, savedNoiseSrc, savedNoiseSweep,
+                savedNoisePts, savedNoiseFstart, savedNoiseFstop, savedNoiseSum)
         );
     }
 

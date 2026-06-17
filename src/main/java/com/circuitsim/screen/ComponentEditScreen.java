@@ -50,6 +50,10 @@ public class ComponentEditScreen
     // excluded from simulation print/plot.
     private int     noPlotRowY = 0; // absolute Y of the no-plot checkbox row (set during init)
     private boolean probeNoPlot = false;
+    // Resistor "noiseless" toggle. When set, the R line carries `noisy=0` so
+    // the resistor contributes no thermal noise to .noise analysis.
+    private int     rNoiseRowY = 0; // absolute Y of the noiseless checkbox row (set during init)
+    private boolean rNoiseless = false;
 
     private boolean showValue;
     private boolean showSourceType;
@@ -62,6 +66,8 @@ public class ComponentEditScreen
     private boolean showNumber;
     /** Voltage probe only: show the "name only (no plot)" checkbox row. */
     private boolean showNoPlot;
+    /** Plain resistor only: show the "noiseless (noisy=0)" checkbox row. */
+    private boolean showRNoise;
     /** Voltage source: show the AC magnitude field below the DC value field. */
     private boolean showAcValue;
     /** True for CCVS/CCCS: show a "Control voltage source (vnam)" text field,
@@ -70,6 +76,12 @@ public class ComponentEditScreen
     /** True for the diode: show an optional ".MODEL name" text field, stored
      *  in the BE's modelName slot. Blank = use the built-in basic SPICE diode. */
     private boolean showDiodeModel;
+    /** True for behavioral B-sources: show a free-text expression field
+     *  (V=expr / I=expr), stored in the BE's modelName slot. */
+    private boolean showBehaviorExpr;
+    /** True when the behavioral source is the voltage (V=) form; false for the
+     *  current (I=) form. Only meaningful when {@link #showBehaviorExpr}. */
+    private boolean behaviorIsVoltage;
 
     private static final int LABEL_H = 10;
     private static final int GAP = 4;
@@ -149,6 +161,7 @@ public class ComponentEditScreen
             currentAcValue     = cbe.getAcValue();
             currentAcValueExpr = cbe.getAcValueExpr();
             probeNoPlot        = cbe.isProbeNoPlot();
+            rNoiseless         = cbe.isRNoiseless();
             // For pulse sources the period lives in the BE's frequency slot;
             // pre-fill the editor with a sensible default (matches the BE
             // default) if the player just placed the block.
@@ -178,8 +191,11 @@ public class ComponentEditScreen
         boolean isPmos4   = "ic_pmos4".equals(componentType);
         boolean isCcvs    = "ccvs".equals(componentType);
         boolean isCccs    = "cccs".equals(componentType);
+        boolean isBhvV    = "behavioral_voltage_source".equals(componentType);
+        boolean isBhvI    = "behavioral_current_source".equals(componentType);
 
-        showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap && !isNmos4 && !isPmos4;
+        showValue = !isProbe && !isCurrentProbe && !isDiode && !isSky130 && !isIcCap && !isNmos4 && !isPmos4
+                && !isBhvV && !isBhvI;
         // The DC/AC toggle is gone — voltage_source now exposes DC and AC as
         // independent value fields. Other sources never used the toggle.
         showSourceType = false;
@@ -193,6 +209,7 @@ public class ComponentEditScreen
         // "Name only" mode is a voltage-probe concept: it suppresses the
         // print/plot while still letting the probe name (and merge) its net.
         showNoPlot = isProbe;
+        showRNoise = "resistor".equals(componentType);
         showSky130 = isSky130 || isIcCap || isNmos4 || isPmos4;
         showNf = isNmos4 || isPmos4;
         showMirror = isNmos4 || isPmos4;
@@ -200,6 +217,8 @@ public class ComponentEditScreen
         showNumber = !isProbe && !isCurrentProbe;
         showControlSource = isCcvs || isCccs;
         showDiodeModel = isDiode;
+        showBehaviorExpr  = isBhvV || isBhvI;
+        behaviorIsVoltage = isBhvV;
 
         int rowCount = 0;
         if (showNumber) rowCount++;
@@ -210,9 +229,11 @@ public class ComponentEditScreen
         if (showPulse) rowCount += 5;        // V_2, Period, Time-high, TR, TF (V1 reuses valueField)
         if (showLabel) rowCount++;
         if (showNoPlot) rowCount++;
+        if (showRNoise) rowCount++;
         if (showSky130) rowCount += 5 + (showNf ? 1 : 0) + (showMirror ? 1 : 0); // pdk, model, W, L, mult [, NF] [, Mirror]
         if (showControlSource) rowCount++;
         if (showDiodeModel) rowCount++;
+        if (showBehaviorExpr) rowCount++;
 
         this.imageHeight = 10 + 10 + 10 + (rowCount * ROW_H) + 36;
 
@@ -249,6 +270,13 @@ public class ComponentEditScreen
                 initial,
                 32
             );
+            cursorY += ROW_H;
+        }
+
+        if (showRNoise) {
+            // No EditBox — a clickable checkbox row rendered in render()/handled
+            // in mouseClicked(), mirroring the probe no-plot toggle pattern.
+            rNoiseRowY = cursorY;
             cursorY += ROW_H;
         }
 
@@ -389,6 +417,22 @@ public class ComponentEditScreen
             cursorY += ROW_H;
         }
 
+        if (showBehaviorExpr) {
+            modelNameField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                currentModelName,
+                128
+            );
+            String hint = behaviorIsVoltage ? "e.g. v(in)*v(in)" : "e.g. v(in)/1k";
+            modelNameField.setSuggestion(currentModelName.isEmpty() ? hint : "");
+            modelNameField.setResponder(
+                t -> modelNameField.setSuggestion(t.isEmpty() ? hint : "")
+            );
+            cursorY += ROW_H;
+        }
+
         if (showSky130) {
             // PDK selection row — no EditBox, just record Y for rendering/clicking
             pdkRowY = cursorY;
@@ -467,6 +511,8 @@ public class ComponentEditScreen
         addRenderableWidget(cancelButton);
 
         if (showValue && valueField != null) this.setInitialFocus(valueField);
+        else if ((showBehaviorExpr || showControlSource || showDiodeModel)
+                && modelNameField != null) this.setInitialFocus(modelNameField);
         else if (showSky130 && modelNameField != null) this.setInitialFocus(
             modelNameField
         );
@@ -593,6 +639,18 @@ public class ComponentEditScreen
             );
             cursorY += ROW_H;
         }
+        if (showRNoise) {
+            g.drawString(Minecraft.getInstance().font, "Thermal noise:", labelX, cursorY, LABEL_COLOR);
+            int rnCheckY = cursorY + LABEL_H + GAP;
+            drawCheckbox(g, panelX + 12, rnCheckY, rNoiseless);
+            g.drawString(
+                Minecraft.getInstance().font,
+                rNoiseless ? "noiseless (noisy=0)" : "noisy (default)",
+                panelX + 26, rnCheckY + 1,
+                rNoiseless ? 0xFF4FC3F7 : 0xFF666666
+            );
+            cursorY += ROW_H;
+        }
         if (showAcValue) {
             g.drawString(
                 Minecraft.getInstance().font,
@@ -676,6 +734,16 @@ public class ComponentEditScreen
             g.drawString(
                 Minecraft.getInstance().font,
                 "Model (blank = basic):",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+        }
+        if (showBehaviorExpr) {
+            g.drawString(
+                Minecraft.getInstance().font,
+                behaviorIsVoltage ? "Voltage expr (V=):" : "Current expr (I=):",
                 labelX,
                 cursorY,
                 LABEL_COLOR
@@ -800,6 +868,11 @@ public class ComponentEditScreen
             int checkY = noPlotRowY + LABEL_H + GAP;
             int panelX = (this.width - this.imageWidth) / 2;
             if (hitBox(mx, my, panelX + 12, checkY, 200, 12)) { probeNoPlot = !probeNoPlot; return true; }
+        }
+        if (showRNoise && rNoiseRowY > 0) {
+            int checkY = rNoiseRowY + LABEL_H + GAP;
+            int panelX = (this.width - this.imageWidth) / 2;
+            if (hitBox(mx, my, panelX + 12, checkY, 200, 12)) { rNoiseless = !rNoiseless; return true; }
         }
         return super.mouseClicked(mx, my, btn);
     }
@@ -951,7 +1024,7 @@ public class ComponentEditScreen
             mult = 1.0,
             nf = 1.0;
         String wExpr = "", lExpr = "", multExpr = "", nfExpr = "";
-        if ((showControlSource || showDiodeModel) && modelNameField != null) {
+        if ((showControlSource || showDiodeModel || showBehaviorExpr) && modelNameField != null) {
             modelName = modelNameField.getValue().trim();
         }
         if (showSky130) {
@@ -1028,7 +1101,8 @@ public class ComponentEditScreen
                 nfExpr,
                 acValue,
                 acValueExpr,
-                probeNoPlot
+                probeNoPlot,
+                rNoiseless
             )
         );
     }
@@ -1169,6 +1243,8 @@ public class ComponentEditScreen
                  "voltage_source_sin",
                  "voltage_source_pulse"      -> "Netlist index V";
             case "current_source"            -> "Netlist index I";
+            case "behavioral_voltage_source",
+                 "behavioral_current_source" -> "Netlist index B";
             case "diode"                     -> "Netlist index D";
             case "ic_nmos4", "ic_pmos4"      -> "Netlist index XM";
             case "ccvs"                      -> "Netlist index H";
@@ -1186,6 +1262,8 @@ public class ComponentEditScreen
             case "voltage_source_sin" -> "SIN Voltage Source";
             case "voltage_source_pulse" -> "Pulse Voltage Source";
             case "current_source" -> "Current Source";
+            case "behavioral_voltage_source" -> "Behavioral V Source (B)";
+            case "behavioral_current_source" -> "Behavioral I Source (B)";
             case "diode" -> "Diode";
             case "probe" -> "Voltage Probe";
             case "current_probe" -> "Current Probe";

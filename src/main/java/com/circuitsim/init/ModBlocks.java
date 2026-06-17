@@ -44,6 +44,14 @@ public class ModBlocks {
             () -> new CurrentSourceBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_PURPLE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> BEHAVIORAL_VOLTAGE_SOURCE = BLOCKS.register("behavioral_voltage_source",
+            () -> new BehavioralVoltageSourceBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_YELLOW).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> BEHAVIORAL_CURRENT_SOURCE = BLOCKS.register("behavioral_current_source",
+            () -> new BehavioralCurrentSourceBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_PURPLE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static final RegistryObject<Block> DIODE = BLOCKS.register("diode",
             () -> new DiodeBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_ORANGE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
@@ -127,6 +135,10 @@ public class ModBlocks {
     public static final RegistryObject<Block> VCCS = BLOCKS.register("vccs",
             () -> new VccsBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_PURPLE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
+    public static final RegistryObject<Block> VSWITCH = BLOCKS.register("vswitch",
+            () -> new VSwitchBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_BROWN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
     public static final RegistryObject<Block> SIM_LINK = BLOCKS.register("sim_link",
             () -> new SimLinkBlock(BlockBehaviour.Properties.of()

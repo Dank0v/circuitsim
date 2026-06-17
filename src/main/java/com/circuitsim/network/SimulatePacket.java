@@ -64,6 +64,23 @@ public class SimulatePacket {
     private final String  dcStart2;
     private final String  dcStop2;
     private final String  dcStep2;
+    /**
+     * Scalar Param-variable definitions ({@code name=value}) for the current
+     * run — injected as {@code .param} lines into every generated netlist.
+     * Set on the sim worker thread (one per packet) before any netlist is
+     * built; stays empty when the circuit has no Param blocks.
+     */
+    private List<String> activeParamDefs = Collections.emptyList();
+
+    // .NOISE analysis config — raw UI strings (parsed at sim time).
+    private final String noiseOut;     // output node (probe label or node id)
+    private final String noiseRef;     // optional reference node
+    private final String noiseSrc;     // input source name (e.g. V1)
+    private final String noiseSweep;   // dec / lin / oct
+    private final String noisePts;     // points (per dec/oct, total for lin)
+    private final String noiseFstart;
+    private final String noiseFstop;
+    private final String noisePtsSum;  // optional pts-per-summary
 
     public SimulatePacket(
         BlockPos pos,
@@ -109,6 +126,45 @@ public class SimulatePacket {
         String dcStop2,
         String dcStep2
     ) {
+        this(pos, analysis, fStart, fStop, ptsPerDec, pdkName, pdkLibPath, pdkLibPaths,
+                ngBehavior, rawParam1, rawParam2, rawParam3, simTemp,
+                dcSource1, dcStart1, dcStop1, dcStep1, dc2D,
+                dcSource2, dcStart2, dcStop2, dcStep2,
+                "", "", "", "dec", "20", "1", "1Meg", "");
+    }
+
+    public SimulatePacket(
+        BlockPos pos,
+        String analysis,
+        double fStart,
+        double fStop,
+        int ptsPerDec,
+        String pdkName,
+        String pdkLibPath,
+        String pdkLibPaths,
+        String ngBehavior,
+        String rawParam1,
+        String rawParam2,
+        String rawParam3,
+        String simTemp,
+        String dcSource1,
+        String dcStart1,
+        String dcStop1,
+        String dcStep1,
+        boolean dc2D,
+        String dcSource2,
+        String dcStart2,
+        String dcStop2,
+        String dcStep2,
+        String noiseOut,
+        String noiseRef,
+        String noiseSrc,
+        String noiseSweep,
+        String noisePts,
+        String noiseFstart,
+        String noiseFstop,
+        String noisePtsSum
+    ) {
         this.pos = pos;
         this.analysis = analysis;
         this.fStart = fStart;
@@ -131,6 +187,14 @@ public class SimulatePacket {
         this.dcStart2  = dcStart2  == null ? "0" : dcStart2;
         this.dcStop2   = dcStop2   == null ? "0" : dcStop2;
         this.dcStep2   = dcStep2   == null ? "0" : dcStep2;
+        this.noiseOut    = noiseOut    == null ? ""    : noiseOut;
+        this.noiseRef    = noiseRef    == null ? ""    : noiseRef;
+        this.noiseSrc    = noiseSrc    == null ? ""    : noiseSrc;
+        this.noiseSweep  = noiseSweep  == null ? "dec" : noiseSweep;
+        this.noisePts    = noisePts    == null ? "20"  : noisePts;
+        this.noiseFstart = noiseFstart == null ? "1"   : noiseFstart;
+        this.noiseFstop  = noiseFstop  == null ? "1Meg" : noiseFstop;
+        this.noisePtsSum = noisePtsSum == null ? ""    : noisePtsSum;
     }
 
     public SimulatePacket(FriendlyByteBuf buf) {
@@ -156,6 +220,14 @@ public class SimulatePacket {
         this.dcStart2  = buf.readUtf(32);
         this.dcStop2   = buf.readUtf(32);
         this.dcStep2   = buf.readUtf(32);
+        this.noiseOut    = buf.readUtf(64);
+        this.noiseRef    = buf.readUtf(64);
+        this.noiseSrc    = buf.readUtf(32);
+        this.noiseSweep  = buf.readUtf(8);
+        this.noisePts    = buf.readUtf(16);
+        this.noiseFstart = buf.readUtf(32);
+        this.noiseFstop  = buf.readUtf(32);
+        this.noisePtsSum = buf.readUtf(16);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -181,6 +253,14 @@ public class SimulatePacket {
         buf.writeUtf(dcStart2,  32);
         buf.writeUtf(dcStop2,   32);
         buf.writeUtf(dcStep2,   32);
+        buf.writeUtf(noiseOut,    64);
+        buf.writeUtf(noiseRef,    64);
+        buf.writeUtf(noiseSrc,    32);
+        buf.writeUtf(noiseSweep,  8);
+        buf.writeUtf(noisePts,    16);
+        buf.writeUtf(noiseFstart, 32);
+        buf.writeUtf(noiseFstop,  32);
+        buf.writeUtf(noisePtsSum, 16);
     }
 
     public static SimulatePacket decode(FriendlyByteBuf buf) {
@@ -215,6 +295,14 @@ public class SimulatePacket {
             simCbe.setDcStart2(dcStart2);
             simCbe.setDcStop2(dcStop2);
             simCbe.setDcStep2(dcStep2);
+            simCbe.setNoiseOut(noiseOut);
+            simCbe.setNoiseRef(noiseRef);
+            simCbe.setNoiseSrc(noiseSrc);
+            simCbe.setNoiseSweep(noiseSweep);
+            simCbe.setNoisePts(noisePts);
+            simCbe.setNoiseFstart(noiseFstart);
+            simCbe.setNoiseFstop(noiseFstop);
+            simCbe.setNoisePtsSum(noisePtsSum);
             simCbe.setChanged();
             simCbe.syncToClient();
         }
@@ -296,21 +384,56 @@ public class SimulatePacket {
                 extraction = applied.extraction;
                 sweepParam = applied.sweepParam;
                 sweepValues = applied.sweepValues;
+                activeParamDefs = applied.paramDefs;
             } else if (!checkAllVariablesDefined(player, extraction,
                     Collections.emptySet())) {
                 return;       // a component references a variable with no Parametric block
             }
 
             if (sweepParam != null) {
-                runParametricSweep(
-                    player,
-                    extraction,
-                    sweepParam,
-                    sweepValues,
-                    tempValues,
-                    bookLines,
-                    graphPageComponents
-                );
+                // Preferred sweep engine: ONE ngspice process whose .control
+                // block loops alterparam/reset/run over the swept .param and
+                // we split the output per iteration. Falls back to the legacy
+                // one-process-per-value runner for the combinations the loop
+                // can't express: multi-temperature overlays, 2D DC, NOISE,
+                // and sweeps that drive an IC geometry slot (W/L/mult/nf),
+                // whose derived area/perimeter params must be recomputed in
+                // Java per value.
+                boolean controlLoopOk = tempValues.size() <= 1
+                        && !"NOISE".equals(analysis)
+                        && !("DC".equals(analysis) && dc2D)
+                        && sweptSlotsAreSimple(extraction.components, sweepParam.varName);
+                if (controlLoopOk) {
+                    double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
+                    runParamControlSweep(
+                        player,
+                        extraction,
+                        sweepParam,
+                        sweepValues,
+                        tempC,
+                        bookLines,
+                        graphPageComponents
+                    );
+                } else {
+                    runParametricSweep(
+                        player,
+                        extraction,
+                        sweepParam,
+                        sweepValues,
+                        tempValues,
+                        bookLines,
+                        graphPageComponents
+                    );
+                }
+            } else if ("NOISE".equals(analysis)) {
+                double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
+                if (tempValues.size() > 1) {
+                    msg(player,
+                        "Noise analysis runs at a single temperature; using "
+                            + ComponentEditScreen.formatValue(tempC) + "C.",
+                        ChatFormatting.YELLOW);
+                }
+                runNoiseSimulation(player, extraction, bookLines, graphPageComponents, tempC);
             } else if ("DC".equals(analysis)) {
                 double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
                 runDcSimulation(player, extraction, bookLines, graphPageComponents, tempC);
@@ -395,7 +518,7 @@ public class SimulatePacket {
             extraction.userCommands,
             extraction.userPlots
         );
-        netlist = injectTemp(netlist, tempC);
+        netlist = prepareNetlist(netlist, tempC);
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
@@ -482,7 +605,7 @@ public class SimulatePacket {
             extraction.userCommands,
             extraction.userPlots
         );
-        netlist = injectTemp(netlist, tempC);
+        netlist = prepareNetlist(netlist, tempC);
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
@@ -624,6 +747,188 @@ public class SimulatePacket {
         );
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (AC)");
+    }
+
+    // -------------------------------------------------------------------------
+    // .NOISE
+    // -------------------------------------------------------------------------
+
+    /**
+     * Maps the user-typed output/ref node onto a netlist node name: bare
+     * integers pass through (raw node ids), anything else is sanitised the
+     * same way probe labels are, so typing the probe's label finds the
+     * aliased net.
+     */
+    private static String noiseNodeRef(String typed) {
+        String s = typed.trim();
+        if (s.matches("\\d+")) return s;
+        return NetlistBuilder.sanitizeNodeName(s);
+    }
+
+    private void runNoiseSimulation(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        List<String> bookLines,
+        List<Component> graphPageComponents,
+        double tempC
+    ) {
+        // ── validate the dialog fields ───────────────────────────────────────
+        String out = noiseNodeRef(noiseOut);
+        if (out.isEmpty()) {
+            msg(player, "Noise analysis needs an output node (probe label or node id).",
+                ChatFormatting.RED);
+            return;
+        }
+        String ref = noiseRef.trim().isEmpty() ? "" : noiseNodeRef(noiseRef);
+        String src = noiseSrc.trim();
+        if (src.isEmpty()) {
+            msg(player, "Noise analysis needs an input source name (e.g. V1).",
+                ChatFormatting.RED);
+            return;
+        }
+        char srcPrefix = Character.toUpperCase(src.charAt(0));
+        if (srcPrefix != 'V' && srcPrefix != 'I') {
+            msg(player, "Noise input source must be an independent V or I source (got '"
+                    + src + "').", ChatFormatting.RED);
+            return;
+        }
+        String sweep = switch (noiseSweep.toLowerCase(java.util.Locale.ROOT)) {
+            case "lin" -> "lin";
+            case "oct" -> "oct";
+            default    -> "dec";
+        };
+        int pts;
+        try { pts = Integer.parseInt(noisePts.trim()); }
+        catch (NumberFormatException e) { pts = 20; }
+        if (pts < 1) pts = 1;
+        double fstart, fstop;
+        try {
+            fstart = ComponentEditScreen.parseSI(noiseFstart.trim());
+            fstop  = ComponentEditScreen.parseSI(noiseFstop.trim());
+        } catch (NumberFormatException e) {
+            msg(player, "Noise Fstart/Fstop must parse as frequencies.", ChatFormatting.RED);
+            return;
+        }
+        if (fstart <= 0 || fstop <= fstart) {
+            msg(player, "Noise sweep needs 0 < Fstart < Fstop.", ChatFormatting.RED);
+            return;
+        }
+        int ptsSum = 0;
+        if (!noisePtsSum.trim().isEmpty()) {
+            try { ptsSum = Integer.parseInt(noisePtsSum.trim()); }
+            catch (NumberFormatException e) {
+                msg(player, "Pts-per-summary must be a whole number (or empty).",
+                    ChatFormatting.RED);
+                return;
+            }
+            if (ptsSum < 0) ptsSum = 0;
+        }
+
+        String netlist = NetlistBuilder.buildNoiseNetlist(
+            extraction.components,
+            extraction.probes,
+            extraction.currentProbes,
+            out, ref, src, sweep, pts, fstart, fstop, ptsSum,
+            pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+            extraction.userCommands
+        );
+
+        // The chosen source must actually exist in the generated netlist —
+        // catch the typo here instead of letting ngspice abort cryptically.
+        boolean srcFound = netlist.lines().anyMatch(l -> {
+            String t = l.trim();
+            int sp = t.indexOf(' ');
+            return sp > 0 && t.substring(0, sp).equalsIgnoreCase(src);
+        });
+        if (!srcFound) {
+            msg(player, "Input source '" + src + "' is not in the circuit. "
+                    + "Set the source's Netlist index so its name matches (e.g. V1).",
+                ChatFormatting.RED);
+            return;
+        }
+
+        netlist = prepareNetlist(netlist, tempC);
+        printNetlist(player, netlist, bookLines);
+
+        NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
+        if (result.error != null) {
+            msg(player, "Simulation Error: " + result.error, ChatFormatting.RED);
+            bookLines.add("Error: " + result.error);
+            return;
+        }
+        if (result.noiseData.isEmpty()) {
+            msg(player, "No noise results returned. Raw output:", ChatFormatting.RED);
+            for (String l : result.output) msg(player, l, ChatFormatting.GRAY);
+            return;
+        }
+
+        List<Double> freqAxis = new ArrayList<>(result.noiseData.keySet());
+        Collections.sort(freqAxis);
+
+        msg(player,
+            "--- Noise Results (" + freqAxis.size() + " freq points) ---",
+            ChatFormatting.GREEN);
+        bookLines.add("=== Noise Results ===");
+
+        // Integrated totals — the headline numbers.
+        Double onTotal = result.extrasByName.get("onoise_total");
+        Double inTotal = result.extrasByName.get("inoise_total");
+        String inUnit  = srcPrefix == 'I' ? "A" : "V";
+        if (onTotal != null) {
+            String line = "  onoise_total = "
+                    + ComponentEditScreen.formatValue(onTotal) + "V rms (" + fstartStopLabel(fstart, fstop) + ")";
+            msg(player, line, ChatFormatting.AQUA);
+            bookLines.add(line);
+        }
+        if (inTotal != null) {
+            String line = "  inoise_total = "
+                    + ComponentEditScreen.formatValue(inTotal) + inUnit + " rms (referred to " + src + ")";
+            msg(player, line, ChatFormatting.AQUA);
+            bookLines.add(line);
+        }
+
+        // Raw stdout into the result book so the device-noise summaries
+        // (pts-per-summary mode) are reachable without re-running.
+        if (result.rawStdout != null && !result.rawStdout.isEmpty()) {
+            bookLines.add("=== ngspice raw output ===");
+            for (String l : result.rawStdout.split("\n")) {
+                String s = l.replace("\r", "");
+                if (s.isEmpty()) continue;
+                bookLines.add("  " + s);
+            }
+        }
+
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
+
+        for (String vec : new String[]{"onoise_spectrum", "inoise_spectrum"}) {
+            List<Double> vals = new ArrayList<>();
+            boolean any = false;
+            for (double f : freqAxis) {
+                Map<String, Double> row = result.noiseData.get(f);
+                Double v = row != null ? row.get(vec) : null;
+                if (v != null) any = true;
+                vals.add(v != null ? v : 0.0);
+            }
+            if (!any) continue;
+            voltData.put(vec, vals);
+            probeUnits.put(vec, (vec.startsWith("inoise") ? inUnit : "V") + "/√Hz");
+        }
+
+        int sessionId = ParametricResultCache.store(
+            new ParametricResultCache.ResultSet(
+                "Frequency", "Hz", freqAxis,
+                voltData, currData, probeUnits,
+                true,   // log X
+                true)); // log Y by default — noise spectra read log-log
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitOutputViewerLink(player, sessionId, bookLines, "CircuitSim Output (NOISE)");
+    }
+
+    private static String fstartStopLabel(double fstart, double fstop) {
+        return ComponentEditScreen.formatValue(fstart) + "Hz - "
+                + ComponentEditScreen.formatValue(fstop) + "Hz";
     }
 
     // -------------------------------------------------------------------------
@@ -782,7 +1087,7 @@ public class SimulatePacket {
                 pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
                 extraction.userCommands, extraction.userPlots
         );
-        netlist = injectTemp(netlist, tempC);
+        netlist = prepareNetlist(netlist, tempC);
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
@@ -929,7 +1234,7 @@ public class SimulatePacket {
             extraction.userCommands,
             extraction.userPlots
         );
-        netlist = injectTemp(netlist, tempC);
+        netlist = prepareNetlist(netlist, tempC);
         printNetlist(player, netlist, bookLines);
 
         NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
@@ -1024,17 +1329,15 @@ public class SimulatePacket {
             probeUnits.put(plot.label, plot.unit);
         }
 
-        int sessionId = ParametricResultCache.store(
-            new ParametricResultCache.ResultSet(
-                "Time",
-                "s",
-                timeAxis,
-                voltageData,
-                currentData,
-                probeUnits,
-                false
-            )
-        );
+        // Companion FFT session — ngspice's linearize+fft of the same probed
+        // signals, parsed from the spectrum print of this run.
+        int fftSessionId = storeFftSession(result.fftData, "",
+                effectiveProbes, extraction.currentProbes, extraction.userPlots);
+
+        ParametricResultCache.ResultSet tranRs = new ParametricResultCache.ResultSet(
+                "Time", "s", timeAxis, voltageData, currentData, probeUnits, false);
+        tranRs.fftSessionId = fftSessionId;
+        int sessionId = ParametricResultCache.store(tranRs);
         emitGraphLinks(
             player,
             sessionId,
@@ -1043,8 +1346,60 @@ public class SimulatePacket {
             probeUnits,
             graphPageComponents
         );
+        if (fftSessionId >= 0) emitFftLink(player, fftSessionId, graphPageComponents);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (TRAN)");
+    }
+
+    /**
+     * Stores the FFT spectra of one transient run (or one sweep step, when
+     * {@code suffix} is non-empty) as their own result session: frequency
+     * axis, log-log by default, one series per probed signal. The DC bin is
+     * skipped — it has no home on the log-frequency axis and the time-domain
+     * plot already shows the average level. Returns the session id, or -1
+     * when no FFT table was parsed.
+     */
+    private static int storeFftSession(
+        Map<Double, Map<String, Double>> fftData,
+        String suffix,
+        List<NetlistBuilder.ProbeInfo> effectiveProbes,
+        List<NetlistBuilder.CurrentProbeInfo> cpList,
+        List<NetlistBuilder.UserPlot> userPlots
+    ) {
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
+        List<Double> freqAxis = fftAxisOf(fftData);
+        if (freqAxis == null) return -1;
+        collectSweepSeries(fftData, freqAxis, suffix, true,
+                effectiveProbes, cpList, userPlots, voltData, currData, probeUnits);
+        return ParametricResultCache.store(
+            new ParametricResultCache.ResultSet(
+                "Frequency", "Hz", freqAxis, voltData, currData, probeUnits,
+                true,    // log X
+                true));  // log Y — spectra read log-log; Log toggles back to linear
+    }
+
+    /** Sorted positive frequencies of an FFT table, or null when unusable. */
+    private static List<Double> fftAxisOf(Map<Double, Map<String, Double>> fftData) {
+        if (fftData == null || fftData.isEmpty()) return null;
+        List<Double> axis = new ArrayList<>(fftData.keySet());
+        Collections.sort(axis);
+        axis.removeIf(f -> f <= 0);   // drop the DC bin
+        return axis.isEmpty() ? null : axis;
+    }
+
+    /** Clickable chat + book link opening the companion FFT spectrum session. */
+    private void emitFftLink(ServerPlayer player, int fftSessionId,
+                             List<Component> graphPageComponents) {
+        String cmd = "/circuitsim graph " + fftSessionId + " 0";
+        Style style = Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
+                .withUnderlined(true)
+                .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd));
+        sendChatComponent(player,
+            Component.literal("[Open FFT spectrum]").withStyle(style));
+        graphPageComponents.add(
+            Component.literal("Open FFT spectrum\n").withStyle(style));
     }
 
     // -------------------------------------------------------------------------
@@ -1057,9 +1412,19 @@ public class SimulatePacket {
         /** The one sweep variable to drive, or null when all parametric blocks are constants. */
         final CircuitExtractor.ParametricInfo  sweepParam;
         final List<Double>                     sweepValues;
+        /**
+         * {@code name=value} definitions for every scalar Param variable —
+         * emitted as {@code .param} lines so the declarations are visible in
+         * the netlist and usable from Commands-block expressions. The swept
+         * variable's definition (seeded with its first value) is appended by
+         * the control-loop runner.
+         */
+        final List<String>                     paramDefs;
         ApplyResult(CircuitExtractor.ExtractionResult e,
-                    CircuitExtractor.ParametricInfo s, List<Double> v) {
+                    CircuitExtractor.ParametricInfo s, List<Double> v,
+                    List<String> paramDefs) {
             this.extraction = e; this.sweepParam = s; this.sweepValues = v;
+            this.paramDefs = paramDefs;
         }
     }
 
@@ -1153,8 +1518,15 @@ public class SimulatePacket {
         if (sweep != null) defined.add(sweep.varName);
         if (!checkAllVariablesDefined(player, extraction, defined)) return null;
 
+        // Scalar declarations become .param lines (Feature: "Param block").
+        List<String> paramDefs = new ArrayList<>();
+        for (Map.Entry<String, Double> e : constMap.entrySet()) {
+            paramDefs.add(String.format(java.util.Locale.ROOT,
+                    "%s=%g", e.getKey(), e.getValue()));
+        }
+
         if (constMap.isEmpty()) {
-            return new ApplyResult(extraction, sweep, sweepVals);
+            return new ApplyResult(extraction, sweep, sweepVals, paramDefs);
         }
 
         // Apply constants: rebuild the components list with single-value
@@ -1178,7 +1550,7 @@ public class SimulatePacket {
                 rewritten, extraction.probes, extraction.currentProbes,
                 extraction.probeLabels, extraction.parametricBlocks,
                 extraction.userCommands, extraction.userPlots);
-        return new ApplyResult(substituted, sweep, sweepVals);
+        return new ApplyResult(substituted, sweep, sweepVals, paramDefs);
     }
 
     private void runParametricSweep(
@@ -1214,6 +1586,10 @@ public class SimulatePacket {
         bookLines.add(header);
 
         switch (analysis) {
+            case "NOISE" -> msg(player,
+                "Param sweeps are not supported with NOISE analysis. "
+                    + "Use a single value for every Param variable.",
+                ChatFormatting.RED);
             case "AC" -> runParametricAcSweep(
                 player,
                 extraction,
@@ -1262,6 +1638,371 @@ public class SimulatePacket {
                 graphPageComponents
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Param-block sweep via a .control loop — ONE ngspice process that
+    // foreach/alterparam/reset/runs over the swept .param. ngspice has no
+    // PSpice-style .step card, so the loop is the native way to re-evaluate
+    // a parameter per run; we echo a marker before each iteration and split
+    // stdout on it to recover the per-step tables (NgSpiceRunner.runSweep).
+    // -------------------------------------------------------------------------
+
+    /**
+     * True when every component slot referencing {@code var} is a plain
+     * value/acValue slot. IC geometry slots (W/L/mult/nf) derive area and
+     * perimeter parameters in Java, so they can't be expressed as a brace
+     * {@code {param}} token — those sweeps use the legacy per-value runner.
+     */
+    private static boolean sweptSlotsAreSimple(
+            List<NetlistBuilder.CircuitComponent> comps, String var) {
+        for (NetlistBuilder.CircuitComponent c : comps) {
+            if (var.equals(c.wExpr) || var.equals(c.lExpr)
+                    || var.equals(c.multExpr) || var.equals(c.nfExpr)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Wraps the netlist's {@code .control} body in a sweep loop:
+     * <pre>
+     *   foreach pv v1 v2 ...
+     *     alterparam name = $pv
+     *     reset
+     *     echo PARAMSWEEP $pv
+     *     &lt;original body: saves, run, lets, prints&gt;
+     *   end
+     * </pre>
+     * {@code alterparam} updates the {@code .param}; {@code reset} re-expands
+     * the circuit so the new value takes effect before {@code run} (verified
+     * against ngspice-46). The original body stays inside the loop so its
+     * pre-run {@code save} commands re-register after every reset.
+     */
+    private static String wrapControlWithSweep(String netlist, String varName,
+                                               List<Double> values) {
+        int ctrl = netlist.indexOf(".control\n");
+        int endc = netlist.lastIndexOf(".endc");
+        if (ctrl < 0 || endc <= ctrl) return netlist;
+        int bodyStart = ctrl + ".control\n".length();
+        String body = netlist.substring(bodyStart, endc);
+
+        StringBuilder sb = new StringBuilder(body.length() + 256);
+        sb.append("  foreach pv");
+        for (double v : values) {
+            sb.append(' ').append(String.format(java.util.Locale.ROOT, "%g", v));
+        }
+        sb.append('\n');
+        sb.append("    alterparam ").append(varName).append(" = $pv\n");
+        sb.append("    reset\n");
+        sb.append("    echo ").append(NgSpiceRunner.SWEEP_MARKER).append(" $pv\n");
+        for (String line : body.split("\n")) {
+            if (line.isEmpty()) continue;
+            sb.append("  ").append(line).append('\n');
+        }
+        sb.append("  end\n");
+        return netlist.substring(0, bodyStart) + sb + netlist.substring(endc);
+    }
+
+    private void runParamControlSweep(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        CircuitExtractor.ParametricInfo param,
+        List<Double> sweepValues,
+        double tempC,
+        List<String> bookLines,
+        List<Component> graphPageComponents
+    ) {
+        String varName = param.varName;
+        String varUnit = unitForVariable(extraction.components, varName);
+        List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
+        List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
+
+        String header = "=== Param sweep: " + varName + " ("
+                + sweepValues.size() + " values, " + analysis + ", one ngspice run) ===";
+        msg(player, header, ChatFormatting.GOLD);
+        bookLines.add(header);
+
+        // Base netlist for the analysis. Components whose slot references the
+        // swept variable emit {varName}, re-evaluated by every alterparam.
+        String netlist;
+        double dcStartV = 0, dcStopV = 0, dcStepV = 0;
+        String dcSrc = "";
+        switch (analysis) {
+            case "AC" -> netlist = NetlistBuilder.buildAcNetlist(
+                    extraction.components, effectiveProbes, cpList,
+                    fStart, fStop, ptsPerDec,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots);
+            case "TRAN" -> netlist = NetlistBuilder.buildTranNetlist(
+                    extraction.components, effectiveProbes, cpList,
+                    fStart, fStop,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots);
+            case "DC" -> {
+                try {
+                    dcStartV = ComponentEditScreen.parseSI(dcStart1);
+                    dcStopV  = ComponentEditScreen.parseSI(dcStop1);
+                    dcStepV  = ComponentEditScreen.parseSI(dcStep1);
+                } catch (NumberFormatException nfe) {
+                    msg(player, "DC range fields must parse as numbers.", ChatFormatting.RED);
+                    return;
+                }
+                if (dcStepV == 0) {
+                    msg(player, "DC step cannot be zero.", ChatFormatting.RED);
+                    return;
+                }
+                dcSrc = dcSource1 == null ? "" : dcSource1.trim();
+                if (dcSrc.isEmpty()) {
+                    msg(player, "DC sweep needs a source name (e.g. V1).", ChatFormatting.RED);
+                    return;
+                }
+                netlist = NetlistBuilder.buildDcNetlist(
+                        extraction.components, effectiveProbes, cpList,
+                        dcSrc, dcStartV, dcStopV, dcStepV,
+                        false, "", 0, 0, 1,
+                        pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                        extraction.userCommands, extraction.userPlots);
+            }
+            default -> netlist = NetlistBuilder.buildNetlist(
+                    extraction.components, effectiveProbes, cpList,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots);
+        }
+
+        // .param lines: every scalar definition plus the swept variable
+        // seeded with its first value (alterparam re-drives it per step).
+        List<String> defs = new ArrayList<>(activeParamDefs);
+        defs.add(String.format(java.util.Locale.ROOT, "%s=%g", varName, sweepValues.get(0)));
+        netlist = injectTemp(injectParams(netlist, defs), tempC);
+        netlist = wrapControlWithSweep(netlist, varName, sweepValues);
+        printNetlist(player, netlist, bookLines);
+
+        NgSpiceRunner.SweepResult sw = NgSpiceRunner.runSweep(netlist, ngBehavior);
+        if (sw.error != null) {
+            String first = sw.error.lines().filter(l -> !l.isBlank())
+                    .findFirst().orElse("unknown error");
+            msg(player, "Simulation Error: " + first, ChatFormatting.RED);
+            bookLines.add("Error: " + first);
+            return;
+        }
+        int n = Math.min(sw.steps.size(), sweepValues.size());
+        if (n == 0) {
+            msg(player, "Sweep returned no per-step results.", ChatFormatting.RED);
+            return;
+        }
+        if (sw.steps.size() != sweepValues.size()) {
+            msg(player, "Sweep produced " + sw.steps.size() + " of "
+                    + sweepValues.size() + " steps.", ChatFormatting.YELLOW);
+        }
+
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
+
+        switch (analysis) {
+            case "AC" -> {
+                List<Double> freqAxis = null;
+                for (int i = 0; i < n; i++) {
+                    NgSpiceRunner.Result step = sw.steps.get(i);
+                    if (step.acData.isEmpty()) continue;
+                    List<Double> sorted = new ArrayList<>(step.acData.keySet());
+                    Collections.sort(sorted);
+                    if (freqAxis == null) freqAxis = sorted;
+                    String suffix = "@" + ComponentEditScreen.formatValue(sweepValues.get(i)) + varUnit;
+                    collectSweepSeries(step.acData, sorted, suffix, true,
+                            effectiveProbes, cpList, extraction.userPlots,
+                            voltData, currData, probeUnits);
+                    echoExtras(player, step, bookLines);
+                }
+                if (freqAxis == null) return;
+                storeAndLink(player, "Frequency", "Hz", freqAxis, true, -1,
+                        voltData, currData, probeUnits, bookLines, graphPageComponents);
+            }
+            case "TRAN" -> {
+                List<Double> timeAxis = null;
+                // FFT companion accumulators — one spectrum per swept value,
+                // overlaid in their own session like the time-domain curves.
+                List<Double> fftAxis  = null;
+                Map<String, List<Double>> fftVolt  = new LinkedHashMap<>();
+                Map<String, List<Double>> fftCurr  = new LinkedHashMap<>();
+                Map<String, String>       fftUnits = new LinkedHashMap<>();
+                for (int i = 0; i < n; i++) {
+                    NgSpiceRunner.Result step = sw.steps.get(i);
+                    if (step.tranData.isEmpty()) continue;
+                    List<Double> sorted = new ArrayList<>(step.tranData.keySet());
+                    Collections.sort(sorted);
+                    if (timeAxis == null) timeAxis = sorted;
+                    String suffix = "@" + ComponentEditScreen.formatValue(sweepValues.get(i)) + varUnit;
+                    collectSweepSeries(step.tranData, sorted, suffix, false,
+                            effectiveProbes, cpList, extraction.userPlots,
+                            voltData, currData, probeUnits);
+                    List<Double> fa = fftAxisOf(step.fftData);
+                    if (fa != null) {
+                        if (fftAxis == null) fftAxis = fa;
+                        collectSweepSeries(step.fftData, fa, suffix, true,
+                                effectiveProbes, cpList, extraction.userPlots,
+                                fftVolt, fftCurr, fftUnits);
+                    }
+                    echoExtras(player, step, bookLines);
+                }
+                if (timeAxis == null) return;
+                int fftSession = -1;
+                if (fftAxis != null) {
+                    fftSession = ParametricResultCache.store(
+                        new ParametricResultCache.ResultSet(
+                            "Frequency", "Hz", fftAxis, fftVolt, fftCurr, fftUnits,
+                            true, true));
+                }
+                storeAndLink(player, "Time", "s", timeAxis, false, fftSession,
+                        voltData, currData, probeUnits, bookLines, graphPageComponents);
+                if (fftSession >= 0) emitFftLink(player, fftSession, graphPageComponents);
+            }
+            case "DC" -> {
+                List<Double> dcAxis = null;
+                for (int i = 0; i < n; i++) {
+                    NgSpiceRunner.Result step = sw.steps.get(i);
+                    if (step.dcData.isEmpty()) continue;
+                    List<Double> sorted = new ArrayList<>(step.dcData.keySet());
+                    Collections.sort(sorted);
+                    if (dcAxis == null) dcAxis = sorted;
+                    String suffix = "@" + ComponentEditScreen.formatValue(sweepValues.get(i)) + varUnit;
+                    collectSweepSeries(step.dcData, sorted, suffix, false,
+                            effectiveProbes, cpList, extraction.userPlots,
+                            voltData, currData, probeUnits);
+                    echoExtras(player, step, bookLines);
+                }
+                if (dcAxis == null) return;
+                String xUnit = Character.toUpperCase(dcSrc.charAt(0)) == 'I' ? "A" : "V";
+                storeAndLink(player, dcSrc, xUnit, dcAxis, false, -1,
+                        voltData, currData, probeUnits, bookLines, graphPageComponents);
+            }
+            default -> {   // OP: one scalar set per step → probe-vs-param plot
+                List<Double> validSweep = new ArrayList<>();
+                for (NetlistBuilder.ProbeInfo p : plotted(effectiveProbes))
+                    voltData.put(p.label, new ArrayList<>());
+                for (int k = 0; k < cpList.size(); k++)
+                    currData.put(cpList.get(k).label, new ArrayList<>());
+                for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                    voltData.put(plot.label, new ArrayList<>());
+                    probeUnits.put(plot.label, plot.unit);
+                }
+                for (int i = 0; i < n; i++) {
+                    NgSpiceRunner.Result step = sw.steps.get(i);
+                    if (step.values.isEmpty() && step.extrasByName.isEmpty()) continue;
+                    validSweep.add(sweepValues.get(i));
+                    String secHdr = "--- " + varName + "="
+                            + ComponentEditScreen.formatValue(sweepValues.get(i)) + varUnit + " ---";
+                    msg(player, secHdr, ChatFormatting.YELLOW);
+                    bookLines.add(secHdr);
+                    for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
+                        Double v = step.values.get("v(" + probe.netName + ")");
+                        voltData.get(probe.label).add(v != null ? v : 0.0);
+                        String line = "  [" + probe.label + "]: " + step.getNodeVoltage(probe.netName);
+                        msg(player, line, ChatFormatting.AQUA);
+                        bookLines.add(line);
+                    }
+                    for (int k = 0; k < cpList.size(); k++) {
+                        Double v = step.values.get("i(vm" + (k + 1) + ")");
+                        currData.get(cpList.get(k).label).add(v != null ? v : 0.0);
+                        String line = "  [" + cpList.get(k).label + "]: " + step.getBranchCurrent("vm" + (k + 1));
+                        msg(player, line, ChatFormatting.LIGHT_PURPLE);
+                        bookLines.add(line);
+                    }
+                    for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                        Double v = step.extrasByName.get(plot.name);
+                        voltData.get(plot.label).add(v != null ? v : 0.0);
+                    }
+                    echoExtras(player, step, bookLines);
+                }
+                if (validSweep.isEmpty()) return;
+                storeAndLink(player, varName, varUnit, validSweep, false, -1,
+                        voltData, currData, probeUnits, bookLines, graphPageComponents);
+            }
+        }
+    }
+
+    /**
+     * Extracts one sweep step's probe/current/user-plot series from a parsed
+     * table ({@code acData}/{@code tranData}/{@code dcData}) into the shared
+     * accumulators, naming each series {@code label + suffix}. {@code mag}
+     * selects the AC "_mag"-suffixed keys.
+     */
+    private static void collectSweepSeries(
+        Map<Double, Map<String, Double>> table,
+        List<Double> axis,
+        String suffix,
+        boolean mag,
+        List<NetlistBuilder.ProbeInfo> effectiveProbes,
+        List<NetlistBuilder.CurrentProbeInfo> cpList,
+        List<NetlistBuilder.UserPlot> userPlots,
+        Map<String, List<Double>> voltData,
+        Map<String, List<Double>> currData,
+        Map<String, String> probeUnits
+    ) {
+        String tail = mag ? "_mag" : "";
+        for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
+            String key = "v(" + probe.netName + ")" + tail;
+            List<Double> vals = new ArrayList<>(axis.size());
+            for (double x : axis) {
+                Map<String, Double> row = table.get(x);
+                Double v = row != null ? row.get(key) : null;
+                vals.add(v != null ? v : 0.0);
+            }
+            voltData.put(probe.label + suffix, vals);
+        }
+        for (int k = 0; k < cpList.size(); k++) {
+            String key = "i(vm" + (k + 1) + ")" + tail;
+            List<Double> vals = new ArrayList<>(axis.size());
+            for (double x : axis) {
+                Map<String, Double> row = table.get(x);
+                Double v = row != null ? row.get(key) : null;
+                vals.add(v != null ? v : 0.0);
+            }
+            currData.put(cpList.get(k).label + suffix, vals);
+        }
+        for (NetlistBuilder.UserPlot plot : userPlots) {
+            String key = plot.name + tail;
+            List<Double> vals = new ArrayList<>(axis.size());
+            for (double x : axis) {
+                Map<String, Double> row = table.get(x);
+                Double v = row != null ? row.get(key) : null;
+                vals.add(v != null ? v : 0.0);
+            }
+            voltData.put(plot.label + suffix, vals);
+            probeUnits.put(plot.label + suffix, plot.unit);
+        }
+    }
+
+    /** Per-step scalar print/meas echo shared by the sweep collectors. */
+    private void echoExtras(ServerPlayer player, NgSpiceRunner.Result step,
+                            List<String> bookLines) {
+        for (String extra : step.extras) {
+            String line = "  " + extra;
+            msg(player, line, ChatFormatting.LIGHT_PURPLE);
+            bookLines.add(line);
+        }
+    }
+
+    /** Stores the accumulated sweep session and emits the chat links. */
+    private void storeAndLink(
+        ServerPlayer player,
+        String xName, String xUnit, List<Double> axis, boolean logX,
+        int fftSessionId,
+        Map<String, List<Double>> voltData,
+        Map<String, List<Double>> currData,
+        Map<String, String> probeUnits,
+        List<String> bookLines,
+        List<Component> graphPageComponents
+    ) {
+        msg(player, "Param sweep complete. " + (voltData.size() + currData.size())
+                + " series.", ChatFormatting.GREEN);
+        ParametricResultCache.ResultSet rs = new ParametricResultCache.ResultSet(
+                xName, xUnit, axis, voltData, currData, probeUnits, logX);
+        rs.fftSessionId = fftSessionId;
+        int sessionId = ParametricResultCache.store(rs);
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitOutputViewerLink(player, sessionId, bookLines,
+                "CircuitSim Output (param sweep " + analysis + ")");
     }
 
     // --- Parametric .OP ---
@@ -1328,7 +2069,7 @@ public class SimulatePacket {
                     extraction.userCommands,
                     extraction.userPlots
                 );
-                netlist = injectTemp(netlist, T);
+                netlist = prepareNetlist(netlist, T);
                 if (firstIteration) {
                     appendNetlistToBook(bookLines, netlist,
                             "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
@@ -1502,7 +2243,7 @@ public class SimulatePacket {
                     extraction.userCommands,
                     extraction.userPlots
                 );
-                netlist = injectTemp(netlist, T);
+                netlist = prepareNetlist(netlist, T);
                 if (firstIteration) {
                     appendNetlistToBook(bookLines, netlist,
                             "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
@@ -1635,6 +2376,12 @@ public class SimulatePacket {
         Map<String, List<Double>> voltData   = new LinkedHashMap<>();
         Map<String, List<Double>> currData   = new LinkedHashMap<>();
         Map<String, String>       probeUnits = new LinkedHashMap<>();
+        // FFT companion accumulators — one ngspice-computed spectrum per
+        // iteration, overlaid in their own session.
+        List<Double> fftAxis  = null;
+        Map<String, List<Double>> fftVolt  = new LinkedHashMap<>();
+        Map<String, List<Double>> fftCurr  = new LinkedHashMap<>();
+        Map<String, String>       fftUnits = new LinkedHashMap<>();
 
         boolean firstIteration = true;
         for (double val : sweepValues) {
@@ -1659,7 +2406,7 @@ public class SimulatePacket {
                     extraction.userCommands,
                     extraction.userPlots
                 );
-                netlist = injectTemp(netlist, T);
+                netlist = prepareNetlist(netlist, T);
                 if (firstIteration) {
                     appendNetlistToBook(bookLines, netlist,
                             "Netlist (iter 1 of " + sweepValues.size() * tempValues.size() + ", "
@@ -1730,6 +2477,13 @@ public class SimulatePacket {
                     voltData.put(seriesName, vals);
                     probeUnits.put(seriesName, plot.unit);
                 }
+                List<Double> fa = fftAxisOf(result.fftData);
+                if (fa != null) {
+                    if (fftAxis == null) fftAxis = fa;
+                    collectSweepSeries(result.fftData, fa, stepSuffix, true,
+                            effectiveProbes, cpList, extraction.userPlots,
+                            fftVolt, fftCurr, fftUnits);
+                }
                 // Echo scalar print/meas output (e.g. `print @m.xm1.[gm]`) so
                 // user commands aren't silently dropped during a sweep.
                 if (!result.extras.isEmpty()) {
@@ -1748,17 +2502,17 @@ public class SimulatePacket {
             "TRAN sweep complete. " + voltData.size() + " voltage series.",
             ChatFormatting.GREEN
         );
-        int sessionId = ParametricResultCache.store(
-            new ParametricResultCache.ResultSet(
-                "Time",
-                "s",
-                timeAxis,
-                voltData,
-                currData,
-                probeUnits,
-                false
-            )
-        );
+        int fftSession = -1;
+        if (fftAxis != null) {
+            fftSession = ParametricResultCache.store(
+                new ParametricResultCache.ResultSet(
+                    "Frequency", "Hz", fftAxis, fftVolt, fftCurr, fftUnits,
+                    true, true));
+        }
+        ParametricResultCache.ResultSet tranRs = new ParametricResultCache.ResultSet(
+                "Time", "s", timeAxis, voltData, currData, probeUnits, false);
+        tranRs.fftSessionId = fftSession;
+        int sessionId = ParametricResultCache.store(tranRs);
         emitGraphLinks(
             player,
             sessionId,
@@ -1767,6 +2521,7 @@ public class SimulatePacket {
             probeUnits,
             graphPageComponents
         );
+        if (fftSession >= 0) emitFftLink(player, fftSession, graphPageComponents);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (parametric " + analysis + ")");
     }
@@ -1912,7 +2667,7 @@ public class SimulatePacket {
                 extraction.userCommands,
                 extraction.userPlots
             );
-            netlist = injectTemp(netlist, T);
+            netlist = prepareNetlist(netlist, T);
             if (firstIteration) {
                 appendNetlistToBook(bookLines, netlist,
                         "Netlist (iter 1 of " + sweepTemps.size() + ", T="
@@ -2051,7 +2806,7 @@ public class SimulatePacket {
                 pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
                 extraction.userCommands, extraction.userPlots
             );
-            netlist = injectTemp(netlist, T);
+            netlist = prepareNetlist(netlist, T);
             if (firstIteration) {
                 appendNetlistToBook(bookLines, netlist,
                         "Netlist (iter 1 of " + tempValues.size() + ", T="
@@ -2153,6 +2908,11 @@ public class SimulatePacket {
         Map<String, List<Double>> voltData   = new LinkedHashMap<>();
         Map<String, List<Double>> currData   = new LinkedHashMap<>();
         Map<String, String>       probeUnits = new LinkedHashMap<>();
+        // FFT companion accumulators — one spectrum per temperature.
+        List<Double> fftAxis  = null;
+        Map<String, List<Double>> fftVolt  = new LinkedHashMap<>();
+        Map<String, List<Double>> fftCurr  = new LinkedHashMap<>();
+        Map<String, String>       fftUnits = new LinkedHashMap<>();
 
         boolean firstIteration = true;
         for (double T : tempValues) {
@@ -2168,7 +2928,7 @@ public class SimulatePacket {
                 pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
                 extraction.userCommands, extraction.userPlots
             );
-            netlist = injectTemp(netlist, T);
+            netlist = prepareNetlist(netlist, T);
             if (firstIteration) {
                 appendNetlistToBook(bookLines, netlist,
                         "Netlist (iter 1 of " + tempValues.size() + ", T="
@@ -2230,16 +2990,29 @@ public class SimulatePacket {
                 voltData.put(seriesName, vals);
                 probeUnits.put(seriesName, plot.unit);
             }
+            List<Double> fa = fftAxisOf(result.fftData);
+            if (fa != null) {
+                if (fftAxis == null) fftAxis = fa;
+                collectSweepSeries(result.fftData, fa, suffix, true,
+                        effectiveProbes, cpList, extraction.userPlots,
+                        fftVolt, fftCurr, fftUnits);
+            }
         }
 
         if (timeAxis == null || timeAxis.isEmpty()) return;
-        int sessionId = ParametricResultCache.store(
-            new ParametricResultCache.ResultSet(
-                "Time", "s", timeAxis,
-                voltData, currData, probeUnits, false
-            )
-        );
+        int fftSession = -1;
+        if (fftAxis != null) {
+            fftSession = ParametricResultCache.store(
+                new ParametricResultCache.ResultSet(
+                    "Frequency", "Hz", fftAxis, fftVolt, fftCurr, fftUnits,
+                    true, true));
+        }
+        ParametricResultCache.ResultSet tranRs = new ParametricResultCache.ResultSet(
+                "Time", "s", timeAxis, voltData, currData, probeUnits, false);
+        tranRs.fftSessionId = fftSession;
+        int sessionId = ParametricResultCache.store(tranRs);
         emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        if (fftSession >= 0) emitFftLink(player, fftSession, graphPageComponents);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (TRAN + Temp Sweep)");
     }
@@ -2654,6 +3427,32 @@ public class SimulatePacket {
     }
 
     /**
+     * Standard netlist post-processing applied by every analysis path:
+     * scalar {@code .param} declarations from Param blocks, then the
+     * {@code .temp} override.
+     */
+    private String prepareNetlist(String netlist, double tempC) {
+        return injectTemp(injectParams(netlist, activeParamDefs), tempC);
+    }
+
+    /**
+     * Splices one {@code .param name=value} line per definition right after
+     * the netlist's title line. ngspice gathers {@code .param} during parsing
+     * regardless of position, but placing them at the top keeps the netlist
+     * readable and ahead of any brace expression that references them.
+     */
+    private static String injectParams(String netlist, List<String> defs) {
+        if (defs == null || defs.isEmpty()) return netlist;
+        int nl = netlist.indexOf('\n');
+        if (nl < 0) return netlist;
+        StringBuilder sb = new StringBuilder(netlist.length() + defs.size() * 24);
+        sb.append(netlist, 0, nl + 1);
+        for (String d : defs) sb.append(".param ").append(d).append('\n');
+        sb.append(netlist, nl + 1, netlist.length());
+        return sb.toString();
+    }
+
+    /**
      * Splices a {@code .temp <tempC>} directive into a netlist immediately
      * before the first {@code .op}/{@code .ac}/{@code .tran}/{@code .dc}
      * analysis line. ngspice requires {@code .temp} at the netlist (not
@@ -2672,7 +3471,8 @@ public class SimulatePacket {
                 if (trimmed.startsWith(".op")
                         || trimmed.startsWith(".ac ")
                         || trimmed.startsWith(".tran ")
-                        || trimmed.startsWith(".dc ")) {
+                        || trimmed.startsWith(".dc ")
+                        || trimmed.startsWith(".noise ")) {
                     out.append(String.format(java.util.Locale.ROOT, ".temp %g%n", tempC));
                     injected = true;
                 }

@@ -1,46 +1,56 @@
 package com.circuitsim.screen;
 
 import com.circuitsim.blockentity.ComponentBlockEntity;
-import com.circuitsim.network.ComponentUpdatePacket;
+import com.circuitsim.network.CommandsUpdatePacket;
 import com.circuitsim.network.ModMessages;
+import com.circuitsim.simulation.ParamSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
+import java.util.List;
+
 /**
- * Editor for the Parametric block. Two fields:
+ * Editor for the Param block. One large multi-line text box; each non-empty
+ * line declares one variable as {@code name = value} (parentheses around the
+ * whole declaration are accepted too):
  * <ul>
- *   <li><b>Variable name</b> — e.g. {@code Rs}, {@code Ws}. Any component whose
- *       value field is set to this name receives the swept value.</li>
- *   <li><b>Values</b> — a single value (constant define) or a sweep spec
- *       (comma list like {@code 1k,2k,5k} or range {@code 100:1k:100}).</li>
+ *   <li><b>Scalar</b> ({@code Rload = 1k}) — becomes a {@code .param} line and
+ *       is substituted into every component slot referencing the name.</li>
+ *   <li><b>Range sweep</b> ({@code Rload = 1:5:1}) or <b>list sweep</b>
+ *       ({@code Rload = 1,2,3,4,5}) — runs the analysis once per value and
+ *       overlays the curves. At most ONE variable may sweep.</li>
  * </ul>
- * Stored together in the BE's {@code label} slot as {@code name=values}.
+ * The text lives in the BE's {@code commands} slot (reusing
+ * {@link CommandsUpdatePacket}); the legacy single-variable {@code label}
+ * spec from old saves is migrated into the box on first open.
  */
 public class ParametricEditScreen extends Screen {
 
     private final BlockPos pos;
-    private EditBox nameField;
-    private EditBox valuesField;
-    private String  errorMessage = "";
+    private MultiLineEditBox textBox;
+    private List<String> errorMessages = List.of();
 
-    private static final int W = 280;
-    private static final int H = 180;
+    private static final int W = 340;
+    private static final int H = 300;
 
     private static final int BG     = 0xFF1E1E1E;
     private static final int BORDER = 0xFF4A90D9;
     private static final int TITLE  = 0xFFFFD700;
-    private static final int LABEL  = 0xFFFFFFFF;
     private static final int HINT   = 0xFFAAAAAA;
     private static final int ERROR  = 0xFFFF6060;
 
+    private static final int Y_BOX   = 30;
+    private static final int H_BOX   = 150;
+    private static final int Y_TIP   = Y_BOX + H_BOX + 14;
+
     public ParametricEditScreen(BlockPos pos) {
-        super(Component.literal("Parametric Variable"));
+        super(Component.literal("Param Block"));
         this.pos = pos;
     }
 
@@ -48,69 +58,60 @@ public class ParametricEditScreen extends Screen {
     protected void init() {
         super.init();
 
-        String storedName = "";
-        String storedValues = "";
+        String saved = "";
         BlockEntity be = Minecraft.getInstance().level.getBlockEntity(pos);
         if (be instanceof ComponentBlockEntity cbe) {
-            String[] parsed = parseSpec(cbe.getLabel());
-            storedName   = parsed[0];
-            storedValues = parsed[1];
+            saved = cbe.getCommands();
+            // Old saves stored a single "name=values" spec in the label slot;
+            // surface it as the first line so nothing silently disappears.
+            if (saved.isBlank()) {
+                String[] legacy = parseSpec(cbe.getLabel());
+                if (!legacy[0].isEmpty()) saved = legacy[0] + " = " + legacy[1];
+            }
         }
 
         int px = (width - W) / 2;
         int py = (height - H) / 2;
 
-        nameField = new EditBox(Minecraft.getInstance().font,
-                px + 14, py + 50, W - 28, 18, Component.literal("name"));
-        nameField.setMaxLength(64);
-        nameField.setValue(storedName);
-        addRenderableWidget(nameField);
-
-        valuesField = new EditBox(Minecraft.getInstance().font,
-                px + 14, py + 100, W - 28, 18, Component.literal("values"));
-        valuesField.setMaxLength(256);
-        valuesField.setValue(storedValues);
-        addRenderableWidget(valuesField);
-
-        setInitialFocus(nameField);
+        textBox = new MultiLineEditBox(
+                Minecraft.getInstance().font,
+                px + 14, py + Y_BOX, W - 28, H_BOX,
+                Component.literal("Rload = 1k\nWn = 0.5u"),
+                Component.literal("variables"));
+        textBox.setCharacterLimit(4000);
+        textBox.setValue(saved);
+        addRenderableWidget(textBox);
+        setInitialFocus(textBox);
 
         addRenderableWidget(
                 Button.builder(Component.literal("Save"), b -> { if (save()) onClose(); })
-                        .bounds(px + 20, py + H - 28, 110, 20).build()
+                        .bounds(px + 20, py + H - 28, 140, 20).build()
         );
         addRenderableWidget(
                 Button.builder(Component.literal("Cancel"), b -> onClose())
-                        .bounds(px + W - 130, py + H - 28, 110, 20).build()
+                        .bounds(px + W - 160, py + H - 28, 140, 20).build()
         );
     }
 
     private boolean save() {
-        errorMessage = "";
-        String name   = nameField.getValue().trim();
-        String values = valuesField.getValue().trim();
-
-        if (!name.isEmpty() && !ComponentEditScreen.isIdentifier(name)) {
-            errorMessage = "Variable name must be a plain identifier";
+        String text = textBox.getValue();
+        ParamSpec.ParseResult parsed = ParamSpec.parse(text);
+        if (!parsed.ok()) {
+            errorMessages = parsed.errors.size() > 2
+                    ? parsed.errors.subList(0, 2)
+                    : parsed.errors;
             return false;
         }
-
-        String spec = name.isEmpty() ? "" : (name + "=" + values);
-
-        BlockEntity be = Minecraft.getInstance().level.getBlockEntity(pos);
-        double curValue = 0.0;
-        String curSrc   = "DC";
-        double curFreq  = 0.0;
-        if (be instanceof ComponentBlockEntity cbe) {
-            curValue = cbe.getValue();
-            curSrc   = cbe.getSourceType();
-            curFreq  = cbe.getFrequency();
-        }
-        ModMessages.sendToServer(new ComponentUpdatePacket(
-                pos, curValue, curSrc, curFreq, spec));
+        errorMessages = List.of();
+        ModMessages.sendToServer(new CommandsUpdatePacket(pos, text));
         return true;
     }
 
-    /** Returns [name, values]. Empty strings if not set. */
+    /**
+     * Legacy spec splitter — returns {@code [name, values]} from the old
+     * single-variable {@code "name=values"} label format, empty strings if
+     * not set. Still used for old-save migration here and in the extractor.
+     */
     public static String[] parseSpec(String raw) {
         if (raw == null) return new String[]{"", ""};
         int idx = raw.indexOf('=');
@@ -138,15 +139,26 @@ public class ParametricEditScreen extends Screen {
         super.render(g, mx, my, pt);
 
         var f = Minecraft.getInstance().font;
-        g.drawCenteredString(f, "Parametric Variable", width / 2, py + 7, TITLE);
+        g.drawCenteredString(f, "Param Block", width / 2, py + 7, TITLE);
 
-        g.drawString(f, "Variable name:",         px + 14, py + 38,  LABEL, false);
-        g.drawString(f, "Values (single or sweep):", px + 14, py + 88,  LABEL, false);
-        g.drawString(f, "Examples: 1k    1k,2k,5k    100:1k:100", px + 14, py + 124, HINT, false);
+        int y = py + Y_TIP;
+        g.drawString(f, "One variable per line:  name = value",          px + 14, y,      HINT, false);
+        g.drawString(f, "  Scalar:  Rload = 1k",                         px + 14, y + 11, HINT, false);
+        g.drawString(f, "  Sweep range (start:stop:step):  Rload = 1:5:1", px + 14, y + 22, HINT, false);
+        g.drawString(f, "  Sweep list:  Rload = 1,2,3,4,5",              px + 14, y + 33, HINT, false);
+        g.drawString(f, "Only ONE variable may be swept at a time.",     px + 14, y + 44, HINT, false);
 
-        if (!errorMessage.isEmpty()) {
-            g.drawCenteredString(f, errorMessage, width / 2, py + H - 42, ERROR);
+        int errY = py + Y_TIP + 58;
+        for (String err : errorMessages) {
+            g.drawString(f, ellipsize(f, err, W - 28), px + 14, errY, ERROR, false);
+            errY += 11;
         }
+    }
+
+    private static String ellipsize(net.minecraft.client.gui.Font f, String s, int maxPx) {
+        if (f.width(s) <= maxPx) return s;
+        while (!s.isEmpty() && f.width(s + "...") > maxPx) s = s.substring(0, s.length() - 1);
+        return s + "...";
     }
 
     @Override

@@ -22,6 +22,8 @@ public class ModBlockEntities {
                             ModBlocks.VOLTAGE_SOURCE.get(),
                             ModBlocks.VOLTAGE_SOURCE_SIN.get(),
                             ModBlocks.CURRENT_SOURCE.get(),
+                            ModBlocks.BEHAVIORAL_VOLTAGE_SOURCE.get(),
+                            ModBlocks.BEHAVIORAL_CURRENT_SOURCE.get(),
                             ModBlocks.DIODE.get(),
                             ModBlocks.WIRE.get(),
                             ModBlocks.GROUND.get(),
@@ -42,7 +44,8 @@ public class ModBlockEntities {
                             ModBlocks.CCVS.get(),
                             ModBlocks.CCCS.get(),
                             ModBlocks.VCVS.get(),
-                            ModBlocks.VCCS.get()
+                            ModBlocks.VCCS.get(),
+                            ModBlocks.VSWITCH.get()
                     ).build(null)
             );
 

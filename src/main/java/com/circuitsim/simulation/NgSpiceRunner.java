@@ -54,6 +54,24 @@ public class NgSpiceRunner {
          */
         public Map<Double, Map<String, Double>> dcData = new LinkedHashMap<>();
 
+        /**
+         * .NOISE results — outer key = frequency (Hz), inner key =
+         * {@code onoise_spectrum} / {@code inoise_spectrum} (spectral
+         * densities in V/√Hz or A/√Hz). The integrated totals
+         * ({@code onoise_total} / {@code inoise_total}) land in
+         * {@link #extrasByName}.
+         */
+        public Map<Double, Map<String, Double>> noiseData = new LinkedHashMap<>();
+
+        /**
+         * FFT spectra of a transient run's probed signals, produced by the
+         * {@code linearize} + {@code fft} block the tran netlist appends.
+         * Outer key = frequency (Hz), inner key = {@code v(N)_mag} /
+         * {@code i(vmK)_mag} / user-plot name + {@code _mag} (magnitude of
+         * the complex spectrum, same key scheme as {@link #acData}).
+         */
+        public Map<Double, Map<String, Double>> fftData = new LinkedHashMap<>();
+
         public String getNodeVoltage(int nodeIndex) {
             return getNodeVoltage(Integer.toString(nodeIndex));
         }
@@ -80,13 +98,138 @@ public class NgSpiceRunner {
         }
     }
 
+    /**
+     * Marker echoed by the Param-block sweep loop before each {@code run};
+     * {@link #runSweep} splits stdout on it to recover the per-step output.
+     */
+    public static final String SWEEP_MARKER = "PARAMSWEEP";
+
+    /**
+     * Result of a {@code .control}-loop parametric sweep: one parsed
+     * {@link Result} per {@code run} iteration, in loop order.
+     */
+    public static class SweepResult {
+        public String error = null;
+        public String rawStdout = "";
+        public final List<Result> steps = new ArrayList<>();
+        /** Token printed after the marker, e.g. "1000" — one per step. */
+        public final List<String> stepLabels = new ArrayList<>();
+    }
+
     public static Result run(String netlist) {
         return run(netlist, "hsa");
+    }
+
+    /**
+     * Runs a netlist whose control block loops {@code alterparam}/{@code
+     * reset}/{@code run} over a swept {@code .param} (see SimulatePacket's
+     * sweep wrapper), echoing {@link #SWEEP_MARKER} before each iteration.
+     * The combined stdout is split at the markers and each segment is parsed
+     * exactly like a standalone run of the same analysis type.
+     */
+    public static SweepResult runSweep(String netlist, String ngBehavior) {
+        SweepResult sweep = new SweepResult();
+
+        Result exec = new Result();
+        String fullOutput = execute(netlist, ngBehavior, exec);
+        if (exec.error != null) {
+            sweep.error = exec.error;
+            return sweep;
+        }
+        sweep.rawStdout = fullOutput;
+
+        String lower = fullOutput.toLowerCase();
+        if (lower.contains("fatal") || lower.contains("no dc path")
+                || lower.contains("singular matrix")) {
+            sweep.error = "ngspice error:\n" + fullOutput.trim();
+            return sweep;
+        }
+
+        // Split into per-iteration segments. Text before the first marker is
+        // load/expand chatter; text after the last marker also contains the
+        // trailing batch-mode re-run, whose table repeats the final
+        // iteration's values — merging it into that segment is harmless.
+        String[] lines = fullOutput.split("\n");
+        List<Integer> markerIdx = new ArrayList<>();
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].trim().startsWith(SWEEP_MARKER)) markerIdx.add(i);
+        }
+        if (markerIdx.isEmpty()) {
+            sweep.error = "Sweep produced no per-step output (marker not found).";
+            return sweep;
+        }
+        for (int m = 0; m < markerIdx.size(); m++) {
+            int from = markerIdx.get(m) + 1;
+            int to   = m + 1 < markerIdx.size() ? markerIdx.get(m + 1) : lines.length;
+            StringBuilder seg = new StringBuilder();
+            for (int i = from; i < to; i++) seg.append(lines[i]).append('\n');
+
+            String markerLine = lines[markerIdx.get(m)].trim();
+            sweep.stepLabels.add(markerLine.substring(SWEEP_MARKER.length()).trim());
+
+            Result step = new Result();
+            step.rawStdout = seg.toString();
+            parseByType(netlist, step.rawStdout, step);
+            sweep.steps.add(step);
+        }
+        return sweep;
     }
 
     public static Result run(String netlist, String ngBehavior) {
         Result result = new Result();
 
+        String fullOutput = execute(netlist, ngBehavior, result);
+        if (result.error != null) return result;
+        result.rawStdout = fullOutput;
+
+        String lower = fullOutput.toLowerCase();
+        if (lower.contains("fatal") || lower.contains("no dc path")
+                || lower.contains("singular matrix")) {
+            result.error = "ngspice error:\n" + fullOutput.trim();
+            return result;
+        }
+
+        parseByType(netlist, fullOutput, result);
+
+        String netlistLower = netlist.toLowerCase();
+        boolean isNoise = netlistLower.contains(".noise ");
+        boolean isAc    = netlistLower.contains(".ac ");
+        boolean isTran  = netlistLower.contains(".tran ");
+        boolean isDc    = netlistLower.contains(".dc ");
+        boolean isOp = !isAc && !isTran && !isDc && !isNoise;
+
+        if (isOp && result.values.isEmpty()) {
+            result.output.add("Simulation completed (no values parsed).");
+            result.output.add("--- Raw ngspice output ---");
+            for (String line : fullOutput.split("\n")) {
+                if (!line.trim().isEmpty()) result.output.add("  " + line.trim());
+            }
+            return result;
+        }
+
+        if (isOp) {
+            for (Map.Entry<String, Double> e : result.values.entrySet()) {
+                String k = e.getKey();
+                double v = e.getValue();
+                if (k.startsWith("v("))      result.output.add(String.format("  %s = %.6f V", k, v));
+                else if (k.startsWith("i(")) result.output.add(String.format("  %s = %.6f A", k, v));
+                else                          result.output.add(String.format("  %s = %g",    k, v));
+            }
+            // result.extras is intentionally NOT appended here — SimulatePacket
+            // emits it in its own colour so user print outputs stand out from
+            // the default green node/branch values.
+        }
+
+        return result;
+    }
+
+    /**
+     * Writes the netlist into a fresh temp dir (after PSpice-POLY include
+     * preprocessing and optional .spiceinit emission), runs ngspice in batch
+     * mode, and returns the merged stdout/stderr. On failure sets
+     * {@code result.error} and returns the empty string.
+     */
+    private static String execute(String netlist, String ngBehavior, Result result) {
         Path tempDir, netlistFile;
         try {
             tempDir     = Files.createTempDirectory("circuitsim");
@@ -118,14 +261,14 @@ public class NgSpiceRunner {
             }
         } catch (IOException e) {
             result.error = "Failed to create temporary netlist file: " + e.getMessage();
-            return result;
+            return "";
         }
 
         String executable = resolveExecutable();
         if (executable == null) {
             result.error = "ngspice was not found. Please install ngspice and ensure " +
                     "ngspice_con.exe (or ngspice) is on your PATH.";
-            return result;
+            return "";
         }
 
         Process process;
@@ -137,7 +280,7 @@ public class NgSpiceRunner {
             process = pb.start();
         } catch (IOException e) {
             result.error = "Failed to start " + executable + ": " + e.getMessage();
-            return result;
+            return "";
         }
 
         String fullOutput;
@@ -145,74 +288,98 @@ public class NgSpiceRunner {
             fullOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             result.error = "Failed to read ngspice output: " + e.getMessage();
-            return result;
+            return "";
         }
-        result.rawStdout = fullOutput;
 
         try {
             boolean finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 result.error = "ngspice timed out.";
-                return result;
+                return "";
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
             result.error = "ngspice was interrupted.";
-            return result;
+            return "";
         }
 
         try { Files.deleteIfExists(netlistFile); Files.deleteIfExists(tempDir); }
         catch (IOException ignored) {}
 
-        String lower = fullOutput.toLowerCase();
-        if (lower.contains("fatal") || lower.contains("no dc path")
-                || lower.contains("singular matrix")) {
-            result.error = "ngspice error:\n" + fullOutput.trim();
-            return result;
-        }
+        return fullOutput;
+    }
 
+    /** Routes {@code output} to the parser matching the netlist's analysis card. */
+    private static void parseByType(String netlist, String output, Result result) {
         String netlistLower = netlist.toLowerCase();
-        boolean isAc   = netlistLower.contains(".ac ");
-        boolean isTran = netlistLower.contains(".tran ");
-        boolean isDc   = netlistLower.contains(".dc ");
-
-        if (isTran) {
-            parseTranOutput(fullOutput, result);
-        } else if (isAc) {
-            parseAcOutput(fullOutput, result);
-        } else if (isDc) {
-            parseDcOutput(fullOutput, result);
+        if (netlistLower.contains(".noise ")) {
+            parseNoiseOutput(output, result);
+        } else if (netlistLower.contains(".tran ")) {
+            parseTranOutput(output, result);
+            // The tran control block also linearize+fft's the probed signals
+            // and prints them as frequency-scale chunks — pick those up too.
+            parseTranFftOutput(output, result);
+        } else if (netlistLower.contains(".ac ")) {
+            parseAcOutput(output, result);
+        } else if (netlistLower.contains(".dc ")) {
+            parseDcOutput(output, result);
         } else {
-            parseOpOutput(fullOutput, result);
+            parseOpOutput(output, result);
         }
+    }
 
-        boolean isOp = !isAc && !isTran && !isDc;
+    // -------------------------------------------------------------------------
+    // Transient FFT parser — "Index frequency v(...)" chunks emitted by the
+    // linearize/fft/print block appended to every tran control section. The
+    // spec plot's vectors are complex (re,im pairs), so this reuses the AC
+    // parser's complex handling; values are stored as magnitudes under the
+    // same "_mag"-suffixed keys the AC tables use.
+    // -------------------------------------------------------------------------
 
-        if (isOp && result.values.isEmpty()) {
-            result.output.add("Simulation completed (no values parsed).");
-            result.output.add("--- Raw ngspice output ---");
-            for (String line : fullOutput.split("\n")) {
-                if (!line.trim().isEmpty()) result.output.add("  " + line.trim());
+    private static void parseTranFftOutput(String output, Result result) {
+        String[] lines = output.split("\n");
+
+        for (int i = 0; i < lines.length; i++) {
+            String trimmed = lines[i].trim();
+            if (!trimmed.toLowerCase().startsWith("index")) continue;
+
+            String[] headerToks = trimmed.split("\\s+");
+            if (headerToks.length < 3) continue;
+            // Only the FFT chunks carry a frequency scale in a tran output.
+            if (!headerToks[1].equalsIgnoreCase("frequency")) continue;
+
+            int dataStart = i + 1;
+            if (dataStart < lines.length && lines[dataStart].trim().startsWith("-")) {
+                dataStart++;
             }
-            return result;
-        }
 
-        if (isOp) {
-            for (Map.Entry<String, Double> e : result.values.entrySet()) {
-                String k = e.getKey();
-                double v = e.getValue();
-                if (k.startsWith("v("))      result.output.add(String.format("  %s = %.6f V", k, v));
-                else if (k.startsWith("i(")) result.output.add(String.format("  %s = %.6f A", k, v));
-                else                          result.output.add(String.format("  %s = %g",    k, v));
+            for (int j = dataStart; j < lines.length; j++) {
+                String raw = lines[j].trim();
+                if (raw.isEmpty() || raw.startsWith("-") || raw.startsWith("=")) break;
+
+                String row = normaliseComplexRow(raw);
+                String[] tok = row.split("\\s+");
+                if (tok.length < 3) continue;
+
+                try { Integer.parseInt(tok[0]); } catch (NumberFormatException e) { break; }
+
+                double freq;
+                try { freq = Double.parseDouble(tok[1]); }
+                catch (NumberFormatException e) { continue; }
+
+                Map<String, Double> rowMap =
+                        result.fftData.computeIfAbsent(freq, k -> new LinkedHashMap<>());
+
+                for (int col = 2; col < tok.length && col < headerToks.length; col++) {
+                    String hdr = headerToks[col].toLowerCase();
+                    double mag = parseComplexMag(tok[col]);
+                    if (Double.isNaN(mag)) continue;
+                    rowMap.put(hdr + "_mag", mag);
+                }
             }
-            // result.extras is intentionally NOT appended here — SimulatePacket
-            // emits it in its own colour so user print outputs stand out from
-            // the default green node/branch values.
         }
-
-        return result;
     }
 
     // -------------------------------------------------------------------------
@@ -474,6 +641,81 @@ public class NgSpiceRunner {
             result.output.add("Transient analysis: " + result.tranData.size() + " time points");
         } else {
             result.output.add("Transient analysis complete (no data parsed). First 25 lines:");
+            int shown = 0;
+            for (String l : lines) {
+                if (!l.trim().isEmpty()) {
+                    result.output.add("  " + l.trim());
+                    if (++shown >= 25) break;
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // .NOISE parser — spectral-density table plus integrated totals
+    // -------------------------------------------------------------------------
+
+    private static void parseNoiseOutput(String output, Result result) {
+        // A bad input-source name aborts the analysis with a warning rather
+        // than a "fatal" line, so the generic error sniffing above misses it.
+        for (String rawLine : output.split("\n")) {
+            String line = rawLine.trim();
+            if (line.startsWith("Warning: Noise input source")
+                    || line.contains("Noise output source") && line.contains("not in circuit")) {
+                result.error = line;
+                return;
+            }
+        }
+
+        String[] lines = output.split("\n");
+
+        // Spectral-density chunks: "Index   frequency   onoise_spectrum ..."
+        // — same tabular shape as AC output, all values real.
+        for (int i = 0; i < lines.length; i++) {
+            String trimmed = lines[i].trim();
+            if (!trimmed.toLowerCase().startsWith("index")) continue;
+
+            String[] headerToks = trimmed.split("\\s+");
+            if (headerToks.length < 3) continue;
+            if (!headerToks[1].equalsIgnoreCase("frequency")) continue;
+
+            int dataStart = i + 1;
+            if (dataStart < lines.length && lines[dataStart].trim().startsWith("-")) {
+                dataStart++;
+            }
+
+            for (int j = dataStart; j < lines.length; j++) {
+                String raw = lines[j].trim();
+                if (raw.isEmpty() || raw.startsWith("-") || raw.startsWith("=")) break;
+
+                String[] tok = raw.split("\\s+");
+                if (tok.length < 3) continue;
+
+                try { Integer.parseInt(tok[0]); } catch (NumberFormatException e) { break; }
+
+                double freq;
+                try { freq = Double.parseDouble(tok[1]); }
+                catch (NumberFormatException e) { continue; }
+
+                Map<String, Double> rowMap =
+                        result.noiseData.computeIfAbsent(freq, k -> new LinkedHashMap<>());
+
+                for (int col = 2; col < tok.length && col < headerToks.length; col++) {
+                    String hdr = headerToks[col].toLowerCase();
+                    try {
+                        rowMap.put(hdr, Double.parseDouble(tok[col]));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+
+        // Integrated totals print as scalar "onoise_total = 1.21e-06" lines.
+        parseScalarMeasurements(lines, result);
+
+        if (!result.noiseData.isEmpty()) {
+            result.output.add("Noise analysis: " + result.noiseData.size() + " frequency points");
+        } else {
+            result.output.add("Noise analysis complete (no data parsed). First 25 lines:");
             int shown = 0;
             for (String l : lines) {
                 if (!l.trim().isEmpty()) {

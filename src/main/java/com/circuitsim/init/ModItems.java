@@ -21,6 +21,8 @@ public class ModItems {
     public static final RegistryObject<Item> VOLTAGE_SOURCE_SIN = blockItem(ModBlocks.VOLTAGE_SOURCE_SIN);
     public static final RegistryObject<Item> VOLTAGE_SOURCE_PULSE = blockItem(ModBlocks.VOLTAGE_SOURCE_PULSE);
     public static final RegistryObject<Item> CURRENT_SOURCE     = blockItem(ModBlocks.CURRENT_SOURCE);
+    public static final RegistryObject<Item> BEHAVIORAL_VOLTAGE_SOURCE = blockItem(ModBlocks.BEHAVIORAL_VOLTAGE_SOURCE);
+    public static final RegistryObject<Item> BEHAVIORAL_CURRENT_SOURCE = blockItem(ModBlocks.BEHAVIORAL_CURRENT_SOURCE);
     public static final RegistryObject<Item> DIODE              = blockItem(ModBlocks.DIODE);
     public static final RegistryObject<Item> WIRE               = blockItem(ModBlocks.WIRE);
     public static final RegistryObject<Item> GROUND             = blockItem(ModBlocks.GROUND);
@@ -42,6 +44,7 @@ public class ModItems {
     public static final RegistryObject<Item> CCCS                  = blockItem(ModBlocks.CCCS);
     public static final RegistryObject<Item> VCVS                  = blockItem(ModBlocks.VCVS);
     public static final RegistryObject<Item> VCCS                  = blockItem(ModBlocks.VCCS);
+    public static final RegistryObject<Item> VSWITCH               = blockItem(ModBlocks.VSWITCH);
     public static final RegistryObject<Item> SIM_LINK              = blockItem(ModBlocks.SIM_LINK);
 
     private static RegistryObject<Item> blockItem(RegistryObject<Block> block) {

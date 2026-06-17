@@ -144,6 +144,11 @@ public class WireBlock extends Block {
                     || facing.getCounterClockWise() == toWire;
         }
 
+        // Voltage-controlled switch: 4 pins — front (n+), back (n-),
+        // counter-clockwise (nc+), clockwise (nc-). Every horizontal face is a
+        // pin, matching the netlist convention in CircuitExtractor.
+        if (neighbor instanceof VSwitchBlock) return true;
+
         // VCVS / VCCS 2×3 multi-block: same rule as the amplifier.
         if (neighbor instanceof Controlled2x3Block) {
             Controlled2x3Block.CellKind kind = neighborState.getValue(Controlled2x3Block.CELL_KIND);

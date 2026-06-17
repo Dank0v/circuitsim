@@ -140,6 +140,7 @@ public class ComponentBlockEntityRenderer
 
         if (block == ModBlocks.RESISTOR.get()) {
             lines.add(formatScalarOrVar(val, valExpr, "\u03A9"));
+            if (be.isRNoiseless()) lines.add("(noiseless)");
         } else if (block == ModBlocks.CAPACITOR.get()) {
             lines.add(formatScalarOrVar(val, valExpr, "F"));
         } else if (block == ModBlocks.INDUCTOR.get()) {
@@ -161,6 +162,12 @@ public class ComponentBlockEntityRenderer
             lines.add(formatScalarOrVar(val, valExpr, "A"));
             String st = be.getSourceType();
             lines.add((st == null || st.isEmpty()) ? "DC" : st);
+        } else if (block == ModBlocks.BEHAVIORAL_VOLTAGE_SOURCE.get()) {
+            String expr = be.getModelName();
+            lines.add("V = " + (expr == null || expr.isEmpty() ? "?" : expr));
+        } else if (block == ModBlocks.BEHAVIORAL_CURRENT_SOURCE.get()) {
+            String expr = be.getModelName();
+            lines.add("I = " + (expr == null || expr.isEmpty() ? "?" : expr));
         } else if (block == ModBlocks.PROBE.get()) {
             String lbl = be.getProbeLabel();
             lines.add((lbl == null || lbl.isEmpty()) ? "V Probe" : lbl);
@@ -174,8 +181,24 @@ public class ComponentBlockEntityRenderer
             String model = be.getModelName();
             lines.add((model == null || model.isEmpty()) ? "Diode" : model);
         } else if (block == ModBlocks.PARAMETRIC.get()) {
-            String sweep = be.getLabel();
-            lines.add((sweep == null || sweep.isEmpty()) ? "Param: ?" : "Param: " + sweep);
+            // Param block: one declaration per line in the commands slot
+            // (legacy saves used "name=values" in the label). Float up to
+            // three declarations; "…" marks more.
+            String text = be.getCommands();
+            if (text == null || text.isBlank()) text = be.getLabel();
+            if (text == null || text.isBlank()) {
+                lines.add("Param: ?");
+            } else {
+                int shown = 0;
+                for (String raw : text.split("\\r?\\n")) {
+                    String t = raw.strip();
+                    if (t.isEmpty()) continue;
+                    if (shown == 3) { lines.add("..."); break; }
+                    lines.add(t);
+                    shown++;
+                }
+                if (shown == 0) lines.add("Param: ?");
+            }
         } else if (block == ModBlocks.IC_RESISTOR.get()) {
             // When any of W/L/mult is symbolic, the resistance is unknown
             // until simulation substitutes the values \u2014 fall back to "?".
@@ -236,6 +259,14 @@ public class ComponentBlockEntityRenderer
         } else if (block == ModBlocks.DISCRETE_PNP.get()) {
             String model = be.getModelName();
             lines.add((model == null || model.isEmpty()) ? "PNP" : model);
+        } else if (block == ModBlocks.VSWITCH.get()) {
+            lines.add("Switch");
+            lines.add("Vt: " + ComponentEditScreen.formatValue(be.getSwVt()) + "V"
+                    + (be.getSwVh() != 0.0
+                            ? " ±" + ComponentEditScreen.formatValue(be.getSwVh()) + "V"
+                            : ""));
+            String init = be.getSwInit();
+            if (!init.isEmpty()) lines.add("init: " + init);
         } else if (block == ModBlocks.IC_NMOS4.get() || block == ModBlocks.IC_PMOS4.get()) {
             boolean isNmos     = block == ModBlocks.IC_NMOS4.get();
             String defaultModel = isNmos ? "nfet_01v8" : "pfet_01v8";

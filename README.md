@@ -19,6 +19,7 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
 - **Voltage sources:** DC, sinusoidal (SIN), pulse (PULSE)
 - **Current source**
 - **Diode**
+- **VC Switch** — voltage-controlled switch (ngspice `S` device, `SW` model)
 - **Wire** and **Ground**
 
 ### Controlled (dependent) sources
@@ -44,14 +45,16 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
   - `.OP` — DC operating point
   - `.AC` — frequency sweep (start/stop/points-per-decade, log-frequency axis)
   - `.TRAN` — transient analysis (time step, stop time)
+  - `.NOISE` — small-signal noise analysis (output node, input source, dec/lin/oct sweep)
 - **Temperature** — single value (e.g. `27`) or sweep spec (e.g. `20:40:5` or `20,30,40`) for one run per temperature
 - **ngspice compat modes:** `hsa`, `psa`, `lt`, `ki`, `va`
-- **Parametric Block** — sweeps a target component's parameter (value, W, L, mult, nf) across runs
+- **Param Block** — declares variables, one per line: scalars become `.param` lines, a single `start:stop:step` range or comma list sweeps that variable across runs
 - **Commands Block** — multi-line block of raw ngspice commands injected verbatim into the netlist `.control` section
 - **Sim Link Block** — bridges two physically-disconnected sub-circuits into the same netlist without unioning their nodes (useful for routing a CCVS/CCCS controlling source from a remote region)
 
 ### Output
 - **Graph screen** — plot up to two probes simultaneously (stacked), with hover tooltips showing exact values; log10 X axis for AC sweeps
+- **FFT button** — on any transient plot, computes and shows the magnitude spectrum of the displayed traces (selectable window function)
 - **SPICE simulation** via ngspice as a subprocess — real node voltages and branch currents
 - `.OP` results printed to the in-game chat
 - **In-game GUI** for every component to configure values with SI-suffix parsing (k, M, u, n, p, …)
@@ -106,6 +109,42 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
 - **Voltage Probe** — place adjacent to a wire node. Right-click to give it a label. The simulation will report the voltage at that node.
 - **Current Probe** — place in series (between two wires) to measure current through that branch.
 ---
+
+## Feature Guides
+
+### Noise analysis (`.NOISE`)
+
+Noise analysis answers the question *"how much random noise does my circuit itself add?"*. ngspice freezes the circuit at its DC operating point, asks every noisy device (resistor thermal noise, transistor shot/flicker noise, …) how much it contributes at each frequency, and sums it all up at the **output node** you choose. You also pick an **input source** — any independent V or I source already in the circuit (use its netlist name, e.g. `V1`) — and a frequency sweep (`dec`/`lin`/`oct`, points, Fstart, Fstop). The output node accepts a probe label (e.g. `vout`) or a raw node number, and an optional **Ref** node measures the difference `v(out, ref)` instead.
+
+The result is two curves on a log-log plot. **`onoise_spectrum`** is the noise actually present at your output, in V/√Hz — a flat stretch is white (thermal) noise, a rising slope toward low frequencies is 1/f flicker noise. **`inoise_spectrum`** is the same noise *divided back through the circuit's gain*: "how big a noise source at the input would explain this output noise". That's the number that lets you compare amplifiers fairly, regardless of how much gain each one has. Chat also reports `onoise_total`/`inoise_total` — the RMS noise integrated over the whole band. The optional **Sum** field (points-per-summary) makes ngspice print a per-device noise breakdown every Nth point; find it in the output viewer's raw ngspice section.
+
+To exclude a specific resistor from the noise budget (an ideal bias element, a Thevenin stand-in for a noiseless source, …), open the Resistor's edit dialog and tick **Thermal noise → noiseless**: its netlist line gains ngspice's `noisy=0` instance flag and it contributes nothing to `.NOISE` results. The floating label shows "(noiseless)" so silenced resistors are visible at a glance; every other analysis is unaffected.
+
+### VC Switch
+
+The VC Switch is a voltage-controlled switch: the front (`+`) and back (`-`) faces are the switched path, and the left (`C+`) / right (`C-`) faces sense a controlling voltage from elsewhere in the circuit. When `V(C+) - V(C-)` rises above **Vt + Vh** the switch closes to **Ron** (default 1 Ω); when it falls below **Vt − Vh** it opens to **Roff** (default 1 TΩ). **Vh** adds hysteresis so a slowly-moving or noisy control voltage doesn't chatter; the optional initial state (`on`/`off`) tells ngspice which side to start from when the control voltage begins inside the hysteresis band.
+
+Defaults (Vt = 2.5 V, Vh = 0, Ron = 1 Ω, Roff = 1e12 Ω) make a usable logic-controlled switch for 0–5 V control signals without touching anything. Switches with identical parameters automatically share one `.model SW(...)` line in the netlist.
+
+### FFT of transient waveforms
+
+Every transient run now computes the spectrum of **every probed signal** automatically, using ngspice itself: the generated `.control` block runs `linearize` (ngspice's transient solver uses a variable timestep, so the waveform is first interpolated onto a uniform grid — mandatory for a DFT) followed by `fft` on each probed vector. The spectra come back alongside the time-domain data; open them with the **FFT** button on the transient graph's toolbar or the **[Open FFT spectrum]** link in chat. The spectrum plots magnitude (V or A) against frequency, log-log by default — the per-plot **Log** toggle switches back to linear. The DC bin is omitted (the time plot already shows the average level); the axis runs up to the Nyquist limit of the linearized data, and ngspice zero-pads to a power of two, so the exact bin spacing is `1/(N·tstep)`.
+
+ngspice applies its default *Hanning* window to reduce spectral leakage from the non-periodic capture. To use a different window, put `set specwindow=rectangular` (or `hamming`, `blackman`, `gaussian`, …) in a **Commands Block** — it executes before the FFT. A clean sine shows a single dominant peak at the sine's frequency; a square wave shows the classic odd-harmonic series (1st, 3rd, 5th, …). During a Param-block or temperature sweep the FFT session overlays one labelled spectrum per swept value, just like the time-domain curves.
+
+### Param Block
+
+The Param Block declares simulation variables — one per line, as `name = value` (parentheses around a declaration are fine too). To use a variable, type its name into a component's value field (or W/L/mult/nf on IC devices). Three value forms exist:
+
+```
+One variable per line:   name = value
+  Scalar:  Rload = 1k
+  Sweep range (start:stop:step):  Rload = 1:5:1
+  Sweep list:  Rload = 1,2,3,4,5
+Only ONE variable may be swept at a time.
+```
+
+Scalars are emitted as `.param` lines in the netlist (so Commands-block expressions can use them) and substituted into every component that references them. A range or list turns that variable into a **sweep**: the analysis runs once per value and the graph overlays one labelled curve per value (`vout@2kΩ`, …). For ordinary value sweeps this happens inside a *single* ngspice process using a `.control` loop (`foreach` → `alterparam` → `reset` → `run`), which is much faster than re-launching ngspice per value — sweeps of IC W/L/mult/nf parameters, multi-temperature runs, and 2D DC sweeps automatically fall back to the classic one-run-per-value engine. Declaring **two** swept variables is an error (the message names both variables), and malformed lines are flagged with their line numbers when you hit Save — nothing is simulated until the block parses cleanly. Old worlds that used the single-variable Parametric block load as-is: the legacy declaration shows up as the first line of the text box.
 
 ## Example World
 

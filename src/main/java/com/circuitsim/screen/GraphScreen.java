@@ -45,6 +45,14 @@ public class GraphScreen extends Screen {
     private final List<String>        probeNames;
     private final List<List<Double>>  probeData;
     private final List<String>        probeUnits;
+    /**
+     * Session id of the companion FFT result set (ngspice linearize+fft of
+     * every probed signal, computed alongside the transient run), or -1 when
+     * none exists. When set, each plot's toolbar shows an FFT button that
+     * opens the spectrum via the same /circuitsim graph command the chat
+     * links use.
+     */
+    private final int fftSessionId;
 
     // Slot occupants — ordered set of probe indices. Insertion order picks
     // the palette colour. slot1 = top plot, slot2 = bottom.
@@ -143,10 +151,11 @@ public class GraphScreen extends Screen {
     // Hit rectangles {x, y, w, h} recomputed every render so mouseClicked can
     // map clicks onto the on-plot toggle buttons and the plot interior. Null
     // when the corresponding plot isn't currently drawn.
-    private int[] logBtnTop, curBtnTop, plotRectTop;
-    private int[] logBtnBot, curBtnBot, plotRectBot;
+    private int[] logBtnTop, curBtnTop, fftBtnTop, plotRectTop;
+    private int[] logBtnBot, curBtnBot, fftBtnBot, plotRectBot;
 
     public GraphScreen(String sweepComponentName, String sweepUnit, boolean isLogFrequency,
+                       boolean defaultLogY, int fftSessionId,
                        List<Double> sweepValues, List<String> probeNames,
                        List<List<Double>> probeData, List<String> probeUnits,
                        int initialIndex) {
@@ -158,6 +167,9 @@ public class GraphScreen extends Screen {
         this.probeNames         = probeNames;
         this.probeData          = probeData;
         this.probeUnits         = probeUnits;
+        this.logYTop            = defaultLogY;
+        this.logYBot            = defaultLogY;
+        this.fftSessionId       = fftSessionId;
         buildGroups();
         if (initialIndex >= 0 && initialIndex < probeNames.size()) {
             this.slot1.add(initialIndex);
@@ -411,13 +423,29 @@ public class GraphScreen extends Screen {
             if (cursorModeTop) initCursors(cursorsTop); else clearCursors(cursorsTop);
             return true;
         }
+        if (hitRect(fftBtnTop, mx, my)) { openFft(); return true; }
         if (hitRect(logBtnBot, mx, my)) { logYBot = !logYBot; return true; }
         if (hitRect(curBtnBot, mx, my)) {
             cursorModeBot = !cursorModeBot;
             if (cursorModeBot) initCursors(cursorsBot); else clearCursors(cursorsBot);
             return true;
         }
+        if (hitRect(fftBtnBot, mx, my)) { openFft(); return true; }
         return false;
+    }
+
+    /**
+     * Opens the companion FFT session — the spectra ngspice computed
+     * (linearize + fft) for every probed signal of this transient run. Goes
+     * through the same /circuitsim graph command the chat links use, so the
+     * server ships the spectrum data and replaces this screen with its
+     * GraphScreen.
+     */
+    private void openFft() {
+        if (fftSessionId < 0) return;
+        var player = net.minecraft.client.Minecraft.getInstance().player;
+        if (player == null) return;
+        player.connection.sendCommand("circuitsim graph " + fftSessionId + " 0");
     }
 
     /**
@@ -704,8 +732,8 @@ public class GraphScreen extends Screen {
     private void drawPlots(GuiGraphics g, int mouseX, int mouseY) {
         // Clear last frame's hit rectangles; each plot re-registers its own as
         // it draws. Plots that aren't shown this frame leave theirs null.
-        logBtnTop = curBtnTop = plotRectTop = null;
-        logBtnBot = curBtnBot = plotRectBot = null;
+        logBtnTop = curBtnTop = fftBtnTop = plotRectTop = null;
+        logBtnBot = curBtnBot = fftBtnBot = plotRectBot = null;
 
         boolean haveTop = !slot1.isEmpty();
         boolean haveBot = !slot2.isEmpty();
@@ -944,10 +972,17 @@ public class GraphScreen extends Screen {
         // catches cursor-placement clicks. Drawn last so it sits on top.
         int[] curBtn = drawToggle(g, gx + gw - 2,    gy + 2, "Cur", cursorMode, mouseX, mouseY);
         int[] logBtn = drawToggle(g, curBtn[0] - 3,  gy + 2, "Log", logY,       mouseX, mouseY);
+        // FFT appears only when this transient session carries an
+        // ngspice-computed companion spectrum to jump to.
+        int[] fftBtn = fftSessionId >= 0
+                ? drawToggle(g, logBtn[0] - 3, gy + 2, "FFT", false, mouseX, mouseY)
+                : null;
         if (isTopSlot) {
-            curBtnTop = curBtn; logBtnTop = logBtn; plotRectTop = new int[]{ gx, gy, gw, gh };
+            curBtnTop = curBtn; logBtnTop = logBtn; fftBtnTop = fftBtn;
+            plotRectTop = new int[]{ gx, gy, gw, gh };
         } else {
-            curBtnBot = curBtn; logBtnBot = logBtn; plotRectBot = new int[]{ gx, gy, gw, gh };
+            curBtnBot = curBtn; logBtnBot = logBtn; fftBtnBot = fftBtn;
+            plotRectBot = new int[]{ gx, gy, gw, gh };
         }
     }
 

@@ -1,0 +1,12 @@
+{
+    "parent": "minecraft:block/cube",
+    "textures": {
+        "particle": "circuitsim:block/vswitch_top",
+        "up":    "circuitsim:block/vswitch_top",
+        "down":  "circuitsim:block/vswitch_top",
+        "north": "circuitsim:block/vswitch_p",
+        "south": "circuitsim:block/vswitch_n",
+        "west":  "circuitsim:block/vswitch_cp",
+        "east":  "circuitsim:block/vswitch_cn"
+    }
+}

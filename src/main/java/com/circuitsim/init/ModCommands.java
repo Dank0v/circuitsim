@@ -103,6 +103,8 @@ public class ModCommands {
                                         rs.sweepComponentName,
                                         rs.sweepUnit,
                                         rs.isLogFrequency,
+                                        rs.defaultLogY,
+                                        rs.fftSessionId,
                                         rs.sweepValues,
                                         names,
                                         allData,

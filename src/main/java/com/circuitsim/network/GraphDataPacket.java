@@ -23,6 +23,14 @@ public class GraphDataPacket {
     private final String              sweepComponentName;
     private final String              sweepUnit;
     private final boolean             isLogFrequency;
+    /** When true the GraphScreen opens with the log-Y toggle already on. */
+    private final boolean             defaultLogY;
+    /**
+     * Session id of the companion FFT result set (ngspice-computed spectra of
+     * this transient run's probed signals), or -1 when none. Drives the FFT
+     * button on the GraphScreen.
+     */
+    private final int                 fftSessionId;
     private final List<Double>        sweepValues;
     private final List<String>        probeNames;
     private final List<List<Double>>  probeData;
@@ -31,12 +39,15 @@ public class GraphDataPacket {
     private final int                 initialIndex;
 
     public GraphDataPacket(String sweepComponentName, String sweepUnit, boolean isLogFrequency,
+                           boolean defaultLogY, int fftSessionId,
                            List<Double> sweepValues,
                            List<String> probeNames, List<List<Double>> probeData,
                            List<String> probeUnits, int initialIndex) {
         this.sweepComponentName = sweepComponentName;
         this.sweepUnit          = sweepUnit;
         this.isLogFrequency     = isLogFrequency;
+        this.defaultLogY        = defaultLogY;
+        this.fftSessionId       = fftSessionId;
         this.sweepValues        = sweepValues;
         this.probeNames         = probeNames;
         this.probeData          = probeData;
@@ -48,6 +59,8 @@ public class GraphDataPacket {
         this.sweepComponentName = buf.readUtf(64);
         this.sweepUnit          = buf.readUtf(16);
         this.isLogFrequency     = buf.readBoolean();
+        this.defaultLogY        = buf.readBoolean();
+        this.fftSessionId       = buf.readInt();
 
         int xCount = buf.readInt();
         this.sweepValues = new ArrayList<>(xCount);
@@ -73,6 +86,8 @@ public class GraphDataPacket {
         buf.writeUtf(sweepComponentName, 64);
         buf.writeUtf(sweepUnit,          16);
         buf.writeBoolean(isLogFrequency);
+        buf.writeBoolean(defaultLogY);
+        buf.writeInt(fftSessionId);
 
         buf.writeInt(sweepValues.size());
         for (double v : sweepValues) buf.writeDouble(v);
@@ -96,6 +111,7 @@ public class GraphDataPacket {
         ctx.enqueueWork(() ->
                 Minecraft.getInstance().setScreen(
                         new GraphScreen(sweepComponentName, sweepUnit, isLogFrequency,
+                                defaultLogY, fftSessionId,
                                 sweepValues, probeNames, probeData, probeUnits, initialIndex))
         );
         ctx.setPacketHandled(true);
