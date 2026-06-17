@@ -4,9 +4,15 @@
 
 CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build and simulate real electronic circuits inside the game. Place component blocks in the world, connect them with wires, and right-click the **Simulate Block** to run a full SPICE simulation powered by [ngspice](https://ngspice.sourceforge.io/).
 
+**Non-inverting amplifier** — an op-amp circuit built from blocks and simulated live.
+
 ![Non-inverting amplifier](gifs/non_inverting.gif)
 
+**Miller amplifier** — a two-stage Miller-compensated amplifier and its frequency response.
+
 ![Miller amplifier](gifs/miller_amp.gif)
+
+**MOSFET output characteristics** — a DC sweep producing a transistor's I–V output curves.
 
 ![MOSFET output characteristics](gifs/mosfet_output_char.gif)
 
@@ -35,6 +41,8 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
 
 ### Multi-cell blocks
 - **Amplifier** — 5×5 op-amp subcircuit with selectable 5-pin or 7-pin (offset-null) variants and a vertical-mirror toggle for swapping inverting/non-inverting inputs and supply rails
+- **Subcircuit** — 5×5 block that instantiates *your own* saved schematic as a reusable black-box component, with 12 perimeter pins (see [User-defined subcircuits](#user-defined-subcircuits))
+- **Subcircuit Converter** + **Subcircuit Chip** — turn any circuit you built into a portable chip item and back again
 
 ### Measurement
 - **Voltage Probe** — labelled, measures node voltage
@@ -106,31 +114,11 @@ CircuitSim is a Minecraft Forge mod for version **1.20.1** that lets you build a
 5. Right-click the **Simulate Block** to run the simulation. Results appear in chat.
 ### Probes
  
-- **Voltage Probe** — place adjacent to a wire node. Right-click to give it a label. The simulation will report the voltage at that node.
+- **Voltage Probe** — place adjacent to a wire node. Right-click to give it a label. The simulation will report the voltage at that node. The probe dialog also has a **"Subcircuit pin"** toggle (plus a pin-order number) used when converting a circuit into a reusable subcircuit — see [User-defined subcircuits](#user-defined-subcircuits).
 - **Current Probe** — place in series (between two wires) to measure current through that branch.
 ---
 
 ## Feature Guides
-
-### Noise analysis (`.NOISE`)
-
-Noise analysis answers the question *"how much random noise does my circuit itself add?"*. ngspice freezes the circuit at its DC operating point, asks every noisy device (resistor thermal noise, transistor shot/flicker noise, …) how much it contributes at each frequency, and sums it all up at the **output node** you choose. You also pick an **input source** — any independent V or I source already in the circuit (use its netlist name, e.g. `V1`) — and a frequency sweep (`dec`/`lin`/`oct`, points, Fstart, Fstop). The output node accepts a probe label (e.g. `vout`) or a raw node number, and an optional **Ref** node measures the difference `v(out, ref)` instead.
-
-The result is two curves on a log-log plot. **`onoise_spectrum`** is the noise actually present at your output, in V/√Hz — a flat stretch is white (thermal) noise, a rising slope toward low frequencies is 1/f flicker noise. **`inoise_spectrum`** is the same noise *divided back through the circuit's gain*: "how big a noise source at the input would explain this output noise". That's the number that lets you compare amplifiers fairly, regardless of how much gain each one has. Chat also reports `onoise_total`/`inoise_total` — the RMS noise integrated over the whole band. The optional **Sum** field (points-per-summary) makes ngspice print a per-device noise breakdown every Nth point; find it in the output viewer's raw ngspice section.
-
-To exclude a specific resistor from the noise budget (an ideal bias element, a Thevenin stand-in for a noiseless source, …), open the Resistor's edit dialog and tick **Thermal noise → noiseless**: its netlist line gains ngspice's `noisy=0` instance flag and it contributes nothing to `.NOISE` results. The floating label shows "(noiseless)" so silenced resistors are visible at a glance; every other analysis is unaffected.
-
-### VC Switch
-
-The VC Switch is a voltage-controlled switch: the front (`+`) and back (`-`) faces are the switched path, and the left (`C+`) / right (`C-`) faces sense a controlling voltage from elsewhere in the circuit. When `V(C+) - V(C-)` rises above **Vt + Vh** the switch closes to **Ron** (default 1 Ω); when it falls below **Vt − Vh** it opens to **Roff** (default 1 TΩ). **Vh** adds hysteresis so a slowly-moving or noisy control voltage doesn't chatter; the optional initial state (`on`/`off`) tells ngspice which side to start from when the control voltage begins inside the hysteresis band.
-
-Defaults (Vt = 2.5 V, Vh = 0, Ron = 1 Ω, Roff = 1e12 Ω) make a usable logic-controlled switch for 0–5 V control signals without touching anything. Switches with identical parameters automatically share one `.model SW(...)` line in the netlist.
-
-### FFT of transient waveforms
-
-Every transient run now computes the spectrum of **every probed signal** automatically, using ngspice itself: the generated `.control` block runs `linearize` (ngspice's transient solver uses a variable timestep, so the waveform is first interpolated onto a uniform grid — mandatory for a DFT) followed by `fft` on each probed vector. The spectra come back alongside the time-domain data; open them with the **FFT** button on the transient graph's toolbar or the **[Open FFT spectrum]** link in chat. The spectrum plots magnitude (V or A) against frequency, log-log by default — the per-plot **Log** toggle switches back to linear. The DC bin is omitted (the time plot already shows the average level); the axis runs up to the Nyquist limit of the linearized data, and ngspice zero-pads to a power of two, so the exact bin spacing is `1/(N·tstep)`.
-
-ngspice applies its default *Hanning* window to reduce spectral leakage from the non-periodic capture. To use a different window, put `set specwindow=rectangular` (or `hamming`, `blackman`, `gaussian`, …) in a **Commands Block** — it executes before the FFT. A clean sine shows a single dominant peak at the sine's frequency; a square wave shows the classic odd-harmonic series (1st, 3rd, 5th, …). During a Param-block or temperature sweep the FFT session overlays one labelled spectrum per swept value, just like the time-domain curves.
 
 ### Param Block
 
@@ -145,6 +133,22 @@ Only ONE variable may be swept at a time.
 ```
 
 Scalars are emitted as `.param` lines in the netlist (so Commands-block expressions can use them) and substituted into every component that references them. A range or list turns that variable into a **sweep**: the analysis runs once per value and the graph overlays one labelled curve per value (`vout@2kΩ`, …). For ordinary value sweeps this happens inside a *single* ngspice process using a `.control` loop (`foreach` → `alterparam` → `reset` → `run`), which is much faster than re-launching ngspice per value — sweeps of IC W/L/mult/nf parameters, multi-temperature runs, and 2D DC sweeps automatically fall back to the classic one-run-per-value engine. Declaring **two** swept variables is an error (the message names both variables), and malformed lines are flagged with their line numbers when you hit Save — nothing is simulated until the block parses cleanly. Old worlds that used the single-variable Parametric block load as-is: the legacy declaration shows up as the first line of the text box.
+
+### User-defined subcircuits
+
+Build a circuit once, then reuse it as a single black-box block — the mod turns your in-world schematic into a real SPICE `.subckt` and instantiates it with an `X` line, exactly like the built-in Amplifier but defined entirely by you. Three pieces work together:
+
+**1. Mark the terminals (Voltage Probe → "Subcircuit pin").** A subcircuit needs named external pins. Place a **Voltage Probe** on each net you want to expose, give it a label (that label becomes the pin name), and tick **"Subcircuit pin"** in the probe dialog. The optional **pin order** number controls the order pins appear in the `.subckt` line and, in turn, which physical pin they map to on the 5×5 block (order 1 → pin 1, order 2 → pin 2, …; unordered pins come last). You can mark 1–12 pins. A pin net must be named and must not be ground.
+
+**2. Convert (Subcircuit Converter).** Place a **Subcircuit Converter** block touching your schematic (it connects to wires like the Simulate block), right-click it, type a name, and hit **Convert to Subcircuit**. The mod walks the connected circuit, generates a self-contained `.subckt <name> <pins…> … .ends` definition (analysis-independent — full SIN/PULSE specs, models, etc.), snapshots the exact block layout, then **removes the schematic** (and the converter) and hands you a **Subcircuit Chip** item. The chip's tooltip shows the name, pin count, and block count.
+
+**3. Use the chip.** A chip can be used two ways:
+- **Right-click the ground** with it to **rebuild the original schematic** block-for-block (values, probe labels, even multiblocks like nested amplifiers are restored). The chip is consumed.
+- **Insert it into a Subcircuit block.** Place the 5×5 **Subcircuit** block, right-click to open it, and drop the chip into the **Chip** slot. The second slot shows the generated `.subckt` netlist (scrollable, read-only, with a **Copy** button); the third slot is a reserved preview. The block's top texture changes to reflect the pin count, and a floating name tag appears above it (toggle with the labels key).
+
+**Pins on the 5×5 block.** The block exposes **12 pins** around its perimeter — two on each corner cell (on its two outward faces) and one in the middle of each edge — numbered **clockwise from the top-left corner's top face**. Wire connects visually and electrically only to the first *N* pins, where *N* is the loaded chip's terminal count; the rest are inert. Wire it into a larger circuit (with a Ground and a Simulate block) and run any analysis — the netlist gets both the embedded `.subckt … .ends` definition and the `X… <name>` instance, so OP / AC / DC / TRAN / NOISE and sweeps all work.
+
+> **Limitations:** Param/Commands blocks *inside* a converted schematic are not carried into the subcircuit (a subcircuit is just devices). Give each subcircuit a distinct name — two **unnamed** subcircuits in the same circuit would both auto-name `subckt1` and collide.
 
 ## Example World
 
