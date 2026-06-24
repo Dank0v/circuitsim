@@ -1,9 +1,19 @@
 package com.circuitsim.screen;
 
+import com.circuitsim.subcircuit.SubcircuitBlueprint;
 import com.circuitsim.subcircuit.SubcircuitChip;
+import com.mojang.blaze3d.platform.Lighting;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.Slot;
@@ -29,19 +39,31 @@ public class SubcircuitScreen extends net.minecraft.client.gui.screens.inventory
 
     // Netlist text panel (relative to leftPos/topPos).
     private static final int NET_X0 = 44, NET_Y0 = 32, NET_X1 = 212, NET_Y1 = 134;
-    // Deferred render placeholder.
-    private static final int REN_X0 = 218, REN_Y0 = 32, REN_X1 = 312, REN_Y1 = 134;
+    // 3D preview panel — spans the full right column down to the inventory's
+    // bottom, filling the otherwise-empty lower-right area.
+    private static final int REN_X0 = 218, REN_Y0 = 32, REN_X1 = 332, REN_Y1 = 226;
     // Header.
     private static final int NAME_X = 44, NAME_Y = 20;
-    private static final int COPY_X = 260, COPY_Y = 16, COPY_W = 50, COPY_H = 14;
+    private static final int COPY_X = 280, COPY_Y = 16, COPY_W = 50, COPY_H = 14;
+    // Zoom slider (vertical, right edge of the preview panel).
+    private static final int SLIDER_W = 5;
+    private static final float ZOOM_MIN = 0.4f, ZOOM_MAX = 4.0f;
 
     private int scroll = 0;
     private List<String> defLines = new ArrayList<>();
     private Button copyButton;
 
+    // Top-down 3D preview, cached and recomputed only when the loaded chip changes.
+    private List<SubcircuitBlueprint.PreviewBlock> previewBlocks = new ArrayList<>();
+    private String previewKey = null;
+    private float pCenterX, pCenterY, pCenterZ; // centre of the captured footprint
+    private float pSpan = 1;                     // largest horizontal extent
+    private float zoom = 1.0f;                   // preview zoom multiplier (1 = fit)
+    private boolean draggingZoom = false;
+
     public SubcircuitScreen(SubcircuitMenu menu, Inventory inv, Component title) {
         super(menu, inv, title);
-        this.imageWidth = 320;
+        this.imageWidth = 340;
         this.imageHeight = 238;
     }
 
@@ -73,6 +95,33 @@ public class SubcircuitScreen extends net.minecraft.client.gui.screens.inventory
 
     private int visibleLines() {
         return (NET_Y1 - NET_Y0 - 4) / (font.lineHeight + 1);
+    }
+
+    /** Re-parses the chip's blueprint into preview blocks only when it changes. */
+    private void refreshPreview() {
+        ItemStack chip = menu.getChipStack();
+        String key = SubcircuitChip.isPresent(chip)
+                ? SubcircuitChip.getName(chip) + "#" + SubcircuitChip.getDef(chip).length()
+                : null;
+        if (java.util.Objects.equals(key, previewKey)) return;
+        previewKey = key;
+        previewBlocks = new ArrayList<>();
+        pCenterX = pCenterY = pCenterZ = 0; pSpan = 1;
+        if (key == null || Minecraft.getInstance().level == null) return;
+        var blocks = Minecraft.getInstance().level.holderLookup(Registries.BLOCK);
+        previewBlocks = SubcircuitBlueprint.previewBlocks(SubcircuitChip.getBlueprint(chip), blocks);
+        if (previewBlocks.isEmpty()) return;
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        for (var b : previewBlocks) {
+            minX = Math.min(minX, b.dx()); maxX = Math.max(maxX, b.dx());
+            minY = Math.min(minY, b.dy()); maxY = Math.max(maxY, b.dy());
+            minZ = Math.min(minZ, b.dz()); maxZ = Math.max(maxZ, b.dz());
+        }
+        pCenterX = (minX + maxX + 1) / 2f;
+        pCenterY = (minY + maxY + 1) / 2f;
+        pCenterZ = (minZ + maxZ + 1) / 2f;
+        pSpan = Math.max(1, Math.max(maxX - minX + 1, maxZ - minZ + 1));
     }
 
     @Override
@@ -118,13 +167,105 @@ public class SubcircuitScreen extends net.minecraft.client.gui.screens.inventory
             }
         }
 
-        // Deferred render placeholder
-        drawPanel(g, x + REN_X0, y + REN_Y0, x + REN_X1, y + REN_Y1, false);
-        String s1 = "Preview", s2 = "coming soon";
+        // Top-down circuit preview
+        refreshPreview();
+        drawPanel(g, x + REN_X0, y + REN_Y0, x + REN_X1, y + REN_Y1, hasChip && !previewBlocks.isEmpty());
         int rcx = x + (REN_X0 + REN_X1) / 2;
         int rcy = y + (REN_Y0 + REN_Y1) / 2;
-        g.drawString(font, s1, rcx - font.width(s1) / 2, rcy - 6, MUTED_COLOR, false);
-        g.drawString(font, s2, rcx - font.width(s2) / 2, rcy + 4, MUTED_COLOR, false);
+        if (!hasChip) {
+            String s1 = "Circuit", s2 = "preview";
+            g.drawString(font, s1, rcx - font.width(s1) / 2, rcy - 6, MUTED_COLOR, false);
+            g.drawString(font, s2, rcx - font.width(s2) / 2, rcy + 4, MUTED_COLOR, false);
+        } else if (previewBlocks.isEmpty()) {
+            String s = "(no layout)";
+            g.drawString(font, s, rcx - font.width(s) / 2, rcy - 4, MUTED_COLOR, false);
+        } else {
+            drawPreview3D(g, x, y);
+        }
+    }
+
+    /**
+     * Renders the captured circuit with the real block models, viewed from an
+     * angled top-down camera (isometric-ish), auto-scaled to fit the slot.
+     */
+    private void drawPreview3D(GuiGraphics g, int x, int y) {
+        // Render area = panel minus a strip on the right for the zoom slider.
+        int areaX0 = x + REN_X0 + 2, areaY0 = y + REN_Y0 + 2;
+        int areaW = (REN_X1 - REN_X0) - 4 - 10;
+        int areaH = (REN_Y1 - REN_Y0) - 4;
+
+        // Scissor keeps the 3D render inside the render area.
+        g.enableScissor(areaX0, areaY0, areaX0 + areaW, areaY0 + areaH);
+
+        // Fit: a 45°-yawed square footprint projects to ~span*1.41 across; the
+        // pitch squashes the depth axis, so width is the binding dimension.
+        float scale = Math.min(areaW, areaH) / (pSpan * 1.9f) * zoom;
+
+        PoseStack pose = g.pose();
+        pose.pushPose();
+        // Centre of the render area, pushed toward the viewer in Z.
+        pose.translate(areaX0 + areaW / 2f, areaY0 + areaH / 2f, 250);
+        pose.scale(scale, -scale, scale);          // flip Y so model-up is screen-up
+        pose.mulPose(Axis.XP.rotationDegrees(60)); // tilt down (top-down-ish)
+        pose.mulPose(Axis.YP.rotationDegrees(45)); // diagonal
+        pose.translate(-pCenterX, -pCenterY, -pCenterZ);
+
+        // Bright, even lighting and no fog so the blocks don't get dimmed by the
+        // GUI-space depth (chunk render types still apply fog + face shading).
+        Lighting.setupForFlatItems();
+        float prevFogStart = RenderSystem.getShaderFogStart();
+        float prevFogEnd = RenderSystem.getShaderFogEnd();
+        RenderSystem.setShaderFogStart(1.0E8f);
+        RenderSystem.setShaderFogEnd(1.0E9f);
+
+        MultiBufferSource.BufferSource buffers = g.bufferSource();
+        BlockRenderDispatcher dispatcher = Minecraft.getInstance().getBlockRenderer();
+        for (var b : previewBlocks) {
+            pose.pushPose();
+            pose.translate(b.dx(), b.dy(), b.dz());
+            dispatcher.renderSingleBlock(b.state(), pose, buffers,
+                    LightTexture.FULL_BRIGHT, OverlayTexture.NO_OVERLAY);
+            pose.popPose();
+        }
+        buffers.endBatch();
+        pose.popPose();
+
+        RenderSystem.setShaderFogStart(prevFogStart);
+        RenderSystem.setShaderFogEnd(prevFogEnd);
+        Lighting.setupFor3DItems();
+
+        g.disableScissor();
+        drawZoomSlider(g, x, y);
+    }
+
+    /** Vertical zoom slider on the right edge of the preview panel (top = zoom in). */
+    private void drawZoomSlider(GuiGraphics g, int x, int y) {
+        int tx0 = x + REN_X1 - 8, tx1 = tx0 + SLIDER_W;
+        int ty0 = y + REN_Y0 + 8, ty1 = y + REN_Y1 - 8;
+        g.fill(tx0, ty0, tx1, ty1, 0xFF000000);
+        g.fill(tx0, ty0, tx1, ty0 + 1, 0xFF555555);
+        g.fill(tx0, ty1 - 1, tx1, ty1, 0xFF555555);
+
+        float t = (zoom - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN);
+        int trackH = ty1 - ty0, thumbH = 8;
+        int thumbY = (int) (ty1 - thumbH - t * (trackH - thumbH));
+        g.fill(tx0 - 1, thumbY, tx1 + 1, thumbY + thumbH, BORDER_COLOR);
+
+        g.drawString(font, "+", tx0 - 1, ty0 - 9, MUTED_COLOR, false);
+        g.drawString(font, "−", tx0, ty1 + 1, MUTED_COLOR, false);
+    }
+
+    private boolean overZoomTrack(double mx, double my) {
+        int tx0 = leftPos + REN_X1 - 10, tx1 = leftPos + REN_X1 - 1;
+        int ty0 = topPos + REN_Y0 + 6, ty1 = topPos + REN_Y1 - 6;
+        return mx >= tx0 && mx <= tx1 && my >= ty0 && my <= ty1;
+    }
+
+    private void setZoomFromMouse(double my) {
+        int ty0 = topPos + REN_Y0 + 8, ty1 = topPos + REN_Y1 - 8;
+        float t = (float) ((ty1 - my) / (double) (ty1 - ty0));
+        t = Math.max(0f, Math.min(1f, t));
+        zoom = ZOOM_MIN + t * (ZOOM_MAX - ZOOM_MIN);
     }
 
     private void drawScrollbar(GuiGraphics g, int x, int y) {
@@ -157,7 +298,40 @@ public class SubcircuitScreen extends net.minecraft.client.gui.screens.inventory
             scroll = Math.max(0, Math.min(maxScroll, scroll - (int) Math.signum(delta)));
             return true;
         }
+        // Scroll over the preview to zoom too.
+        if (mx >= x + REN_X0 && mx <= x + REN_X1 && my >= y + REN_Y0 && my <= y + REN_Y1) {
+            zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + (float) delta * 0.25f));
+            return true;
+        }
         return super.mouseScrolled(mx, my, delta);
+    }
+
+    @Override
+    public boolean mouseClicked(double mx, double my, int button) {
+        if (button == 0 && SubcircuitChip.isPresent(menu.getChipStack()) && overZoomTrack(mx, my)) {
+            draggingZoom = true;
+            setZoomFromMouse(my);
+            return true;
+        }
+        return super.mouseClicked(mx, my, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
+        if (draggingZoom && button == 0) {
+            setZoomFromMouse(my);
+            return true;
+        }
+        return super.mouseDragged(mx, my, button, dx, dy);
+    }
+
+    @Override
+    public boolean mouseReleased(double mx, double my, int button) {
+        if (draggingZoom && button == 0) {
+            draggingZoom = false;
+            return true;
+        }
+        return super.mouseReleased(mx, my, button);
     }
 
     @Override

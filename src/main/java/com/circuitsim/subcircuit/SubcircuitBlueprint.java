@@ -81,6 +81,26 @@ public final class SubcircuitBlueprint {
         return blueprint.getList(KEY_BLOCKS, Tag.TAG_COMPOUND).size();
     }
 
+    /** One block of the top-down preview: grid position + its block state. */
+    public record PreviewBlock(int dx, int dy, int dz, BlockState state) {}
+
+    /**
+     * Reads every block of the blueprint as a {@link PreviewBlock} (relative
+     * position + {@link BlockState}) for the Subcircuit block GUI's 3D preview.
+     */
+    public static List<PreviewBlock> previewBlocks(CompoundTag blueprint, HolderGetter<Block> blocks) {
+        List<PreviewBlock> out = new ArrayList<>();
+        if (blueprint == null) return out;
+        ListTag list = blueprint.getList(KEY_BLOCKS, Tag.TAG_COMPOUND);
+        for (int i = 0; i < list.size(); i++) {
+            CompoundTag b = list.getCompound(i);
+            BlockState state = NbtUtils.readBlockState(blocks, b.getCompound(KEY_STATE));
+            if (state.isAir()) continue;
+            out.add(new PreviewBlock(b.getInt(KEY_DX), b.getInt(KEY_DY), b.getInt(KEY_DZ), state));
+        }
+        return out;
+    }
+
     /**
      * True if every block in the blueprint can be placed at {@code origin}
      * (each target cell is currently replaceable — air, water, grass, etc.).
