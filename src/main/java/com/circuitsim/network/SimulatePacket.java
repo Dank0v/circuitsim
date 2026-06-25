@@ -573,6 +573,12 @@ public class SimulatePacket {
             bookLines.add(line);
         }
 
+        // Map every device's operating point (the `show` tables) back to its
+        // block and ship it to the client for the "annotate operating points"
+        // feature (press K after an .OP run). Always sent — an empty list
+        // clears any stale annotation data on the client.
+        sendOperatingPoints(player, extraction, result);
+
         // OP runs have no sweep, but we still cache an output-only session so
         // the player can click "[Open output viewer]" in chat to browse the
         // netlist + values in the searchable screen.
@@ -1886,6 +1892,11 @@ public class SimulatePacket {
             }
             default -> {   // OP: one scalar set per step → probe-vs-param plot
                 List<Double> validSweep = new ArrayList<>();
+                // One OP-annotation frame per swept value, so the player can
+                // step through them in the K menu (see sendOpFrames below).
+                List<NetlistBuilder.DeviceRef> opRefs =
+                        NetlistBuilder.describeDevices(extraction.components);
+                List<OperatingPointPacket.Frame> opFrames = new ArrayList<>();
                 for (NetlistBuilder.ProbeInfo p : plotted(effectiveProbes))
                     voltData.put(p.label, new ArrayList<>());
                 for (int k = 0; k < cpList.size(); k++)
@@ -1898,6 +1909,11 @@ public class SimulatePacket {
                     NgSpiceRunner.Result step = sw.steps.get(i);
                     if (step.values.isEmpty() && step.extrasByName.isEmpty()) continue;
                     validSweep.add(sweepValues.get(i));
+                    if (!step.deviceOps.isEmpty()) {
+                        opFrames.add(opFrame(opRefs,
+                                varName + "=" + ComponentEditScreen.formatValue(sweepValues.get(i)) + varUnit,
+                                step.deviceOps));
+                    }
                     String secHdr = "--- " + varName + "="
                             + ComponentEditScreen.formatValue(sweepValues.get(i)) + varUnit + " ---";
                     msg(player, secHdr, ChatFormatting.YELLOW);
@@ -1922,6 +1938,7 @@ public class SimulatePacket {
                     }
                     echoExtras(player, step, bookLines);
                 }
+                sendOpFrames(player, opFrames);
                 if (validSweep.isEmpty()) return;
                 storeAndLink(player, varName, varUnit, validSweep, false, -1,
                         voltData, currData, probeUnits, bookLines, graphPageComponents);
@@ -2032,6 +2049,10 @@ public class SimulatePacket {
         Map<String, List<Double>> voltData   = new LinkedHashMap<>();
         Map<String, List<Double>> currData   = new LinkedHashMap<>();
         Map<String, String>       probeUnits = new LinkedHashMap<>();
+        // One OP-annotation frame per (value, temp) combination for the K menu.
+        List<NetlistBuilder.DeviceRef> opRefs =
+                NetlistBuilder.describeDevices(extraction.components);
+        List<OperatingPointPacket.Frame> opFrames = new ArrayList<>();
         // Series grown lazily from raw `print` scalars (e.g. @m.xm1.[gm]).
         // Names collide with user `plot` directives, so suppress those keys.
         java.util.Set<String> userPlotNames = new java.util.HashSet<>();
@@ -2116,6 +2137,11 @@ public class SimulatePacket {
             for (double T : tempValues) {
                 NgSpiceRunner.Result result = resultsPerTemp.get(T);
                 String suffix = tempSuffix(T, multiTemp);
+                if (result != null && !result.deviceOps.isEmpty()) {
+                    String fl = ComponentEditScreen.formatValue(val) + varUnit
+                            + (multiTemp ? " @" + ComponentEditScreen.formatValue(T) + "C" : "");
+                    opFrames.add(opFrame(opRefs, fl, result.deviceOps));
+                }
                 for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                     Double v = result != null ? result.values.get("v(" + probe.netName + ")") : null;
                     voltData.get(probe.label + suffix).add(v != null ? v : 0.0);
@@ -2177,6 +2203,7 @@ public class SimulatePacket {
             }
         }
 
+        sendOpFrames(player, opFrames);
         if (validSweep.isEmpty()) return;
         // Merge auto-discovered print series into voltData with an empty unit
         // (we don't know whether gm is in A/V, fT is in Hz, etc.).
@@ -2657,6 +2684,10 @@ public class SimulatePacket {
         // entries are padded with zeros for iterations where ngspice didn't
         // emit the key so all series stay aligned with validSweep.
         Map<String, List<Double>> extraSeries = new LinkedHashMap<>();
+        // One OP-annotation frame per temperature for the K menu.
+        List<NetlistBuilder.DeviceRef> opRefs =
+                NetlistBuilder.describeDevices(extraction.components);
+        List<OperatingPointPacket.Frame> opFrames = new ArrayList<>();
 
         boolean firstIteration = true;
         for (double T : sweepTemps) {
@@ -2703,6 +2734,10 @@ public class SimulatePacket {
             }
 
             validSweep.add(T);
+            if (!result.deviceOps.isEmpty()) {
+                opFrames.add(opFrame(opRefs,
+                        ComponentEditScreen.formatValue(T) + "C", result.deviceOps));
+            }
             for (NetlistBuilder.ProbeInfo probe : plotted(probes)) {
                 Double v = result.values.get("v(" + probe.netName + ")");
                 voltData.get(probe.label).add(v != null ? v : 0.0);
@@ -2753,6 +2788,7 @@ public class SimulatePacket {
             }
         }
 
+        sendOpFrames(player, opFrames);
         if (validSweep.isEmpty()) return;
         // Merge auto-discovered print series into voltData with an empty
         // unit (we don't know whether gm is in A/V, fT is in Hz, etc.).
@@ -3284,6 +3320,62 @@ public class SimulatePacket {
             s.execute(() -> p.displayClientMessage(msg, false));
         } else {
             p.displayClientMessage(msg, false);
+        }
+    }
+
+    /**
+     * Builds the {@link OperatingPointPacket} from the run's {@code show}-table
+     * device operating points and sends it to {@code player}. Each ngspice
+     * device name is mapped back to its source block via
+     * {@link NetlistBuilder#describeDevices}; names that don't resolve to a
+     * physical block (devices buried inside a user subcircuit) are dropped.
+     * Runs on the sim worker thread, so the actual send hops to the main
+     * thread like {@link #sendChatComponent}.
+     */
+    private static void sendOperatingPoints(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        NgSpiceRunner.Result result
+    ) {
+        List<NetlistBuilder.DeviceRef> refs =
+            NetlistBuilder.describeDevices(extraction.components);
+        List<OperatingPointPacket.Frame> frames = new ArrayList<>();
+        if (!result.deviceOps.isEmpty()) {
+            frames.add(opFrame(refs, "operating point", result.deviceOps));
+        }
+        sendOpFrames(player, frames);
+    }
+
+    /**
+     * Builds one annotation frame by mapping each {@code show}-table device name
+     * back to its source block. Devices that don't resolve to a physical block
+     * (those buried inside a user subcircuit) are dropped.
+     */
+    private static OperatingPointPacket.Frame opFrame(
+        List<NetlistBuilder.DeviceRef> refs,
+        String label,
+        Map<String, LinkedHashMap<String, Double>> deviceOps
+    ) {
+        List<OperatingPointPacket.Entry> entries = new ArrayList<>();
+        for (Map.Entry<String, LinkedHashMap<String, Double>> e : deviceOps.entrySet()) {
+            NetlistBuilder.DeviceRef ref = NetlistBuilder.matchShowDevice(e.getKey(), refs);
+            if (ref == null) continue;
+            entries.add(new OperatingPointPacket.Entry(
+                ref.pos(), ref.typeKey(), ref.label(), e.getValue()));
+        }
+        return new OperatingPointPacket.Frame(label, entries);
+    }
+
+    /** Sends the assembled frames to {@code player}, hopping to the main thread. */
+    private static void sendOpFrames(
+        ServerPlayer player, List<OperatingPointPacket.Frame> frames
+    ) {
+        OperatingPointPacket pkt = new OperatingPointPacket(frames);
+        MinecraftServer s = player.getServer();
+        if (s != null && !s.isSameThread()) {
+            s.execute(() -> ModMessages.sendToPlayer(player, pkt));
+        } else {
+            ModMessages.sendToPlayer(player, pkt);
         }
     }
 

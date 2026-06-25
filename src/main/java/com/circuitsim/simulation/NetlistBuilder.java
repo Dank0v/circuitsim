@@ -4,6 +4,7 @@ import com.circuitsim.block.*;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Block;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -513,9 +514,125 @@ public class NetlistBuilder {
             }
         }
 
+        // Dump every device's full operating point so the client's "annotate
+        // operating points" feature (the K menu) can pull from it. One `show
+        // <class>` per device family present enumerates all params for all
+        // devices of that family — including the ones nested inside subcircuits
+        // (sky130 IC mosfets show up as `m.xm1.m1`). Parsed back in
+        // NgSpiceRunner.parseShowTables.
+        for (char cls : opShowClasses(components)) {
+            sb.append("  show ").append(cls).append("\n");
+        }
+
         sb.append(".endc\n");
         sb.append(".end\n");
         return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
+    // Device → operating-point mapping (powers the K-menu OP annotation)
+    // -------------------------------------------------------------------------
+
+    /**
+     * One mappable device: its physical block position, the SPICE instance name
+     * the netlist builder assigned it, the {@code show} class letter that lists
+     * its operating point, whether it's subcircuit-wrapped (so its {@code show}
+     * name is hierarchical), and a UI {@code typeKey}/{@code label} for grouping
+     * in the edit menu. Multi-device blocks (amplifier, user subcircuit chips)
+     * have no single operating point and are intentionally absent.
+     */
+    public record DeviceRef(BlockPos pos, String spiceName, char showClass,
+                            boolean subckt, String typeKey, String label) {}
+
+    /**
+     * Describes every annotatable device in {@code components}, assigning SPICE
+     * names with the exact same family counters / manual-claim logic as the
+     * netlist builders so the names line up with what ngspice actually used.
+     * The returned order matches the component order.
+     */
+    public static List<DeviceRef> describeDevices(List<CircuitComponent> components) {
+        IndexAssigner[] fam = new IndexAssigner[15];
+        for (int k = 1; k <= 14; k++) fam[k] = new IndexAssigner();
+        for (CircuitComponent comp : components) {
+            int n = comp.componentNumber;
+            if (n > 0) {
+                int f = rIndexFamily(comp);
+                if (f >= 1 && f <= 14) fam[f].claim(n);
+            }
+        }
+        List<DeviceRef> out = new ArrayList<>();
+        for (CircuitComponent comp : components) {
+            int f = rIndexFamily(comp);
+            if (f < 1 || f > 14) continue;
+            int idx = fam[f].assign(comp.componentNumber);
+            DeviceRef ref = describeOne(comp, idx);
+            if (ref != null) out.add(ref);
+        }
+        return out;
+    }
+
+    private static DeviceRef describeOne(CircuitComponent comp, int idx) {
+        Block b = comp.block;
+        if (b instanceof IcResistorBlock)   return new DeviceRef(comp.pos, "XR" + idx, 'r', true,  "ic_resistor3", "IC Resistor");
+        if (b instanceof ResistorBlock)      return new DeviceRef(comp.pos, "R"  + idx, 'r', false, "resistor",     "Resistor");
+        if (b instanceof IcCapacitorBlock)   return new DeviceRef(comp.pos, "XC" + idx, 'c', true,  "ic_capacitor2","IC Capacitor");
+        if (b instanceof CapacitorBlock)     return new DeviceRef(comp.pos, "C"  + idx, 'c', false, "capacitor",    "Capacitor");
+        if (b instanceof InductorBlock)      return new DeviceRef(comp.pos, "L"  + idx, 'l', false, "inductor",     "Inductor");
+        if (b instanceof VoltageSourceBlock
+                || b instanceof VoltageSourceSinBlock
+                || b instanceof VoltageSourcePulseBlock)
+                                             return new DeviceRef(comp.pos, "V"  + idx, 'v', false, "voltage_source","Voltage Source");
+        if (b instanceof CurrentSourceBlock) return new DeviceRef(comp.pos, "I"  + idx, 'i', false, "current_source","Current Source");
+        if (b instanceof DiodeBlock)         return new DeviceRef(comp.pos, "D"  + idx, 'd', false, "diode",        "Diode");
+        if (b instanceof IcNmos4Block)       return new DeviceRef(comp.pos, "XM" + idx, 'm', true,  "ic_nmos4",     "NMOS (IC)");
+        if (b instanceof IcPmos4Block)       return new DeviceRef(comp.pos, "XM" + idx, 'm', true,  "ic_pmos4",     "PMOS (IC)");
+        if (b instanceof DiscreteNmosBlock)  return new DeviceRef(comp.pos, "X"  + idx, 'm', true,  "discrete_nmos","NMOS");
+        if (b instanceof DiscretePmosBlock)  return new DeviceRef(comp.pos, "X"  + idx, 'm', true,  "discrete_pmos","PMOS");
+        if (b instanceof DiscreteNpnBlock)   return new DeviceRef(comp.pos, "Q"  + idx, 'q', false, "discrete_npn", "NPN");
+        if (b instanceof DiscretePnpBlock)   return new DeviceRef(comp.pos, "Q"  + idx, 'q', false, "discrete_pnp", "PNP");
+        if (b instanceof BehavioralVoltageSourceBlock)
+                                             return new DeviceRef(comp.pos, "B"  + idx, 'b', false, "behavioral_voltage_source", "B-Source V");
+        if (b instanceof BehavioralCurrentSourceBlock)
+                                             return new DeviceRef(comp.pos, "B"  + idx, 'b', false, "behavioral_current_source", "B-Source I");
+        if (b instanceof VcvsBlock)          return new DeviceRef(comp.pos, "E"  + idx, 'e', false, "vcvs", "VCVS");
+        if (b instanceof VccsBlock)          return new DeviceRef(comp.pos, "G"  + idx, 'g', false, "vccs", "VCCS");
+        if (b instanceof CcvsBlock)          return new DeviceRef(comp.pos, "H"  + idx, 'h', false, "ccvs", "CCVS");
+        if (b instanceof CccsBlock)          return new DeviceRef(comp.pos, "F"  + idx, 'f', false, "cccs", "CCCS");
+        if (b instanceof VSwitchBlock)       return new DeviceRef(comp.pos, "S"  + idx, 's', false, "vswitch", "Switch");
+        return null;   // amplifier / user subcircuit chip — no single OP
+    }
+
+    /** The distinct {@code show} class letters needed for {@code components}, in stable order. */
+    private static List<Character> opShowClasses(List<CircuitComponent> components) {
+        java.util.LinkedHashSet<Character> set = new java.util.LinkedHashSet<>();
+        for (DeviceRef ref : describeDevices(components)) set.add(ref.showClass());
+        return new ArrayList<>(set);
+    }
+
+    /**
+     * Finds the {@link DeviceRef} that a {@code show}-table device name refers
+     * to. Flat names ({@code "r1"}) match a non-subckt ref by SPICE name;
+     * hierarchical names ({@code "m.xm1.m1"}) match a subckt ref by the
+     * subcircuit-instance segment ({@code "xm1"}). Returns null for names that
+     * don't map to a physical block (e.g. devices inside a user subcircuit).
+     */
+    public static DeviceRef matchShowDevice(String showName, List<DeviceRef> refs) {
+        if (showName == null || showName.isEmpty()) return null;
+        String name = showName.toLowerCase();
+        int dot = name.indexOf('.');
+        if (dot >= 0) {
+            String rest = name.substring(dot + 1);
+            int dot2 = rest.indexOf('.');
+            String inst = dot2 >= 0 ? rest.substring(0, dot2) : rest;
+            for (DeviceRef r : refs) {
+                if (r.subckt() && r.spiceName().toLowerCase().equals(inst)) return r;
+            }
+            return null;
+        }
+        for (DeviceRef r : refs) {
+            if (!r.subckt() && r.spiceName().toLowerCase().equals(name)) return r;
+        }
+        return null;
     }
 
     public static String buildNetlist(List<CircuitComponent> components, List<ProbeInfo> probes) {

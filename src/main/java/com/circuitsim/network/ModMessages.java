@@ -110,6 +110,12 @@ public class ModMessages {
                 .decoder(SimulationOutputPacket::decode)
                 .consumerMainThread(ModMessages::handleSimulationOutput)
                 .add();
+
+        INSTANCE.messageBuilder(OperatingPointPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(OperatingPointPacket::encode)
+                .decoder(OperatingPointPacket::decode)
+                .consumerMainThread(ModMessages::handleOperatingPoint)
+                .add();
     }
 
     // ── handlers ──────────────────────────────────────────────────────────────
@@ -193,6 +199,12 @@ public class ModMessages {
 
     private static void handleSimulationOutput(SimulationOutputPacket msg,
                                                 Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(msg::handle);
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleOperatingPoint(OperatingPointPacket msg,
+                                              Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(msg::handle);
         ctx.get().setPacketHandled(true);
     }

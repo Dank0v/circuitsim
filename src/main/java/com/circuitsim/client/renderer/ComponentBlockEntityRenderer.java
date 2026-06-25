@@ -3,6 +3,7 @@ package com.circuitsim.client.renderer;
 import com.circuitsim.block.AmplifierBlock;
 import com.circuitsim.block.Controlled2x3Block;
 import com.circuitsim.blockentity.ComponentBlockEntity;
+import com.circuitsim.client.ClientOpData;
 import com.circuitsim.client.KeyBindings;
 import com.circuitsim.init.ModBlocks;
 import com.circuitsim.screen.ComponentEditScreen;
@@ -37,7 +38,19 @@ public class ComponentBlockEntityRenderer
         int packedOverlay
     ) {
         if (!KeyBindings.labelsVisible) return;
-        List<String> lines = getLines(be);
+
+        // When OP annotation is active, devices that have an operating point
+        // show their selected params instead of their normal value label.
+        // Devices without an OP (probes, the Commands/Simulate blocks, …) keep
+        // their normal label so the circuit stays readable.
+        List<String> lines;
+        if (ClientOpData.isAnnotationActive()) {
+            ClientOpData.DeviceOp op = ClientOpData.opFor(be.getBlockPos());
+            lines = (op != null) ? annotationLines(op) : getLines(be);
+            if (lines.isEmpty()) lines = getLines(be);
+        } else {
+            lines = getLines(be);
+        }
         if (lines.isEmpty()) return;
 
         var font = Minecraft.getInstance().font;
@@ -126,6 +139,22 @@ public class ComponentBlockEntityRenderer
     // -------------------------------------------------------------------------
     // Text content — what to show per block type
     // -------------------------------------------------------------------------
+
+    /**
+     * The OP-annotation label for a device: one line per chosen param,
+     * {@code "param=value"} with an SI-formatted value, in the order the player
+     * arranged them (capped at {@link ClientOpData#MAX_SLOTS}). Params the
+     * device doesn't report are skipped.
+     */
+    private static List<String> annotationLines(ClientOpData.DeviceOp op) {
+        List<String> lines = new ArrayList<>();
+        for (String param : ClientOpData.chosenParams(op.typeKey)) {
+            Double v = op.params.get(param);
+            if (v == null) continue;
+            lines.add(param + "=" + ComponentEditScreen.formatValue(v));
+        }
+        return lines;
+    }
 
     private static List<String> getLines(ComponentBlockEntity be) {
         Block block = be.getBlockState().getBlock();

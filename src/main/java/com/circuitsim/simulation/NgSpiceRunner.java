@@ -39,6 +39,17 @@ public class NgSpiceRunner {
          */
         public Map<String, Double> extrasByName = new LinkedHashMap<>();
 
+        /**
+         * Per-device operating points harvested from the {@code show <class>}
+         * tables the .OP control block emits. Outer key = the ngspice device
+         * name exactly as {@code show} prints it, lowercased — a flat name for
+         * top-level devices ({@code "m1"}, {@code "r1"}) or a hierarchical path
+         * for subcircuit-wrapped ones ({@code "m.xm1.m1"} for an sky130 IC
+         * mosfet). Inner map = param name → value, in ngspice's listing order.
+         * Populated for .OP runs only; empty otherwise.
+         */
+        public Map<String, LinkedHashMap<String, Double>> deviceOps = new LinkedHashMap<>();
+
         /** .AC results — outer key = frequency (Hz), inner key = "v(N)_mag" / "i(vmK)_mag" */
         public Map<Double, Map<String, Double>> acData   = new LinkedHashMap<>();
 
@@ -327,6 +338,7 @@ public class NgSpiceRunner {
             parseDcOutput(output, result);
         } else {
             parseOpOutput(output, result);
+            parseShowTables(output, result);
         }
     }
 
@@ -426,6 +438,62 @@ public class NgSpiceRunner {
             if (Character.isWhitespace(keyOriginal.charAt(i))) return false;
         }
         return true;
+    }
+
+    // -------------------------------------------------------------------------
+    // `show <class>` device operating-point tables (.OP only)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Parses the column-major tables produced by {@code show <class>} commands
+     * (one per device family) that the .OP control block appends. Each table
+     * looks like:
+     *
+     * <pre>
+     *  Resistor: Simple linear resistor
+     *      device              r1            r2
+     *       model               R             R
+     *           i         0.000667       0.000333
+     *           p         0.000444       0.000222
+     * </pre>
+     *
+     * The {@code device} row names the columns (device instance names); every
+     * subsequent row is {@code param val1 val2 …} until a blank line or the
+     * next {@code device} header. Subcircuit-wrapped devices appear with their
+     * full hierarchical name ({@code m.xm1.m1}). Wide tables are wrapped by
+     * ngspice into several column groups, each re-emitting its own
+     * {@code device}/{@code model} header — keying by device name across groups
+     * stitches them back together. Non-numeric cells (e.g. {@code "-"} for an
+     * unset source spec) are skipped.
+     */
+    private static void parseShowTables(String output, Result result) {
+        String[] lines = output.split("\n");
+        List<String> cols = null;          // device names of the current column group
+        for (String raw : lines) {
+            String line = raw.trim();
+            if (line.isEmpty()) { cols = null; continue; }
+            String[] tok = line.split("\\s+");
+            if (tok[0].equals("device")) {
+                cols = new ArrayList<>(tok.length - 1);
+                for (int c = 1; c < tok.length; c++) {
+                    String name = tok[c].toLowerCase();
+                    cols.add(name);
+                    result.deviceOps.computeIfAbsent(name, k -> new LinkedHashMap<>());
+                }
+                continue;
+            }
+            if (cols == null) continue;     // banner / chatter before any header
+            if (tok[0].equals("model")) continue;   // model-name row is not numeric
+            String param = tok[0].toLowerCase();
+            for (int c = 0; c < cols.size() && c + 1 < tok.length; c++) {
+                try {
+                    double v = Double.parseDouble(tok[c + 1]);
+                    result.deviceOps.get(cols.get(c)).put(param, v);
+                } catch (NumberFormatException ignored) {
+                    // "-" or other non-numeric placeholder for this cell — skip.
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

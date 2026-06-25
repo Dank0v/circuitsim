@@ -64,5 +64,6 @@ public class ClientSetup {
     @SubscribeEvent
     public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(KeyBindings.TOGGLE_LABELS);
+        event.register(KeyBindings.ANNOTATE_OP);
     }
 }
