@@ -621,11 +621,20 @@ public class NetlistBuilder {
         String name = showName.toLowerCase();
         int dot = name.indexOf('.');
         if (dot >= 0) {
+            // Hierarchical name like "m.x1.m1": the leading letter is the device
+            // class, the first sub-instance segment ("x1") is the chip we placed.
+            // Vendor models wrap a main device alongside parasitics (a body
+            // diode "d.x1.d1", a gate resistor "r.x1.r1", …) — all share the
+            // "x1" segment, so we MUST also match the class letter, otherwise a
+            // discrete mosfet's operating point gets overwritten by its parasitic
+            // diode/resistor (which lack id/vgs/gm and render nothing).
+            char cls = name.charAt(0);
             String rest = name.substring(dot + 1);
             int dot2 = rest.indexOf('.');
             String inst = dot2 >= 0 ? rest.substring(0, dot2) : rest;
             for (DeviceRef r : refs) {
-                if (r.subckt() && r.spiceName().toLowerCase().equals(inst)) return r;
+                if (r.subckt() && r.showClass() == cls
+                        && r.spiceName().toLowerCase().equals(inst)) return r;
             }
             return null;
         }

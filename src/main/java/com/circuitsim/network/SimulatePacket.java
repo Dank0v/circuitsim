@@ -4,6 +4,7 @@ import com.circuitsim.block.*;
 import com.circuitsim.blockentity.ComponentBlockEntity;
 import com.circuitsim.screen.ComponentEditScreen;
 import com.circuitsim.simulation.CircuitExtractor;
+import com.circuitsim.simulation.CircuitLinter;
 import com.circuitsim.simulation.NetlistBuilder;
 import com.circuitsim.simulation.NgSpiceRunner;
 import com.circuitsim.simulation.ParametricResultCache;
@@ -338,6 +339,13 @@ public class SimulatePacket {
         // only rewrites component values), so capture them from the top-level
         // extraction before the worker thread starts.
         activeSubcktDefs = extraction.subcktDefs;
+
+        // Pre-sim lint: surface floating nodes / no-ground / no-DC-path issues
+        // as friendly warnings before ngspice produces a cryptic error. Advisory
+        // only — the simulation still runs.
+        for (String warning : CircuitLinter.lint(extraction)) {
+            msg(player, "Lint: " + warning, ChatFormatting.YELLOW);
+        }
 
         final MinecraftServer server = player.getServer();
         final String timestamp = LocalDateTime.now().format(
@@ -3357,9 +3365,14 @@ public class SimulatePacket {
         Map<String, LinkedHashMap<String, Double>> deviceOps
     ) {
         List<OperatingPointPacket.Entry> entries = new ArrayList<>();
+        java.util.Set<BlockPos> seen = new java.util.HashSet<>();
         for (Map.Entry<String, LinkedHashMap<String, Double>> e : deviceOps.entrySet()) {
             NetlistBuilder.DeviceRef ref = NetlistBuilder.matchShowDevice(e.getKey(), refs);
             if (ref == null) continue;
+            // A subcircuit can hold several devices of the same class (a main +
+            // a sense FET); keep the first that maps to each block so the stored
+            // operating point is deterministic.
+            if (!seen.add(ref.pos())) continue;
             entries.add(new OperatingPointPacket.Entry(
                 ref.pos(), ref.typeKey(), ref.label(), e.getValue()));
         }

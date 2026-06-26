@@ -1,3 +1,6 @@
 {
-    "parent": "circuitsim:block/amplifier_cell_0_0_5pin"
+    "parent": "minecraft:item/generated",
+    "textures": {
+        "layer0": "circuitsim:block/amplifier_top_5pin"
+    }
 }

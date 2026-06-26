@@ -1,3 +1,6 @@
 {
-    "parent": "circuitsim:block/subcircuit_cell_0_0_p0"
+    "parent": "minecraft:item/generated",
+    "textures": {
+        "layer0": "circuitsim:block/subcircuit_top_0"
+    }
 }

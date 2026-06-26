@@ -3,5 +3,3 @@ build/
 out/
 *.iml
 .idea/
-.claude/
-ngspice-manual.pdf

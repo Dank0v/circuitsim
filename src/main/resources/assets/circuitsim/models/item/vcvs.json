@@ -1,3 +1,6 @@
 {
-    "parent": "circuitsim:block/vcvs_cell_0_1"
+    "parent": "minecraft:item/generated",
+    "textures": {
+        "layer0": "circuitsim:block/vcvs_item"
+    }
 }
