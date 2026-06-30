@@ -51,6 +51,12 @@ public class SimulateEditScreen extends Screen {
     private String savedNoiseFstart = "1";
     private String savedNoiseFstop  = "1Meg";
     private String savedNoiseSum    = "";
+    // Per-analysis backing store for the shared param1/2/3 boxes. AC and TRAN
+    // are the only analyses that use these three fields, so each keeps its own
+    // copy; switching tabs stashes the outgoing analysis's values and restores
+    // the incoming one's (see loadActiveParams) instead of resetting to defaults.
+    private String savedAc1   = "10", savedAc2   = "1Meg", savedAc3   = "10";
+    private String savedTran1 = "1u", savedTran2 = "10m",  savedTran3 = "";
     // Set after the first init() so subsequent rebuilds preserve in-flight edits
     // instead of re-reading from the block entity.
     private boolean loadedFromBe = false;
@@ -185,11 +191,20 @@ public class SimulateEditScreen extends Screen {
                 savedNoiseFstart = cbe.getNoiseFstart();
                 savedNoiseFstop  = cbe.getNoiseFstop();
                 savedNoiseSum    = cbe.getNoisePtsSum();
+                savedAc1   = cbe.getSimAcParam1();
+                savedAc2   = cbe.getSimAcParam2();
+                savedAc3   = cbe.getSimAcParam3();
+                savedTran1 = cbe.getSimTranParam1();
+                savedTran2 = cbe.getSimTranParam2();
+                savedTran3 = cbe.getSimTranParam3();
             }
             // Migrate any saved world that still has the now-removed
             // dedicated TEMP analysis to plain OP — the temperature field
             // covers the same use case via a sweep spec like "0:90:30".
             if ("TEMP".equals(analysis)) analysis = "OP";
+            // Point the shared param widgets at the active analysis's saved set
+            // so AC/TRAN open showing their own values, not the legacy set.
+            loadActiveParams();
             loadedFromBe = true;
         }
 
@@ -374,23 +389,42 @@ public class SimulateEditScreen extends Screen {
 
     private void setAnalysis(String newAnalysis) {
         if (newAnalysis.equals(analysis)) return;
-        captureWidgetState();
+        captureWidgetState();   // stashes the outgoing analysis's params into its bucket
         analysis = newAnalysis;
-        switch (newAnalysis) {
-            case "AC" -> {
-                if (param1Field != null) param1Field.setValue("10");
-                if (param2Field != null) param2Field.setValue("1Meg");
-                if (param3Field != null) param3Field.setValue("10");
-                savedParam1 = "10"; savedParam2 = "1Meg"; savedParam3 = "10";
-            }
-            case "TRAN" -> {
-                if (param1Field != null) param1Field.setValue("1u");
-                if (param2Field != null) param2Field.setValue("10m");
-                if (param3Field != null) param3Field.setValue("");
-                savedParam1 = "1u"; savedParam2 = "10m"; savedParam3 = "";
-            }
-        }
+        loadActiveParams();     // restore the incoming analysis's saved params
         refreshFields();
+    }
+
+    /**
+     * Copies the shared param1/2/3 widget values into the bucket of whichever
+     * analysis is currently active. AC and TRAN are the only analyses that use
+     * these three fields; for the others this is a no-op.
+     */
+    private void stashActiveParams() {
+        if ("AC".equals(analysis)) {
+            savedAc1 = savedParam1; savedAc2 = savedParam2; savedAc3 = savedParam3;
+        } else if ("TRAN".equals(analysis)) {
+            savedTran1 = savedParam1; savedTran2 = savedParam2; savedTran3 = savedParam3;
+        }
+    }
+
+    /**
+     * Loads the active analysis's saved param set into the shared param1/2/3
+     * widgets (and savedParam1/2/3), so AC and TRAN each show their own
+     * remembered values rather than a shared/reset set. No-op for OP/DC/NOISE,
+     * whose param widgets stay hidden. Safe to call before the widgets exist.
+     */
+    private void loadActiveParams() {
+        if ("AC".equals(analysis)) {
+            savedParam1 = savedAc1; savedParam2 = savedAc2; savedParam3 = savedAc3;
+        } else if ("TRAN".equals(analysis)) {
+            savedParam1 = savedTran1; savedParam2 = savedTran2; savedParam3 = savedTran3;
+        } else {
+            return;
+        }
+        if (param1Field != null) param1Field.setValue(savedParam1);
+        if (param2Field != null) param2Field.setValue(savedParam2);
+        if (param3Field != null) param3Field.setValue(savedParam3);
     }
 
     /**
@@ -426,6 +460,7 @@ public class SimulateEditScreen extends Screen {
         if (param1Field != null) savedParam1 = param1Field.getValue();
         if (param2Field != null) savedParam2 = param2Field.getValue();
         if (param3Field != null) savedParam3 = param3Field.getValue();
+        stashActiveParams();   // mirror them into the active analysis's bucket
         if (tempField != null)   savedTemp   = tempField.getValue();
         if (pdkLibField != null) pdkLibPath  = pdkLibField.getValue();
         if (pdkLibPathsField != null) pdkLibPaths = pdkLibPathsField.getValue();
@@ -702,7 +737,8 @@ public class SimulateEditScreen extends Screen {
                 savedDc2D,
                 savedDcSrc2, savedDcStart2, savedDcStop2, savedDcStep2,
                 savedNoiseOut, savedNoiseRef, savedNoiseSrc, savedNoiseSweep,
-                savedNoisePts, savedNoiseFstart, savedNoiseFstop, savedNoiseSum)
+                savedNoisePts, savedNoiseFstart, savedNoiseFstop, savedNoiseSum,
+                savedAc1, savedAc2, savedAc3, savedTran1, savedTran2, savedTran3)
         );
     }
 

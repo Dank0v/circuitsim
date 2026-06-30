@@ -44,6 +44,11 @@ public class SimulatePacket {
     private final String rawParam1; // raw UI strings preserved for round-trip display
     private final String rawParam2;
     private final String rawParam3;
+    // Per-analysis raw param sets so each analysis tab keeps its own values.
+    // rawParam1/2/3 above is the active analysis's set (legacy round-trip);
+    // these carry AC and TRAN independently of which tab was active on submit.
+    private final String acParam1, acParam2, acParam3;
+    private final String tranParam1, tranParam2, tranParam3;
     /**
      * Either a single value ("27") which sets the circuit temperature for
      * one run, or a sweep spec ("20:40:5" / "20,30,40") which triggers a
@@ -135,7 +140,8 @@ public class SimulatePacket {
                 ngBehavior, rawParam1, rawParam2, rawParam3, simTemp,
                 dcSource1, dcStart1, dcStop1, dcStep1, dc2D,
                 dcSource2, dcStart2, dcStop2, dcStep2,
-                "", "", "", "dec", "20", "1", "1Meg", "");
+                "", "", "", "dec", "20", "1", "1Meg", "",
+                "10", "1Meg", "10", "1u", "10m", "");
     }
 
     public SimulatePacket(
@@ -168,7 +174,13 @@ public class SimulatePacket {
         String noisePts,
         String noiseFstart,
         String noiseFstop,
-        String noisePtsSum
+        String noisePtsSum,
+        String acParam1,
+        String acParam2,
+        String acParam3,
+        String tranParam1,
+        String tranParam2,
+        String tranParam3
     ) {
         this.pos = pos;
         this.analysis = analysis;
@@ -200,6 +212,12 @@ public class SimulatePacket {
         this.noiseFstart = noiseFstart == null ? "1"   : noiseFstart;
         this.noiseFstop  = noiseFstop  == null ? "1Meg" : noiseFstop;
         this.noisePtsSum = noisePtsSum == null ? ""    : noisePtsSum;
+        this.acParam1   = acParam1   == null ? "10"   : acParam1;
+        this.acParam2   = acParam2   == null ? "1Meg" : acParam2;
+        this.acParam3   = acParam3   == null ? "10"   : acParam3;
+        this.tranParam1 = tranParam1 == null ? "1u"   : tranParam1;
+        this.tranParam2 = tranParam2 == null ? "10m"  : tranParam2;
+        this.tranParam3 = tranParam3 == null ? ""     : tranParam3;
     }
 
     public SimulatePacket(FriendlyByteBuf buf) {
@@ -233,6 +251,12 @@ public class SimulatePacket {
         this.noiseFstart = buf.readUtf(32);
         this.noiseFstop  = buf.readUtf(32);
         this.noisePtsSum = buf.readUtf(16);
+        this.acParam1   = buf.readUtf(32);
+        this.acParam2   = buf.readUtf(32);
+        this.acParam3   = buf.readUtf(32);
+        this.tranParam1 = buf.readUtf(32);
+        this.tranParam2 = buf.readUtf(32);
+        this.tranParam3 = buf.readUtf(32);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -266,6 +290,12 @@ public class SimulatePacket {
         buf.writeUtf(noiseFstart, 32);
         buf.writeUtf(noiseFstop,  32);
         buf.writeUtf(noisePtsSum, 16);
+        buf.writeUtf(acParam1,   32);
+        buf.writeUtf(acParam2,   32);
+        buf.writeUtf(acParam3,   32);
+        buf.writeUtf(tranParam1, 32);
+        buf.writeUtf(tranParam2, 32);
+        buf.writeUtf(tranParam3, 32);
     }
 
     public static SimulatePacket decode(FriendlyByteBuf buf) {
@@ -308,6 +338,12 @@ public class SimulatePacket {
             simCbe.setNoiseFstart(noiseFstart);
             simCbe.setNoiseFstop(noiseFstop);
             simCbe.setNoisePtsSum(noisePtsSum);
+            simCbe.setSimAcParam1(acParam1);
+            simCbe.setSimAcParam2(acParam2);
+            simCbe.setSimAcParam3(acParam3);
+            simCbe.setSimTranParam1(tranParam1);
+            simCbe.setSimTranParam2(tranParam2);
+            simCbe.setSimTranParam3(tranParam3);
             simCbe.setChanged();
             simCbe.syncToClient();
         }

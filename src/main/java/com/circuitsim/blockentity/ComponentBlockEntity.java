@@ -74,6 +74,16 @@ public class ComponentBlockEntity extends BlockEntity {
     private String simParam1   = "10";
     private String simParam2   = "1Meg";
     private String simParam3   = "10";
+    // Per-analysis param sets for the simulate dialog. simParam1/2/3 above is
+    // the legacy single set (whatever analysis was active last); these remember
+    // AC and TRAN independently so switching tabs or reopening the dialog keeps
+    // each analysis's own values. OP/DC/NOISE don't use the param1/2/3 boxes.
+    private String simAcParam1   = "10";
+    private String simAcParam2   = "1Meg";
+    private String simAcParam3   = "10";
+    private String simTranParam1 = "1u";
+    private String simTranParam2 = "10m";
+    private String simTranParam3 = "";
     // .DC analysis config. dcSource1 is the SPICE source name to sweep
     // (e.g. "V1"); start/stop/step are parsed via parseSI at sim time.
     // dc2D enables an outer sweep on dcSource2.
@@ -225,6 +235,18 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setSimParam2(String v)       { this.simParam2 = v; setChanged(); }
     public String getSimParam3()             { return simParam3; }
     public void setSimParam3(String v)       { this.simParam3 = v; setChanged(); }
+    public String getSimAcParam1()           { return simAcParam1   == null ? "10"   : simAcParam1; }
+    public void setSimAcParam1(String v)     { this.simAcParam1   = v == null ? "10"   : v; setChanged(); }
+    public String getSimAcParam2()           { return simAcParam2   == null ? "1Meg" : simAcParam2; }
+    public void setSimAcParam2(String v)     { this.simAcParam2   = v == null ? "1Meg" : v; setChanged(); }
+    public String getSimAcParam3()           { return simAcParam3   == null ? "10"   : simAcParam3; }
+    public void setSimAcParam3(String v)     { this.simAcParam3   = v == null ? "10"   : v; setChanged(); }
+    public String getSimTranParam1()         { return simTranParam1 == null ? "1u"   : simTranParam1; }
+    public void setSimTranParam1(String v)   { this.simTranParam1 = v == null ? "1u"   : v; setChanged(); }
+    public String getSimTranParam2()         { return simTranParam2 == null ? "10m"  : simTranParam2; }
+    public void setSimTranParam2(String v)   { this.simTranParam2 = v == null ? "10m"  : v; setChanged(); }
+    public String getSimTranParam3()         { return simTranParam3 == null ? ""     : simTranParam3; }
+    public void setSimTranParam3(String v)   { this.simTranParam3 = v == null ? ""     : v; setChanged(); }
     public String  getDcSource1()             { return dcSource1 == null ? "" : dcSource1; }
     public void    setDcSource1(String v)     { this.dcSource1 = v == null ? "" : v; setChanged(); }
     public String  getDcStart1()              { return dcStart1 == null ? "0" : dcStart1; }
@@ -312,6 +334,12 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simParam1",   simParam1);
         tag.putString("simParam2",   simParam2);
         tag.putString("simParam3",   simParam3);
+        tag.putString("simAcParam1",   simAcParam1);
+        tag.putString("simAcParam2",   simAcParam2);
+        tag.putString("simAcParam3",   simAcParam3);
+        tag.putString("simTranParam1", simTranParam1);
+        tag.putString("simTranParam2", simTranParam2);
+        tag.putString("simTranParam3", simTranParam3);
         tag.putString("simTemp",     simTemp);
         tag.putString("commands",    commands);
         tag.putBoolean("offsetEnabled", offsetEnabled);
@@ -382,6 +410,21 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("simParam1"))   simParam1   = tag.getString("simParam1");
         if (tag.contains("simParam2"))   simParam2   = tag.getString("simParam2");
         if (tag.contains("simParam3"))   simParam3   = tag.getString("simParam3");
+        if (tag.contains("simAcParam1"))   simAcParam1   = tag.getString("simAcParam1");
+        if (tag.contains("simAcParam2"))   simAcParam2   = tag.getString("simAcParam2");
+        if (tag.contains("simAcParam3"))   simAcParam3   = tag.getString("simAcParam3");
+        if (tag.contains("simTranParam1")) simTranParam1 = tag.getString("simTranParam1");
+        if (tag.contains("simTranParam2")) simTranParam2 = tag.getString("simTranParam2");
+        if (tag.contains("simTranParam3")) simTranParam3 = tag.getString("simTranParam3");
+        // Legacy migration: pre-split saves stored one simParam set for whatever
+        // analysis was active. Seed the matching per-analysis bucket once (only
+        // when the new key is absent) so those values survive the upgrade.
+        if (!tag.contains("simAcParam1") && "AC".equals(simAnalysis)) {
+            simAcParam1 = simParam1; simAcParam2 = simParam2; simAcParam3 = simParam3;
+        }
+        if (!tag.contains("simTranParam1") && "TRAN".equals(simAnalysis)) {
+            simTranParam1 = simParam1; simTranParam2 = simParam2; simTranParam3 = simParam3;
+        }
         if (tag.contains("simTemp"))     simTemp     = tag.getString("simTemp");
         if (tag.contains("commands"))    commands    = tag.getString("commands");
         if (tag.contains("offsetEnabled")) offsetEnabled = tag.getBoolean("offsetEnabled");
@@ -456,6 +499,12 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simParam1",   simParam1);
         tag.putString("simParam2",   simParam2);
         tag.putString("simParam3",   simParam3);
+        tag.putString("simAcParam1",   simAcParam1);
+        tag.putString("simAcParam2",   simAcParam2);
+        tag.putString("simAcParam3",   simAcParam3);
+        tag.putString("simTranParam1", simTranParam1);
+        tag.putString("simTranParam2", simTranParam2);
+        tag.putString("simTranParam3", simTranParam3);
         tag.putString("simTemp",     simTemp);
         tag.putString("commands",    commands);
         tag.putBoolean("offsetEnabled", offsetEnabled);
