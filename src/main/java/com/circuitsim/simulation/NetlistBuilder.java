@@ -602,10 +602,51 @@ public class NetlistBuilder {
         return null;   // amplifier / user subcircuit chip — no single OP
     }
 
+    /** One user-subcircuit instance: its anchor block and the SPICE X-index assigned to it. */
+    public record SubInstanceRef(BlockPos pos, int xIndex) {}
+
+    /**
+     * Assigns each user {@link SubcircuitBlock} instance its SPICE X-index using
+     * the same family-8 ({@code X}) counter the netlist builders use, so the
+     * index lines up with the {@code x<idx>} segment ngspice prints for the
+     * subcircuit's internal devices (e.g. {@code m.x1.m1}). Discrete-mosfet / IC
+     * subckts also live in the X family, so they're counted here (but not
+     * emitted) to keep the numbering identical to the generated netlist.
+     */
+    public static List<SubInstanceRef> describeSubcircuitInstances(List<CircuitComponent> components) {
+        IndexAssigner xIdx = new IndexAssigner();
+        for (CircuitComponent comp : components) {
+            int n = comp.componentNumber;
+            if (n > 0 && rIndexFamily(comp) == 8) xIdx.claim(n);
+        }
+        List<SubInstanceRef> out = new ArrayList<>();
+        for (CircuitComponent comp : components) {
+            if (rIndexFamily(comp) != 8) continue;
+            int idx = xIdx.assign(comp.componentNumber);
+            if (comp.block instanceof SubcircuitBlock) out.add(new SubInstanceRef(comp.pos, idx));
+        }
+        return out;
+    }
+
     /** The distinct {@code show} class letters needed for {@code components}, in stable order. */
     private static List<Character> opShowClasses(List<CircuitComponent> components) {
         java.util.LinkedHashSet<Character> set = new java.util.LinkedHashSet<>();
         for (DeviceRef ref : describeDevices(components)) set.add(ref.showClass());
+        // When a subcircuit instance is present, its internal devices appear in
+        // the show tables as hierarchical names (e.g. "r.x1.r1") — but only for
+        // classes we actually `show`. We can't see the internal device classes
+        // from the top-level components, so widen to the full device-class set so
+        // every nested device's operating point is dumped (for the floating OP
+        // projection). Classes with no devices print a harmless "no matching
+        // instances" line.
+        for (CircuitComponent c : components) {
+            if (c.subcircuitNodes != null) {
+                for (char cls : new char[]{'r','c','l','v','i','d','m','q','b','e','f','g','h','s'}) {
+                    set.add(cls);
+                }
+                break;
+            }
+        }
         return new ArrayList<>(set);
     }
 

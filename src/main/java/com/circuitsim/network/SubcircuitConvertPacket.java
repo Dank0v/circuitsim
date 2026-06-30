@@ -129,12 +129,26 @@ public class SubcircuitConvertPacket {
         if (subName.isEmpty()) subName = "subckt1";
         String def = NetlistBuilder.buildSubcktDefinition(subName, pinNames, ex.components, ex.probes);
 
-        // 6. Blueprint + chip.
+        // 6. Internal device map for the OP projection. describeDevices assigns
+        //    the exact same SPICE names buildSubcktDefinition just used, so each
+        //    ref maps an internal device name to its block; we store it in the
+        //    blueprint's local frame so the client can float the device's OP at
+        //    the right cell of the mini-circuit.
+        BlockPos min = SubcircuitBlueprint.minCorner(positions);
+        List<SubcircuitChip.DeviceMapEntry> devMap = new ArrayList<>();
+        for (NetlistBuilder.DeviceRef ref : NetlistBuilder.describeDevices(ex.components)) {
+            BlockPos dp = ref.pos();
+            devMap.add(new SubcircuitChip.DeviceMapEntry(
+                    dp.getX() - min.getX(), dp.getY() - min.getY(), dp.getZ() - min.getZ(),
+                    ref.spiceName(), ref.showClass(), ref.typeKey(), ref.label()));
+        }
+
+        // 7. Blueprint + chip.
         CompoundTag blueprint = SubcircuitBlueprint.capture(level, positions);
         ItemStack chip = new ItemStack(ModItems.SUBCIRCUIT_CHIP.get());
-        SubcircuitChip.write(chip, subName, def, pinNames, blueprint);
+        SubcircuitChip.write(chip, subName, def, pinNames, blueprint, devMap);
 
-        // 7. Remove the schematic and the converter.
+        // 8. Remove the schematic and the converter.
         for (BlockPos p : positions) {
             if (!level.getBlockState(p).isAir()) {
                 level.setBlock(p, Blocks.AIR.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
@@ -142,7 +156,7 @@ public class SubcircuitConvertPacket {
         }
         level.setBlock(pos, Blocks.AIR.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
 
-        // 8. Hand the chip to the player.
+        // 9. Hand the chip to the player.
         if (!player.addItem(chip)) {
             player.drop(chip, false);
         }

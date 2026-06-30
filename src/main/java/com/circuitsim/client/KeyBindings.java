@@ -36,6 +36,14 @@ public class KeyBindings {
         "key.categories.circuitsim"
     );
 
+    public static final KeyMapping TOGGLE_SUBCKT_PROJECTION = new KeyMapping(
+        "key.circuitsim.toggle_subckt_projection",
+        KeyConflictContext.IN_GAME,
+        InputConstants.Type.KEYSYM,
+        GLFW.GLFW_KEY_J,
+        "key.categories.circuitsim"
+    );
+
     public static boolean labelsVisible = true;
 
     @SubscribeEvent
@@ -63,6 +71,39 @@ public class KeyBindings {
                     Component.literal("Run an .OP simulation first to annotate operating points."),
                     true
                 );
+            }
+        }
+
+        while (TOGGLE_SUBCKT_PROJECTION.consumeClick()) {
+            // Floats a shrunk 3D copy of each subcircuit's inner circuit (with
+            // its devices' operating points) above the block. Independent of the
+            // K device-annotation toggle.
+            if (mc.screen != null) continue;
+            if (ClientOpData.hasProjectionData()) {
+                boolean now = !ClientOpData.isProjectionActive();
+                ClientOpData.setProjectionActive(now);
+                if (mc.player != null) {
+                    mc.player.displayClientMessage(
+                        Component.literal("Subcircuit OP projection: " + (now ? "on" : "off")),
+                        true
+                    );
+                }
+            } else if (mc.player != null) {
+                // Distinguish "no .OP yet" from "ran .OP but the chip predates the
+                // device map" — the latter needs a re-convert, not another run.
+                if (ClientOpData.hasData()) {
+                    mc.player.displayClientMessage(
+                        Component.literal("No subcircuit projection data. If a chip was made"
+                            + " before this feature, rebuild it (right-click the chip on the"
+                            + " ground) and convert it again to embed the device map."),
+                        false
+                    );
+                } else {
+                    mc.player.displayClientMessage(
+                        Component.literal("Run an .OP simulation on a subcircuit first to project its devices."),
+                        true
+                    );
+                }
             }
         }
     }

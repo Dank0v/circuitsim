@@ -49,9 +49,13 @@ public final class ClientOpData {
     private static final class Frame {
         final String label;
         final Map<BlockPos, DeviceOp> data;
-        Frame(String label, Map<BlockPos, DeviceOp> data) {
+        /** Subcircuit-block pos → its internal devices' OPs, for the mini-projection. */
+        final Map<BlockPos, List<OperatingPointPacket.SubDevice>> projections;
+        Frame(String label, Map<BlockPos, DeviceOp> data,
+              Map<BlockPos, List<OperatingPointPacket.SubDevice>> projections) {
             this.label = label;
             this.data  = data;
+            this.projections = projections;
         }
     }
 
@@ -67,6 +71,8 @@ public final class ClientOpData {
     private static final Map<String, String[]> selection = new LinkedHashMap<>();
 
     private static boolean annotationActive = false;
+    /** Whether the floating subcircuit mini-circuit projection is showing. */
+    private static boolean projectionActive = false;
 
     // ------------------------------------------------------------------------
     // Ingest
@@ -84,13 +90,19 @@ public final class ClientOpData {
                 Map<BlockPos, DeviceOp> map = new LinkedHashMap<>();
                 for (OperatingPointPacket.Entry e : pf.entries) {
                     map.put(e.pos, new DeviceOp(e.typeKey, e.label, e.params));
-                    typeLabels.putIfAbsent(e.typeKey, e.label);
-                    List<String> av = available.computeIfAbsent(e.typeKey, k -> new ArrayList<>());
-                    for (String p : e.params.keySet()) {
-                        if (!av.contains(p)) av.add(p);
+                    registerType(e.typeKey, e.label, e.params);
+                }
+                // Subcircuit projections: register their internal devices' types
+                // too, so chosenParams() yields a default selection for device
+                // kinds that exist only inside a subcircuit.
+                Map<BlockPos, List<OperatingPointPacket.SubDevice>> proj = new LinkedHashMap<>();
+                for (OperatingPointPacket.SubProjection sp : pf.projections) {
+                    proj.put(sp.parentPos, sp.devices);
+                    for (OperatingPointPacket.SubDevice d : sp.devices) {
+                        registerType(d.typeKey, d.label, d.params);
                     }
                 }
-                frames.add(new Frame(pf.label, map));
+                frames.add(new Frame(pf.label, map, proj));
             }
 
             // Keep selections for types that survived; default any new type, and
@@ -103,11 +115,27 @@ public final class ClientOpData {
             // If the new run has no annotatable devices, drop out of annotate mode
             // so a stale toggle doesn't leave the world looking broken.
             if (!hasDataLocked()) annotationActive = false;
+            if (!hasProjectionDataLocked()) projectionActive = false;
+        }
+    }
+
+    /** Records a device type's label + the union of its param names (first-seen order). */
+    private static void registerType(String typeKey, String label,
+                                     Map<String, Double> params) {
+        typeLabels.putIfAbsent(typeKey, label);
+        List<String> av = available.computeIfAbsent(typeKey, k -> new ArrayList<>());
+        for (String p : params.keySet()) {
+            if (!av.contains(p)) av.add(p);
         }
     }
 
     private static boolean hasDataLocked() {
         for (Frame f : frames) if (!f.data.isEmpty()) return true;
+        return false;
+    }
+
+    private static boolean hasProjectionDataLocked() {
+        for (Frame f : frames) if (!f.projections.isEmpty()) return true;
         return false;
     }
 
@@ -124,6 +152,25 @@ public final class ClientOpData {
             if (currentFrame < 0 || currentFrame >= frames.size()) return null;
             return frames.get(currentFrame).data.get(pos);
         }
+    }
+
+    /**
+     * Internal-device OPs for the subcircuit block at {@code parentPos} in the
+     * current frame — what the mini-circuit projection floats over each device.
+     * Empty when this run produced no projection for that subcircuit.
+     */
+    public static List<OperatingPointPacket.SubDevice> subDevicesFor(BlockPos parentPos) {
+        synchronized (LOCK) {
+            if (currentFrame < 0 || currentFrame >= frames.size()) return List.of();
+            List<OperatingPointPacket.SubDevice> list =
+                    frames.get(currentFrame).projections.get(parentPos);
+            return list == null ? List.of() : list;
+        }
+    }
+
+    /** True if the latest run produced any subcircuit projection data. */
+    public static boolean hasProjectionData() {
+        synchronized (LOCK) { return hasProjectionDataLocked(); }
     }
 
     // ------------------------------------------------------------------------
@@ -161,6 +208,14 @@ public final class ClientOpData {
 
     public static void setAnnotationActive(boolean active) {
         synchronized (LOCK) { annotationActive = active; }
+    }
+
+    public static boolean isProjectionActive() {
+        synchronized (LOCK) { return projectionActive; }
+    }
+
+    public static void setProjectionActive(boolean active) {
+        synchronized (LOCK) { projectionActive = active; }
     }
 
     /** typeKeys present in the latest run, in first-seen order. */

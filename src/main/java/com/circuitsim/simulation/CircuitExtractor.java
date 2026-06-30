@@ -203,6 +203,10 @@ public class CircuitExtractor {
         // keyed by subckt name so multiple instances of the same subcircuit
         // embed the definition only once. Populated by the SubcircuitBlock branch.
         java.util.LinkedHashMap<String, String> subcktDefs = new java.util.LinkedHashMap<>();
+        // Per user-subcircuit anchor → its chip's internal device map, for the
+        // floating OP projection (empty for chips made before that was captured).
+        Map<BlockPos, List<com.circuitsim.subcircuit.SubcircuitChip.DeviceMapEntry>>
+                subcircuitDevices = new HashMap<>();
 
         for (BlockPos pos : visited) {
             Block block = level.getBlockState(pos).getBlock();
@@ -640,6 +644,9 @@ public class CircuitExtractor {
                 components.add(NetlistBuilder.CircuitComponent.subcircuit(
                         block, pos, pinNodes, sbe.getSubcktName(), 0));
                 subcktDefs.putIfAbsent(sbe.getSubcktName(), sbe.getSubcktDef());
+                List<com.circuitsim.subcircuit.SubcircuitChip.DeviceMapEntry> dm =
+                        com.circuitsim.subcircuit.SubcircuitChip.getDeviceMap(sbe.getChip());
+                if (!dm.isEmpty()) subcircuitDevices.put(pos, dm);
 
             } else if (block instanceof BaseComponentBlock) {
                 // GroundBlock is also a BaseComponentBlock but already
@@ -765,7 +772,8 @@ public class CircuitExtractor {
         }
 
         return new ExtractionResult(true, "", components, aliasedProbes, currentProbes, probeLabels, parametricBlocks, userCommands, userPlots,
-                new ArrayList<>(subcktDefs.values()));
+                new ArrayList<>(subcktDefs.values()))
+                .withSubcircuitDevices(subcircuitDevices);
     }
 
     /**
@@ -1008,6 +1016,22 @@ public class CircuitExtractor {
          * when no {@link com.circuitsim.block.SubcircuitBlock} carries a chip.
          */
         public final List<String>                            subcktDefs;
+        /**
+         * Per user-subcircuit-instance internal device map: anchor block pos →
+         * the chip's stored {@link com.circuitsim.subcircuit.SubcircuitChip.DeviceMapEntry}
+         * list. Powers the floating mini-circuit OP projection. Mutable + carried
+         * forward by {@link #withSubcircuitDevices} so the derived extractions
+         * built during parametric/DC sweeps keep it without a constructor change.
+         */
+        public Map<BlockPos, List<com.circuitsim.subcircuit.SubcircuitChip.DeviceMapEntry>>
+                subcircuitDevices = new java.util.HashMap<>();
+
+        /** Sets {@link #subcircuitDevices} and returns {@code this} for chaining. */
+        public ExtractionResult withSubcircuitDevices(
+                Map<BlockPos, List<com.circuitsim.subcircuit.SubcircuitChip.DeviceMapEntry>> m) {
+            this.subcircuitDevices = m == null ? new java.util.HashMap<>() : m;
+            return this;
+        }
 
         public ExtractionResult(boolean success, String errorMessage,
                                 List<NetlistBuilder.CircuitComponent> components,

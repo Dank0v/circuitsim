@@ -46,13 +46,25 @@ public final class SubcircuitBlueprint {
      * relative to the minimum (x, y, z) corner of the set, so restore places the
      * whole structure in the +X/+Y/+Z octant from the chosen origin.
      */
-    public static CompoundTag capture(Level level, Collection<BlockPos> positions) {
+    /**
+     * The minimum (x, y, z) corner of {@code positions} — the same origin
+     * {@link #capture} stores offsets against. Callers that need positions in
+     * the blueprint's local frame (e.g. the OP device map) subtract this so
+     * their offsets line up with {@link PreviewBlock#dx()} etc.
+     */
+    public static BlockPos minCorner(Collection<BlockPos> positions) {
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
         for (BlockPos p : positions) {
             minX = Math.min(minX, p.getX());
             minY = Math.min(minY, p.getY());
             minZ = Math.min(minZ, p.getZ());
         }
+        return new BlockPos(minX, minY, minZ);
+    }
+
+    public static CompoundTag capture(Level level, Collection<BlockPos> positions) {
+        BlockPos min = minCorner(positions);
+        int minX = min.getX(), minY = min.getY(), minZ = min.getZ();
 
         ListTag blocks = new ListTag();
         for (BlockPos p : positions) {

@@ -1258,7 +1258,8 @@ public class SimulatePacket {
         return new CircuitExtractor.ExtractionResult(
                 ex.success, ex.errorMessage, rewritten,
                 ex.probes, ex.currentProbes, ex.probeLabels,
-                ex.parametricBlocks, ex.userCommands, ex.userPlots);
+                ex.parametricBlocks, ex.userCommands, ex.userPlots)
+                .withSubcircuitDevices(ex.subcircuitDevices);
     }
 
     // -------------------------------------------------------------------------
@@ -1607,7 +1608,8 @@ public class SimulatePacket {
                 extraction.success, extraction.errorMessage,
                 rewritten, extraction.probes, extraction.currentProbes,
                 extraction.probeLabels, extraction.parametricBlocks,
-                extraction.userCommands, extraction.userPlots);
+                extraction.userCommands, extraction.userPlots)
+                .withSubcircuitDevices(extraction.subcircuitDevices);
         return new ApplyResult(substituted, sweep, sweepVals, paramDefs);
     }
 
@@ -1956,7 +1958,7 @@ public class SimulatePacket {
                     if (!step.deviceOps.isEmpty()) {
                         opFrames.add(opFrame(opRefs,
                                 varName + "=" + ComponentEditScreen.formatValue(sweepValues.get(i)) + varUnit,
-                                step.deviceOps));
+                                step.deviceOps, extraction));
                     }
                     String secHdr = "--- " + varName + "="
                             + ComponentEditScreen.formatValue(sweepValues.get(i)) + varUnit + " ---";
@@ -2184,7 +2186,7 @@ public class SimulatePacket {
                 if (result != null && !result.deviceOps.isEmpty()) {
                     String fl = ComponentEditScreen.formatValue(val) + varUnit
                             + (multiTemp ? " @" + ComponentEditScreen.formatValue(T) + "C" : "");
-                    opFrames.add(opFrame(opRefs, fl, result.deviceOps));
+                    opFrames.add(opFrame(opRefs, fl, result.deviceOps, extraction));
                 }
                 for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
                     Double v = result != null ? result.values.get("v(" + probe.netName + ")") : null;
@@ -2658,7 +2660,8 @@ public class SimulatePacket {
                     extraction.success, extraction.errorMessage,
                     swept, extraction.probes, extraction.currentProbes,
                     extraction.probeLabels, extraction.parametricBlocks,
-                    extraction.userCommands, extraction.userPlots);
+                    extraction.userCommands, extraction.userPlots)
+                    .withSubcircuitDevices(extraction.subcircuitDevices);
 
             String suffix = "@" + varName + "=" + ComponentEditScreen.formatValue(val) + varUnit;
             runDcInner(player, inner, effectiveProbes,
@@ -2780,7 +2783,7 @@ public class SimulatePacket {
             validSweep.add(T);
             if (!result.deviceOps.isEmpty()) {
                 opFrames.add(opFrame(opRefs,
-                        ComponentEditScreen.formatValue(T) + "C", result.deviceOps));
+                        ComponentEditScreen.formatValue(T) + "C", result.deviceOps, extraction));
             }
             for (NetlistBuilder.ProbeInfo probe : plotted(probes)) {
                 Double v = result.values.get("v(" + probe.netName + ")");
@@ -3385,7 +3388,7 @@ public class SimulatePacket {
             NetlistBuilder.describeDevices(extraction.components);
         List<OperatingPointPacket.Frame> frames = new ArrayList<>();
         if (!result.deviceOps.isEmpty()) {
-            frames.add(opFrame(refs, "operating point", result.deviceOps));
+            frames.add(opFrame(refs, "operating point", result.deviceOps, extraction));
         }
         sendOpFrames(player, frames);
     }
@@ -3398,7 +3401,8 @@ public class SimulatePacket {
     private static OperatingPointPacket.Frame opFrame(
         List<NetlistBuilder.DeviceRef> refs,
         String label,
-        Map<String, LinkedHashMap<String, Double>> deviceOps
+        Map<String, LinkedHashMap<String, Double>> deviceOps,
+        CircuitExtractor.ExtractionResult extraction
     ) {
         List<OperatingPointPacket.Entry> entries = new ArrayList<>();
         java.util.Set<BlockPos> seen = new java.util.HashSet<>();
@@ -3412,7 +3416,57 @@ public class SimulatePacket {
             entries.add(new OperatingPointPacket.Entry(
                 ref.pos(), ref.typeKey(), ref.label(), e.getValue()));
         }
-        return new OperatingPointPacket.Frame(label, entries);
+        return new OperatingPointPacket.Frame(
+                label, entries, buildSubProjections(extraction, deviceOps));
+    }
+
+    /**
+     * Builds the floating-projection data for every user subcircuit instance
+     * that carries a device map. For each internal device, the show-table row
+     * whose hierarchical name matches {@code <cls>.x<idx>.<spice>} supplies the
+     * operating point, attached at the device's blueprint-local position so the
+     * client can float it over the right cell of the mini-circuit.
+     */
+    private static List<OperatingPointPacket.SubProjection> buildSubProjections(
+            CircuitExtractor.ExtractionResult extraction,
+            Map<String, LinkedHashMap<String, Double>> deviceOps) {
+        List<OperatingPointPacket.SubProjection> out = new ArrayList<>();
+        if (extraction == null || extraction.subcircuitDevices.isEmpty() || deviceOps.isEmpty()) {
+            return out;
+        }
+        for (NetlistBuilder.SubInstanceRef inst :
+                NetlistBuilder.describeSubcircuitInstances(extraction.components)) {
+            List<com.circuitsim.subcircuit.SubcircuitChip.DeviceMapEntry> devMap =
+                    extraction.subcircuitDevices.get(inst.pos());
+            if (devMap == null || devMap.isEmpty()) continue;
+            List<OperatingPointPacket.SubDevice> devices = new ArrayList<>();
+            for (com.circuitsim.subcircuit.SubcircuitChip.DeviceMapEntry d : devMap) {
+                String prefix = (d.cls() + ".x" + inst.xIndex() + "." + d.spice())
+                        .toLowerCase(java.util.Locale.ROOT);
+                LinkedHashMap<String, Double> params = matchInternalOp(deviceOps, prefix);
+                if (params == null) continue;
+                devices.add(new OperatingPointPacket.SubDevice(
+                        d.dx(), d.dy(), d.dz(), d.typeKey(), d.label(), params));
+            }
+            if (!devices.isEmpty()) {
+                out.add(new OperatingPointPacket.SubProjection(inst.pos(), devices));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * First {@code show}-table row whose (lowercased) name equals {@code prefix}
+     * or starts with {@code prefix + "."}. The latter catches vendor-wrapped IC
+     * / discrete devices nested one level deeper (e.g. {@code m.x1.x2.m1}).
+     */
+    private static LinkedHashMap<String, Double> matchInternalOp(
+            Map<String, LinkedHashMap<String, Double>> deviceOps, String prefix) {
+        for (Map.Entry<String, LinkedHashMap<String, Double>> e : deviceOps.entrySet()) {
+            String k = e.getKey().toLowerCase(java.util.Locale.ROOT);
+            if (k.equals(prefix) || k.startsWith(prefix + ".")) return e.getValue();
+        }
+        return null;
     }
 
     /** Sends the assembled frames to {@code player}, hopping to the main thread. */
