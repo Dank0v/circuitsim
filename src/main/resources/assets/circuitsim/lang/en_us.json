@@ -68,6 +68,5 @@
     "chat.circuitsim.no_circuit": "No connected circuit found! Place component blocks and wires adjacent to the Simulate Block.",
     "key.categories.circuitsim": "CircuitSim",
     "key.circuitsim.toggle_labels": "Toggle Component Labels",
-    "key.circuitsim.annotate_op": "Annotate Operating Points",
-    "key.circuitsim.toggle_subckt_projection": "Toggle Subcircuit OP Projection"
+    "key.circuitsim.annotate_op": "Annotate Operating Points"
 }

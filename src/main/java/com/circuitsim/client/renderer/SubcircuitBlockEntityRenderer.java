@@ -61,9 +61,10 @@ public class SubcircuitBlockEntityRenderer
     @Override
     public void render(SubcircuitBlockEntity be, float partialTick, PoseStack poseStack,
                        MultiBufferSource buffer, int packedLight, int packedOverlay) {
-        // The floating mini-circuit OP projection is independent of the name-label
-        // toggle: it shows only while the J projection mode is active.
-        if (ClientOpData.isProjectionActive()) {
+        // The floating mini-circuit OP projection rides along with the K
+        // operating-point annotation: whenever annotation is active and this
+        // subcircuit has internal OP data, its devices are projected above it.
+        if (ClientOpData.isAnnotationActive()) {
             renderProjection(be, poseStack, buffer);
         }
 

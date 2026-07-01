@@ -71,8 +71,6 @@ public final class ClientOpData {
     private static final Map<String, String[]> selection = new LinkedHashMap<>();
 
     private static boolean annotationActive = false;
-    /** Whether the floating subcircuit mini-circuit projection is showing. */
-    private static boolean projectionActive = false;
 
     // ------------------------------------------------------------------------
     // Ingest
@@ -115,7 +113,6 @@ public final class ClientOpData {
             // If the new run has no annotatable devices, drop out of annotate mode
             // so a stale toggle doesn't leave the world looking broken.
             if (!hasDataLocked()) annotationActive = false;
-            if (!hasProjectionDataLocked()) projectionActive = false;
         }
     }
 
@@ -131,11 +128,6 @@ public final class ClientOpData {
 
     private static boolean hasDataLocked() {
         for (Frame f : frames) if (!f.data.isEmpty()) return true;
-        return false;
-    }
-
-    private static boolean hasProjectionDataLocked() {
-        for (Frame f : frames) if (!f.projections.isEmpty()) return true;
         return false;
     }
 
@@ -166,11 +158,6 @@ public final class ClientOpData {
                     frames.get(currentFrame).projections.get(parentPos);
             return list == null ? List.of() : list;
         }
-    }
-
-    /** True if the latest run produced any subcircuit projection data. */
-    public static boolean hasProjectionData() {
-        synchronized (LOCK) { return hasProjectionDataLocked(); }
     }
 
     // ------------------------------------------------------------------------
@@ -208,14 +195,6 @@ public final class ClientOpData {
 
     public static void setAnnotationActive(boolean active) {
         synchronized (LOCK) { annotationActive = active; }
-    }
-
-    public static boolean isProjectionActive() {
-        synchronized (LOCK) { return projectionActive; }
-    }
-
-    public static void setProjectionActive(boolean active) {
-        synchronized (LOCK) { projectionActive = active; }
     }
 
     /** typeKeys present in the latest run, in first-seen order. */
