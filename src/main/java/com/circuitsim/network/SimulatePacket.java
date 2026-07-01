@@ -14,18 +14,12 @@ import java.util.*;
 import java.util.stream.Collectors;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.ListTag;
-import net.minecraft.nbt.StringTag;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraftforge.network.NetworkEvent;
@@ -410,7 +404,6 @@ public class SimulatePacket {
     ) {
         try {
             List<String> bookLines = new ArrayList<>();
-            List<Component> graphPageComponents = new ArrayList<>();
 
             bookLines.add("CircuitSim Results (" + analysis + ")");
             bookLines.add(timestamp);
@@ -463,8 +456,7 @@ public class SimulatePacket {
                         sweepParam,
                         sweepValues,
                         tempC,
-                        bookLines,
-                        graphPageComponents
+                        bookLines
                     );
                 } else {
                     runParametricSweep(
@@ -473,8 +465,7 @@ public class SimulatePacket {
                         sweepParam,
                         sweepValues,
                         tempValues,
-                        bookLines,
-                        graphPageComponents
+                        bookLines
                     );
                 }
             } else if ("NOISE".equals(analysis)) {
@@ -485,19 +476,19 @@ public class SimulatePacket {
                             + ComponentEditScreen.formatValue(tempC) + "C.",
                         ChatFormatting.YELLOW);
                 }
-                runNoiseSimulation(player, extraction, bookLines, graphPageComponents, tempC);
+                runNoiseSimulation(player, extraction, bookLines, tempC);
             } else if ("DC".equals(analysis)) {
                 double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
-                runDcSimulation(player, extraction, bookLines, graphPageComponents, tempC);
+                runDcSimulation(player, extraction, bookLines, tempC);
             } else if (tempValues.size() > 1 && "OP".equals(analysis)) {
                 // OP + multi-temp produces a 1D probe-vs-temperature plot.
-                runTempSweep(player, extraction, tempValues, bookLines, graphPageComponents);
+                runTempSweep(player, extraction, tempValues, bookLines);
             } else if (tempValues.size() > 1) {
                 // AC / TRAN with multi-temp: overlay one curve per temperature.
                 switch (analysis) {
-                    case "AC"   -> runMultiTempAcSweep(player, extraction, tempValues, bookLines, graphPageComponents);
-                    case "TRAN" -> runMultiTempTranSweep(player, extraction, tempValues, bookLines, graphPageComponents);
-                    default     -> runTempSweep(player, extraction, tempValues, bookLines, graphPageComponents);
+                    case "AC"   -> runMultiTempAcSweep(player, extraction, tempValues, bookLines);
+                    case "TRAN" -> runMultiTempTranSweep(player, extraction, tempValues, bookLines);
+                    default     -> runTempSweep(player, extraction, tempValues, bookLines);
                 }
             } else {
                 double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
@@ -506,43 +497,20 @@ public class SimulatePacket {
                         player,
                         extraction,
                         bookLines,
-                        graphPageComponents,
                         tempC
                     );
                     case "TRAN" -> runTranSimulation(
                         player,
                         extraction,
                         bookLines,
-                        graphPageComponents,
                         tempC
                     );
                     default -> runOpSimulation(player, extraction, bookLines, tempC);
                 }
             }
 
-            // Inventory mutation must occur on the main server thread.
-            // Auto-opening the output viewer is no longer done here — every
-            // sim path emits its own clickable "[Open output viewer]" chat
-            // link via emitOutputViewerLink so the player decides when to
-            // open the screen.
-            if (server != null) {
-                server.execute(() -> {
-                    try {
-                        giveResultBook(
-                            player,
-                            analysis + " " + timestamp,
-                            bookLines,
-                            graphPageComponents
-                        );
-                    } catch (Throwable t) {
-                        com.circuitsim.CircuitSimMod.LOGGER.error(
-                                "giveResultBook failed", t);
-                        msg(player, "Result book failed: " + t.getClass().getSimpleName()
-                                + " — " + (t.getMessage() == null ? "" : t.getMessage()),
-                                ChatFormatting.RED);
-                    }
-                });
-            }
+            // Results are delivered via chat (values + clickable graph / output
+            // viewer links); no physical result book is produced.
         } catch (Throwable t) {
             String detail = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
             msg(player, "Simulation crashed: " + detail, ChatFormatting.RED);
@@ -642,7 +610,6 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<String> bookLines,
-        List<Component> graphPageComponents,
         double tempC
     ) {
         List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(
@@ -800,8 +767,7 @@ public class SimulatePacket {
             sessionId,
             voltageData,
             currentData,
-            probeUnits,
-            graphPageComponents
+            probeUnits
         );
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (AC)");
@@ -827,7 +793,6 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<String> bookLines,
-        List<Component> graphPageComponents,
         double tempC
     ) {
         // ── validate the dialog fields ───────────────────────────────────────
@@ -980,7 +945,7 @@ public class SimulatePacket {
                 voltData, currData, probeUnits,
                 true,   // log X
                 true)); // log Y by default — noise spectra read log-log
-        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits);
         emitOutputViewerLink(player, sessionId, bookLines, "CircuitSim Output (NOISE)");
     }
 
@@ -997,7 +962,6 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<String> bookLines,
-        List<Component> graphPageComponents,
         double tempC
     ) {
         // Parse range fields. ParametricEditScreen parser would also work but
@@ -1055,7 +1019,7 @@ public class SimulatePacket {
                     dcSource1.trim(), start1, stop1, step1,
                     "", tempC, bookLines, acc);
             finishDcSession(player, acc, dcSource1.trim(),
-                    bookLines, graphPageComponents);
+                    bookLines);
             return;
         }
 
@@ -1088,7 +1052,7 @@ public class SimulatePacket {
                     suffix, tempC, bookLines, acc);
         }
         finishDcSession(player, acc, dcSource1.trim(),
-                bookLines, graphPageComponents);
+                bookLines);
     }
 
     /** Accumulator for a multi-iteration DC sweep so all curves share one session. */
@@ -1104,8 +1068,7 @@ public class SimulatePacket {
         ServerPlayer player,
         DcAccum acc,
         String src,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         if (acc.sweepAxis == null || acc.sweepAxis.isEmpty()) return;
         String xUnit = src.length() > 0
@@ -1117,7 +1080,7 @@ public class SimulatePacket {
                         acc.sweepAxis, acc.voltData, acc.currData,
                         acc.probeUnits, false));
         emitGraphLinks(player, sessionId, acc.voltData, acc.currData,
-                acc.probeUnits, graphPageComponents);
+                acc.probeUnits);
         emitOutputViewerLink(player, sessionId, bookLines, "CircuitSim Output (DC)");
     }
 
@@ -1270,7 +1233,6 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<String> bookLines,
-        List<Component> graphPageComponents,
         double tempC
     ) {
         List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(
@@ -1402,10 +1364,9 @@ public class SimulatePacket {
             sessionId,
             voltageData,
             currentData,
-            probeUnits,
-            graphPageComponents
+            probeUnits
         );
-        if (fftSessionId >= 0) emitFftLink(player, fftSessionId, graphPageComponents);
+        if (fftSessionId >= 0) emitFftLink(player, fftSessionId);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (TRAN)");
     }
@@ -1449,16 +1410,13 @@ public class SimulatePacket {
     }
 
     /** Clickable chat + book link opening the companion FFT spectrum session. */
-    private void emitFftLink(ServerPlayer player, int fftSessionId,
-                             List<Component> graphPageComponents) {
+    private void emitFftLink(ServerPlayer player, int fftSessionId) {
         String cmd = "/circuitsim graph " + fftSessionId + " 0";
         Style style = Style.EMPTY.withColor(ChatFormatting.DARK_AQUA)
                 .withUnderlined(true)
                 .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd));
         sendChatComponent(player,
             Component.literal("[Open FFT spectrum]").withStyle(style));
-        graphPageComponents.add(
-            Component.literal("Open FFT spectrum\n").withStyle(style));
     }
 
     // -------------------------------------------------------------------------
@@ -1619,8 +1577,7 @@ public class SimulatePacket {
         CircuitExtractor.ParametricInfo param,
         List<Double> sweepValues,
         List<Double> tempValues,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         String varName = param.varName;
 
@@ -1659,8 +1616,7 @@ public class SimulatePacket {
                 tempValues,
                 effectiveProbes,
                 cpList,
-                bookLines,
-                graphPageComponents
+                bookLines
             );
             case "TRAN" -> runParametricTranSweep(
                 player,
@@ -1671,8 +1627,7 @@ public class SimulatePacket {
                 tempValues,
                 effectiveProbes,
                 cpList,
-                bookLines,
-                graphPageComponents
+                bookLines
             );
             case "DC" -> runParametricDcSweep(
                 player,
@@ -1682,8 +1637,7 @@ public class SimulatePacket {
                 sweepValues,
                 tempValues,
                 effectiveProbes,
-                bookLines,
-                graphPageComponents
+                bookLines
             );
             default -> runParametricOpSweep(
                 player,
@@ -1694,8 +1648,7 @@ public class SimulatePacket {
                 tempValues,
                 effectiveProbes,
                 cpList,
-                bookLines,
-                graphPageComponents
+                bookLines
             );
         }
     }
@@ -1769,8 +1722,7 @@ public class SimulatePacket {
         CircuitExtractor.ParametricInfo param,
         List<Double> sweepValues,
         double tempC,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         String varName = param.varName;
         String varUnit = unitForVariable(extraction.components, varName);
@@ -1876,7 +1828,7 @@ public class SimulatePacket {
                 }
                 if (freqAxis == null) return;
                 storeAndLink(player, "Frequency", "Hz", freqAxis, true, -1,
-                        voltData, currData, probeUnits, bookLines, graphPageComponents);
+                        voltData, currData, probeUnits, bookLines);
             }
             case "TRAN" -> {
                 List<Double> timeAxis = null;
@@ -1914,8 +1866,8 @@ public class SimulatePacket {
                             true, true));
                 }
                 storeAndLink(player, "Time", "s", timeAxis, false, fftSession,
-                        voltData, currData, probeUnits, bookLines, graphPageComponents);
-                if (fftSession >= 0) emitFftLink(player, fftSession, graphPageComponents);
+                        voltData, currData, probeUnits, bookLines);
+                if (fftSession >= 0) emitFftLink(player, fftSession);
             }
             case "DC" -> {
                 List<Double> dcAxis = null;
@@ -1934,7 +1886,7 @@ public class SimulatePacket {
                 if (dcAxis == null) return;
                 String xUnit = Character.toUpperCase(dcSrc.charAt(0)) == 'I' ? "A" : "V";
                 storeAndLink(player, dcSrc, xUnit, dcAxis, false, -1,
-                        voltData, currData, probeUnits, bookLines, graphPageComponents);
+                        voltData, currData, probeUnits, bookLines);
             }
             default -> {   // OP: one scalar set per step → probe-vs-param plot
                 List<Double> validSweep = new ArrayList<>();
@@ -1987,7 +1939,7 @@ public class SimulatePacket {
                 sendOpFrames(player, opFrames);
                 if (validSweep.isEmpty()) return;
                 storeAndLink(player, varName, varUnit, validSweep, false, -1,
-                        voltData, currData, probeUnits, bookLines, graphPageComponents);
+                        voltData, currData, probeUnits, bookLines);
             }
         }
     }
@@ -2062,8 +2014,7 @@ public class SimulatePacket {
         Map<String, List<Double>> voltData,
         Map<String, List<Double>> currData,
         Map<String, String> probeUnits,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         msg(player, "Param sweep complete. " + (voltData.size() + currData.size())
                 + " series.", ChatFormatting.GREEN);
@@ -2071,7 +2022,7 @@ public class SimulatePacket {
                 xName, xUnit, axis, voltData, currData, probeUnits, logX);
         rs.fftSessionId = fftSessionId;
         int sessionId = ParametricResultCache.store(rs);
-        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (param sweep " + analysis + ")");
     }
@@ -2087,8 +2038,7 @@ public class SimulatePacket {
         List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         boolean multiTemp = tempValues.size() > 1;
         List<Double> validSweep = new ArrayList<>();
@@ -2273,8 +2223,7 @@ public class SimulatePacket {
             sessionId,
             voltData,
             currData,
-            probeUnits,
-            graphPageComponents
+            probeUnits
         );
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (parametric " + analysis + ")");
@@ -2291,8 +2240,7 @@ public class SimulatePacket {
         List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         boolean multiTemp = tempValues.size() > 1;
         List<Double> freqAxis = null;
@@ -2428,8 +2376,7 @@ public class SimulatePacket {
             sessionId,
             voltData,
             currData,
-            probeUnits,
-            graphPageComponents
+            probeUnits
         );
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (parametric " + analysis + ")");
@@ -2446,8 +2393,7 @@ public class SimulatePacket {
         List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
         List<NetlistBuilder.CurrentProbeInfo> cpList,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         boolean multiTemp = tempValues.size() > 1;
         double tstep = fStart;
@@ -2599,10 +2545,9 @@ public class SimulatePacket {
             sessionId,
             voltData,
             currData,
-            probeUnits,
-            graphPageComponents
+            probeUnits
         );
-        if (fftSession >= 0) emitFftLink(player, fftSession, graphPageComponents);
+        if (fftSession >= 0) emitFftLink(player, fftSession);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (parametric " + analysis + ")");
     }
@@ -2621,8 +2566,7 @@ public class SimulatePacket {
         List<Double> sweepValues,
         List<Double> tempValues,
         List<NetlistBuilder.ProbeInfo> effectiveProbes,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         if (dc2D) {
             msg(player,
@@ -2668,7 +2612,7 @@ public class SimulatePacket {
                     dcSource1.trim(), start1, stop1, step1,
                     suffix, tempC, bookLines, acc);
         }
-        finishDcSession(player, acc, dcSource1.trim(), bookLines, graphPageComponents);
+        finishDcSession(player, acc, dcSource1.trim(), bookLines);
     }
 
     // -------------------------------------------------------------------------
@@ -2681,8 +2625,7 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<Double> sweepTemps,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         if (sweepTemps.isEmpty()) {
             msg(player, "No temperatures to sweep.", ChatFormatting.RED);
@@ -2854,7 +2797,7 @@ public class SimulatePacket {
                 false
             )
         );
-        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (Temp Sweep)");
     }
@@ -2868,8 +2811,7 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<Double> tempValues,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
         List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
@@ -2969,7 +2911,7 @@ public class SimulatePacket {
                 voltData, currData, probeUnits, true
             )
         );
-        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (AC + Temp Sweep)");
     }
@@ -2982,8 +2924,7 @@ public class SimulatePacket {
         ServerPlayer player,
         CircuitExtractor.ExtractionResult extraction,
         List<Double> tempValues,
-        List<String> bookLines,
-        List<Component> graphPageComponents
+        List<String> bookLines
     ) {
         List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
         List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
@@ -3102,8 +3043,8 @@ public class SimulatePacket {
                 "Time", "s", timeAxis, voltData, currData, probeUnits, false);
         tranRs.fftSessionId = fftSession;
         int sessionId = ParametricResultCache.store(tranRs);
-        emitGraphLinks(player, sessionId, voltData, currData, probeUnits, graphPageComponents);
-        if (fftSession >= 0) emitFftLink(player, fftSession, graphPageComponents);
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits);
+        if (fftSession >= 0) emitFftLink(player, fftSession);
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (TRAN + Temp Sweep)");
     }
@@ -3187,17 +3128,13 @@ public class SimulatePacket {
         int sessionId,
         Map<String, List<Double>> voltData,
         Map<String, List<Double>> currData,
-        Map<String, String> probeUnits,
-        List<Component> graphPageComponents
+        Map<String, String> probeUnits
     ) {
         List<String> allNames = new ArrayList<>();
         allNames.addAll(voltData.keySet());
         allNames.addAll(currData.keySet());
 
         msg(player, "--- Graphs - click to open ---", ChatFormatting.DARK_AQUA);
-        graphPageComponents.add(
-            Component.literal("-- Graphs --\n").withStyle(ChatFormatting.GOLD)
-        );
 
         for (int idx = 0; idx < allNames.size(); idx++) {
             String name = allNames.get(idx);
@@ -3225,78 +3162,7 @@ public class SimulatePacket {
                         )
                 )
             );
-
-            graphPageComponents.add(
-                Component.literal(
-                    "Plot " + name + unitTag + "\n"
-                ).withStyle(
-                    Style.EMPTY.withColor(
-                        isVolt
-                            ? ChatFormatting.AQUA
-                            : ChatFormatting.LIGHT_PURPLE
-                    )
-                        .withUnderlined(true)
-                        .withClickEvent(
-                            new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd)
-                        )
-                )
-            );
         }
-    }
-
-    private static final int LINES_PER_PAGE = 13;
-    private static final int MAX_PAGES = 100;
-
-    private static void giveResultBook(
-        ServerPlayer player,
-        String title,
-        List<String> lines,
-        List<Component> graphPageComponents
-    ) {
-        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
-        CompoundTag tag = book.getOrCreateTag();
-        tag.putString("title", title);
-        tag.putString("author", "CircuitSim");
-        tag.putByte("resolved", (byte) 1);
-
-        ListTag pages = new ListTag();
-        List<String> pageBuf = new ArrayList<>();
-
-        for (String line : lines) {
-            pageBuf.add(line);
-            if (pageBuf.size() >= LINES_PER_PAGE) {
-                pages.add(plainPage(pageBuf));
-                pageBuf.clear();
-                if (pages.size() >= MAX_PAGES) break;
-            }
-        }
-        if (!pageBuf.isEmpty() && pages.size() < MAX_PAGES) pages.add(
-            plainPage(pageBuf)
-        );
-
-        if (!graphPageComponents.isEmpty() && pages.size() < MAX_PAGES) {
-            MutableComponent root = Component.empty();
-            for (Component c : graphPageComponents) root.append(c);
-            pages.add(StringTag.valueOf(Component.Serializer.toJson(root)));
-        }
-
-        if (pages.isEmpty()) pages.add(plainPage(List.of("No results.")));
-        tag.put("pages", pages);
-
-        if (!player.getInventory().add(book)) player.drop(book, false);
-        msg(
-            player,
-            "Results saved to a book in your inventory.",
-            ChatFormatting.GRAY
-        );
-    }
-
-    private static StringTag plainPage(List<String> lines) {
-        return StringTag.valueOf(
-            Component.Serializer.toJson(
-                Component.literal(String.join("\n", lines))
-            )
-        );
     }
 
     /**
