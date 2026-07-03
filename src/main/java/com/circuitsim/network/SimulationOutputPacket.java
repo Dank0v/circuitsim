@@ -1,7 +1,9 @@
 package com.circuitsim.network;
 
+import com.circuitsim.screen.SimulateEditScreen;
 import com.circuitsim.screen.SimulationOutputScreen;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.FriendlyByteBuf;
 
 import java.util.ArrayList;
@@ -43,6 +45,9 @@ public class SimulationOutputPacket {
     public void handle() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        mc.setScreen(new SimulationOutputScreen(title, lines));
+        // The netlist view opens on top of the still-open simulate dialog;
+        // hand it over as the parent so closing the viewer returns there.
+        Screen parent = mc.screen instanceof SimulateEditScreen ? mc.screen : null;
+        mc.setScreen(new SimulationOutputScreen(title, lines, parent));
     }
 }

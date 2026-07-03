@@ -494,6 +494,62 @@ public class NgSpiceRunner {
                 }
             }
         }
+        injectDerivedMosParams(result);
+    }
+
+    /**
+     * Appends analog-design figures of merit to every mosfet's operating point,
+     * computed from the raw {@code show m} params:
+     *
+     * <ul>
+     *   <li>{@code gm/id}  — transconductance efficiency (1/V)</li>
+     *   <li>{@code gm/gds} — intrinsic gain</li>
+     *   <li>{@code ft}     — transit frequency, gm / (2π·cgg) (Hz)</li>
+     * </ul>
+     *
+     * Mosfets are recognised by their show-class letter — the device name (flat
+     * {@code m1} or hierarchical {@code m.xm1.…}) always starts with {@code m},
+     * which no other family uses. BSIM models report {@code cgg} directly;
+     * Meyer-cap models (MOS levels 1–3) don't, so the gate capacitance falls
+     * back to {@code cgs + cgd + cgb}. Values are stored as magnitudes (PMOS
+     * {@code id} is negative), inserted right after {@code gm} so they sit next
+     * to their source params in the picker grid rather than behind ~85 raw
+     * BSIM4 params. A ratio whose denominator is 0 or missing (e.g. an
+     * uncharged Meyer cap) is simply not emitted.
+     */
+    private static void injectDerivedMosParams(Result result) {
+        for (Map.Entry<String, LinkedHashMap<String, Double>> dev : result.deviceOps.entrySet()) {
+            if (!dev.getKey().startsWith("m")) continue;
+            LinkedHashMap<String, Double> p = dev.getValue();
+            Double gm = p.get("gm");
+            if (gm == null) continue;
+
+            LinkedHashMap<String, Double> derived = new LinkedHashMap<>();
+            putRatio(derived, "gm/id",  gm, p.get("id"));
+            putRatio(derived, "gm/gds", gm, p.get("gds"));
+
+            Double cgg = p.get("cgg");
+            if (cgg == null && (p.containsKey("cgs") || p.containsKey("cgd") || p.containsKey("cgb"))) {
+                cgg = p.getOrDefault("cgs", 0.0) + p.getOrDefault("cgd", 0.0)
+                        + p.getOrDefault("cgb", 0.0);
+            }
+            putRatio(derived, "ft", gm / (2 * Math.PI), cgg);
+            if (derived.isEmpty()) continue;
+
+            LinkedHashMap<String, Double> rebuilt = new LinkedHashMap<>(p.size() + derived.size());
+            for (Map.Entry<String, Double> e : p.entrySet()) {
+                rebuilt.put(e.getKey(), e.getValue());
+                if (e.getKey().equals("gm")) rebuilt.putAll(derived);
+            }
+            dev.setValue(rebuilt);
+        }
+    }
+
+    /** Stores {@code |num/den|} under {@code name}, if the ratio is computable. */
+    private static void putRatio(Map<String, Double> out, String name, double num, Double den) {
+        if (den == null || den == 0) return;
+        double v = Math.abs(num / den);
+        if (Double.isFinite(v)) out.put(name, v);
     }
 
     // -------------------------------------------------------------------------

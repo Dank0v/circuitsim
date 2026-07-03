@@ -26,6 +26,8 @@ public class SimulationOutputScreen extends Screen {
 
     private final String       headerTitle;
     private final List<String> sourceLines;
+    /** Screen restored when this viewer closes; null returns to the game. */
+    private final Screen       parent;
 
     private static final int PANEL_W = 520;
     private static final int PANEL_H = 340;
@@ -54,9 +56,19 @@ public class SimulationOutputScreen extends Screen {
     private final List<Integer> matchSourceLines = new ArrayList<>();
 
     public SimulationOutputScreen(String title, List<String> lines) {
+        this(title, lines, null);
+    }
+
+    public SimulationOutputScreen(String title, List<String> lines, Screen parent) {
         super(Component.literal("Simulation Output"));
         this.headerTitle = title == null || title.isEmpty() ? "Simulation Output" : title;
         this.sourceLines = lines == null ? Collections.emptyList() : lines;
+        this.parent = parent;
+    }
+
+    @Override
+    public void onClose() {
+        this.minecraft.setScreen(parent);
     }
 
     @Override

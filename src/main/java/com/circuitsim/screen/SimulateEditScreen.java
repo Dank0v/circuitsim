@@ -278,15 +278,23 @@ public class SimulateEditScreen extends Screen {
 
         addRenderableWidget(
             Button.builder(Component.literal("Simulate"), b -> {
-                sendPacket();
+                sendPacket(false);
                 onClose();
             })
-                .bounds(px + 20, py + H - 28, 110, 20)
+                .bounds(px + 14, py + H - 28, 80, 20)
+                .build()
+        );
+        // Builds the deck server-side and opens it in the output viewer — no
+        // ngspice run. This dialog stays open and regains focus when the
+        // viewer closes.
+        addRenderableWidget(
+            Button.builder(Component.literal("View Netlist"), b -> sendPacket(true))
+                .bounds(px + 102, py + H - 28, 86, 20)
                 .build()
         );
         addRenderableWidget(
             Button.builder(Component.literal("Cancel"), b -> onClose())
-                .bounds(px + 160, py + H - 28, 110, 20)
+                .bounds(px + 196, py + H - 28, 80, 20)
                 .build()
         );
     }
@@ -689,7 +697,7 @@ public class SimulateEditScreen extends Screen {
         g.fill(x + w - 2, y, x + w, y + h, BORDER);
     }
 
-    private void sendPacket() {
+    private void sendPacket(boolean netlistOnly) {
         double p1 = 0.0,
             p2 = 0.0;
         int p3 = 10;
@@ -735,7 +743,7 @@ public class SimulateEditScreen extends Screen {
         String raw1 = param1Field != null ? param1Field.getValue().trim() : savedParam1;
         String raw2 = param2Field != null ? param2Field.getValue().trim() : savedParam2;
         String raw3 = param3Field != null ? param3Field.getValue().trim() : savedParam3;
-        ModMessages.sendToServer(
+        SimulatePacket pkt =
             new SimulatePacket(pos, analysis, p1, p2, p3, pdkName, pdkLibPath, pdkLibPaths,
                 ngBehavior,
                 raw1, raw2, raw3,
@@ -745,8 +753,9 @@ public class SimulateEditScreen extends Screen {
                 savedDcSrc2, savedDcStart2, savedDcStop2, savedDcStep2,
                 savedNoiseOut, savedNoiseRef, savedNoiseSrc, savedNoiseSweep,
                 savedNoisePts, savedNoiseFstart, savedNoiseFstop, savedNoiseSum,
-                savedAc1, savedAc2, savedAc3, savedTran1, savedTran2, savedTran3)
-        );
+                savedAc1, savedAc2, savedAc3, savedTran1, savedTran2, savedTran3);
+        if (netlistOnly) pkt.asNetlistView();
+        ModMessages.sendToServer(pkt);
     }
 
     @Override

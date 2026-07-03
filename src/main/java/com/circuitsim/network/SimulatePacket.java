@@ -76,6 +76,10 @@ public class SimulatePacket {
     // extraction and spliced into every netlist this packet builds.
     private List<String> activeSubcktDefs = Collections.emptyList();
 
+    // "View Netlist" mode: build the deck for the selected analysis and ship
+    // it back to the client's output viewer instead of running ngspice.
+    private boolean viewNetlistOnly = false;
+
     // .NOISE analysis config — raw UI strings (parsed at sim time).
     private final String noiseOut;     // output node (probe label or node id)
     private final String noiseRef;     // optional reference node
@@ -251,6 +255,13 @@ public class SimulatePacket {
         this.tranParam1 = buf.readUtf(32);
         this.tranParam2 = buf.readUtf(32);
         this.tranParam3 = buf.readUtf(32);
+        this.viewNetlistOnly = buf.readBoolean();
+    }
+
+    /** Marks this packet as a netlist-view request (build the deck, don't run it). */
+    public SimulatePacket asNetlistView() {
+        this.viewNetlistOnly = true;
+        return this;
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -290,6 +301,7 @@ public class SimulatePacket {
         buf.writeUtf(tranParam1, 32);
         buf.writeUtf(tranParam2, 32);
         buf.writeUtf(tranParam3, 32);
+        buf.writeBoolean(viewNetlistOnly);
     }
 
     public static SimulatePacket decode(FriendlyByteBuf buf) {
@@ -342,11 +354,13 @@ public class SimulatePacket {
             simCbe.syncToClient();
         }
 
-        msg(
-            player,
-            "=== Circuit Simulation (" + analysis + ") ===",
-            ChatFormatting.GOLD
-        );
+        if (!viewNetlistOnly) {
+            msg(
+                player,
+                "=== Circuit Simulation (" + analysis + ") ===",
+                ChatFormatting.GOLD
+            );
+        }
 
         // Extraction must happen on the main thread (Level reads aren't safe
         // off-thread). Everything after this — netlist building, the ngspice
@@ -370,6 +384,14 @@ public class SimulatePacket {
         // extraction before the worker thread starts.
         activeSubcktDefs = extraction.subcktDefs;
 
+        // "View Netlist": build the deck and ship it to the output viewer —
+        // no ngspice run. Netlist building is pure string work, so it stays
+        // on the main thread.
+        if (viewNetlistOnly) {
+            viewNetlist(player, extraction);
+            return;
+        }
+
         // Pre-sim lint: surface floating nodes / no-ground / no-DC-path issues
         // as friendly warnings before ngspice produces a cryptic error. Advisory
         // only — the simulation still runs.
@@ -388,6 +410,204 @@ public class SimulatePacket {
         );
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * "View Netlist" flow: builds the same deck the selected analysis would
+     * run — parametric constants substituted, the sweep variable shown at its
+     * first value, {@code .subckt}/{@code .param}/{@code .temp} injection
+     * included — and opens it in the client's output viewer instead of
+     * running ngspice. Validation failures are reported via chat, same as a
+     * real run.
+     */
+    private void viewNetlist(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction
+    ) {
+        List<String> lines = new ArrayList<>();
+
+        if (!extraction.parametricBlocks.isEmpty()) {
+            ApplyResult applied = applyParametricConstants(player, extraction);
+            if (applied == null) return;        // error already reported
+            extraction = applied.extraction;
+            activeParamDefs = applied.paramDefs;
+            if (applied.sweepParam != null) {
+                double first = applied.sweepValues.get(0);
+                extraction = substituteSweepValue(
+                        extraction, applied.sweepParam.varName, first);
+                lines.add("* (sweep '" + applied.sweepParam.varName
+                        + "' shown at its first value, "
+                        + ComponentEditScreen.formatValue(first) + ")");
+            }
+        } else if (!checkAllVariablesDefined(player, extraction,
+                Collections.emptySet())) {
+            return;
+        }
+
+        List<Double> tempValues = parseTempValues(simTemp);
+        double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
+        if (tempValues.size() > 1) {
+            lines.add("* (temperature sweep: deck shown at "
+                    + ComponentEditScreen.formatValue(tempC) + "C)");
+        }
+
+        switch (analysis) {
+            case "AC" -> appendDeck(lines, NetlistBuilder.buildAcNetlist(
+                    extraction.components, effectiveProbes(extraction),
+                    extraction.currentProbes, fStart, fStop, ptsPerDec,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots), tempC);
+            case "TRAN" -> appendDeck(lines, NetlistBuilder.buildTranNetlist(
+                    extraction.components, effectiveProbes(extraction),
+                    extraction.currentProbes, fStart, fStop,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots), tempC);
+            case "DC" -> {
+                double start1, stop1, step1;
+                try {
+                    start1 = ComponentEditScreen.parseSI(dcStart1);
+                    stop1  = ComponentEditScreen.parseSI(dcStop1);
+                    step1  = ComponentEditScreen.parseSI(dcStep1);
+                } catch (NumberFormatException nfe) {
+                    msg(player, "DC range fields must parse as numbers.", ChatFormatting.RED);
+                    return;
+                }
+                if (dcSource1 == null || dcSource1.trim().isEmpty()) {
+                    msg(player, "DC sweep needs a source name (e.g. V1).", ChatFormatting.RED);
+                    return;
+                }
+                CircuitExtractor.ExtractionResult ex = extraction;
+                if (dc2D) {
+                    // The 2D outer loop runs in Java (one inner deck per
+                    // outer value); show the deck for the outer start value.
+                    double start2;
+                    try { start2 = ComponentEditScreen.parseSI(dcStart2); }
+                    catch (NumberFormatException nfe) { start2 = 0; }
+                    ex = overrideSourceDc(extraction, dcSource2.trim(), start2);
+                    if (ex == null) {
+                        msg(player, "Outer source '" + dcSource2.trim()
+                                + "' not found in the circuit (set its Netlist index).",
+                                ChatFormatting.RED);
+                        return;
+                    }
+                    lines.add("* (2D sweep runs one deck per outer value; shown with "
+                            + dcSource2.trim() + "="
+                            + ComponentEditScreen.formatValue(start2) + ")");
+                }
+                appendDeck(lines, NetlistBuilder.buildDcNetlist(
+                        ex.components, effectiveProbes(ex), ex.currentProbes,
+                        dcSource1.trim(), start1, stop1, step1,
+                        false, "", 0, 0, 1,
+                        pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                        ex.userCommands, ex.userPlots), tempC);
+            }
+            case "NOISE" -> {
+                String out = noiseNodeRef(noiseOut);
+                if (out.isEmpty()) {
+                    msg(player, "Noise analysis needs an output node (probe label or node id).",
+                        ChatFormatting.RED);
+                    return;
+                }
+                String ref = noiseRef.trim().isEmpty() ? "" : noiseNodeRef(noiseRef);
+                String src = noiseSrc.trim();
+                if (src.isEmpty()) {
+                    msg(player, "Noise analysis needs an input source name (e.g. V1).",
+                        ChatFormatting.RED);
+                    return;
+                }
+                // Numeric fields parse leniently here — viewing shouldn't be
+                // as strict as running; defaults match the dialog's.
+                String sweep = switch (noiseSweep.toLowerCase(java.util.Locale.ROOT)) {
+                    case "lin" -> "lin";
+                    case "oct" -> "oct";
+                    default    -> "dec";
+                };
+                int pts;
+                try { pts = Integer.parseInt(noisePts.trim()); }
+                catch (NumberFormatException e) { pts = 20; }
+                if (pts < 1) pts = 1;
+                double fstart, fstop;
+                try {
+                    fstart = ComponentEditScreen.parseSI(noiseFstart.trim());
+                    fstop  = ComponentEditScreen.parseSI(noiseFstop.trim());
+                } catch (NumberFormatException e) {
+                    fstart = 1;
+                    fstop  = 1e6;
+                }
+                int ptsSum = 0;
+                if (!noisePtsSum.trim().isEmpty()) {
+                    try { ptsSum = Math.max(0, Integer.parseInt(noisePtsSum.trim())); }
+                    catch (NumberFormatException e) { ptsSum = 0; }
+                }
+                appendDeck(lines, NetlistBuilder.buildNoiseNetlist(
+                        extraction.components, extraction.probes,
+                        extraction.currentProbes,
+                        out, ref, src, sweep, pts, fstart, fstop, ptsSum,
+                        pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                        extraction.userCommands), tempC);
+            }
+            case "STB" -> {
+                List<NetlistBuilder.CircuitComponent> loops = new ArrayList<>();
+                for (NetlistBuilder.CircuitComponent c : extraction.components) {
+                    if (c.block instanceof LoopProbeBlock) loops.add(c);
+                }
+                if (loops.size() != 1) {
+                    msg(player, loops.isEmpty()
+                            ? "Stability (.STB) needs a Loop Probe placed in series in the feedback loop."
+                            : "Found " + loops.size() + " Loop Probes; .STB supports exactly one break point.",
+                        ChatFormatting.RED);
+                    return;
+                }
+                int loopA = loops.get(0).nodeA;
+                int loopB = loops.get(0).nodeB;
+                List<NetlistBuilder.ProbeInfo> eff = effectiveProbes(extraction);
+                lines.add("* === V-injection deck ===");
+                appendDeck(lines, NetlistBuilder.buildStbNetlist(
+                        extraction.components, eff, loopA, loopB,
+                        fStart, fStop, ptsPerDec, pdkName, pdkLibPath,
+                        pdkLibPaths, ngBehavior, true), tempC);
+                lines.add("");
+                lines.add("* === I-injection deck ===");
+                appendDeck(lines, NetlistBuilder.buildStbNetlist(
+                        extraction.components, eff, loopA, loopB,
+                        fStart, fStop, ptsPerDec, pdkName, pdkLibPath,
+                        pdkLibPaths, ngBehavior, false), tempC);
+            }
+            default -> appendDeck(lines, NetlistBuilder.buildNetlist(
+                    extraction.components, extraction.probes,
+                    extraction.currentProbes,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots), tempC);
+        }
+
+        ModMessages.sendToPlayer(player,
+                new SimulationOutputPacket("Netlist (" + analysis + ")", lines));
+    }
+
+    /** Runs the standard post-processing on {@code deck} and appends its lines. */
+    private void appendDeck(List<String> lines, String deck, double tempC) {
+        for (String l : prepareNetlist(deck, tempC).split("\n")) {
+            lines.add(l.replace("\r", ""));
+        }
+    }
+
+    /**
+     * Copy of {@code extraction} with every reference to the swept variable
+     * replaced by {@code value} — the netlist view shows a concrete deck (the
+     * control-loop runner keeps the expression form instead).
+     */
+    private static CircuitExtractor.ExtractionResult substituteSweepValue(
+        CircuitExtractor.ExtractionResult ex, String varName, double value
+    ) {
+        List<NetlistBuilder.CircuitComponent> rewritten = ex.components.stream()
+                .map(c -> c.referencesVariable(varName)
+                        ? c.substituteVariable(varName, value) : c)
+                .collect(Collectors.toList());
+        return new CircuitExtractor.ExtractionResult(
+                ex.success, ex.errorMessage, rewritten,
+                ex.probes, ex.currentProbes, ex.probeLabels,
+                ex.parametricBlocks, ex.userCommands, ex.userPlots)
+                .withSubcircuitDevices(ex.subcircuitDevices);
     }
 
     /**
