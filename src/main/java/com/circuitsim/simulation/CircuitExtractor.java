@@ -46,8 +46,14 @@ public class CircuitExtractor {
     }
 
     public static ExtractionResult extract(Level level, BlockPos startPos) {
-        return new CircuitExtractor().extractCircuit(level, startPos);
+        CircuitExtractor ex = new CircuitExtractor();
+        ExtractionResult result = ex.extractCircuit(level, startPos);
+        result.simulatePos = ex.simulatePos;
+        return result;
     }
+
+    /** First Simulate block met during the BFS, if any (see ExtractionResult). */
+    private BlockPos simulatePos = null;
 
     /**
      * BFS the connected circuit reachable from {@code startPos}, returning every
@@ -161,9 +167,12 @@ public class CircuitExtractor {
         BlockPos groundAnchor = new BlockPos(0, Integer.MIN_VALUE, 0);
         boolean hasGround = false;
         for (BlockPos pos : visited) {
-            if (level.getBlockState(pos).getBlock() instanceof GroundBlock) {
+            Block visitedBlock = level.getBlockState(pos).getBlock();
+            if (visitedBlock instanceof GroundBlock) {
                 union(pos, groundAnchor);
                 hasGround = true;
+            } else if (visitedBlock instanceof SimulateBlock && simulatePos == null) {
+                simulatePos = pos.immutable();
             }
         }
 
@@ -1026,6 +1035,16 @@ public class CircuitExtractor {
          */
         public Map<BlockPos, List<com.circuitsim.subcircuit.SubcircuitChip.DeviceMapEntry>>
                 subcircuitDevices = new java.util.HashMap<>();
+
+        /**
+         * Position of the Simulate block encountered during the BFS, or null
+         * when the circuit has none (or extraction failed early). Lets features
+         * anchored on other blocks — the Commands block's measurement Test —
+         * reuse the analysis configuration stored in the Simulate block's BE.
+         * Mutable + set by {@link CircuitExtractor#extract} like
+         * {@link #subcircuitDevices}, to avoid another constructor change.
+         */
+        public BlockPos simulatePos = null;
 
         /** Sets {@link #subcircuitDevices} and returns {@code this} for chaining. */
         public ExtractionResult withSubcircuitDevices(

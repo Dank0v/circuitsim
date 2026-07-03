@@ -3950,7 +3950,7 @@ public class SimulatePacket {
      * during parsing regardless of position; top placement keeps the deck
      * readable. No-op when there are no subcircuits.
      */
-    private static String injectSubcktDefs(String netlist, List<String> defs) {
+    static String injectSubcktDefs(String netlist, List<String> defs) {
         if (defs == null || defs.isEmpty()) return netlist;
         int nl = netlist.indexOf('\n');
         if (nl < 0) return netlist;
@@ -3970,7 +3970,7 @@ public class SimulatePacket {
      * regardless of position, but placing them at the top keeps the netlist
      * readable and ahead of any brace expression that references them.
      */
-    private static String injectParams(String netlist, List<String> defs) {
+    static String injectParams(String netlist, List<String> defs) {
         if (defs == null || defs.isEmpty()) return netlist;
         int nl = netlist.indexOf('\n');
         if (nl < 0) return netlist;
@@ -3989,7 +3989,7 @@ public class SimulatePacket {
      * already build. If no analysis directive is found the netlist is
      * returned unchanged.
      */
-    private static String injectTemp(String netlist, double tempC) {
+    static String injectTemp(String netlist, double tempC) {
         String[] lines = netlist.split("\\r?\\n", -1);
         StringBuilder out = new StringBuilder(netlist.length() + 32);
         boolean injected = false;

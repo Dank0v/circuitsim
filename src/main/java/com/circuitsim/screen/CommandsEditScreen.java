@@ -25,6 +25,12 @@ public class CommandsEditScreen extends Screen {
 
     private final BlockPos pos;
     private MultiLineEditBox editBox;
+    /**
+     * Text to seed the edit box with instead of the block entity's saved value.
+     * Used by {@link MeasBuilderScreen} to carry unsaved edits (plus any lines
+     * it generated) back into this editor. Null = read from the BE as usual.
+     */
+    private final String pendingText;
 
     private static final int W = 360;
     private static final int H = 290;
@@ -35,8 +41,13 @@ public class CommandsEditScreen extends Screen {
     private static final int HINT   = 0xFFAAAAAA;
 
     public CommandsEditScreen(BlockPos pos) {
+        this(pos, null);
+    }
+
+    public CommandsEditScreen(BlockPos pos, String pendingText) {
         super(Component.literal("ngspice Commands"));
         this.pos = pos;
+        this.pendingText = pendingText;
     }
 
     @Override
@@ -46,10 +57,13 @@ public class CommandsEditScreen extends Screen {
         int px = (width - W) / 2;
         int py = (height - H) / 2;
 
-        String saved = "";
-        BlockEntity be = Minecraft.getInstance().level.getBlockEntity(pos);
-        if (be instanceof ComponentBlockEntity cbe) {
-            saved = cbe.getCommands();
+        String saved = pendingText;
+        if (saved == null) {
+            saved = "";
+            BlockEntity be = Minecraft.getInstance().level.getBlockEntity(pos);
+            if (be instanceof ComponentBlockEntity cbe) {
+                saved = cbe.getCommands();
+            }
         }
 
         int boxX = px + 14;
@@ -70,11 +84,17 @@ public class CommandsEditScreen extends Screen {
 
         addRenderableWidget(
                 Button.builder(Component.literal("Save"), b -> { sendPacket(); onClose(); })
-                        .bounds(px + 20, py + H - 28, 110, 20).build()
+                        .bounds(px + 20, py + H - 28, 100, 20).build()
+        );
+        addRenderableWidget(
+                Button.builder(Component.literal("Measure…"),
+                        b -> Minecraft.getInstance().setScreen(
+                                new MeasBuilderScreen(pos, editBox.getValue())))
+                        .bounds(px + (W - 90) / 2, py + H - 28, 90, 20).build()
         );
         addRenderableWidget(
                 Button.builder(Component.literal("Cancel"), b -> onClose())
-                        .bounds(px + W - 130, py + H - 28, 110, 20).build()
+                        .bounds(px + W - 120, py + H - 28, 100, 20).build()
         );
     }
 

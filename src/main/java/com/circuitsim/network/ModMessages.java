@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 public class ModMessages {
 
-    private static final String PROTOCOL_VERSION = "13";  // bumped for the netlist-view flag
+    private static final String PROTOCOL_VERSION = "14";  // bumped for the measurement-builder packets
 
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(CircuitSimMod.MODID, "main"),
@@ -92,6 +92,18 @@ public class ModMessages {
                 .consumerMainThread(ModMessages::handleSubcircuitConvert)
                 .add();
 
+        INSTANCE.messageBuilder(MeasSignalsRequestPacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(MeasSignalsRequestPacket::encode)
+                .decoder(MeasSignalsRequestPacket::decode)
+                .consumerMainThread(ModMessages::handleMeasSignalsRequest)
+                .add();
+
+        INSTANCE.messageBuilder(MeasTestPacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(MeasTestPacket::encode)
+                .decoder(MeasTestPacket::decode)
+                .consumerMainThread(ModMessages::handleMeasTest)
+                .add();
+
         // ── client-bound ──────────────────────────────────────────────────────
         INSTANCE.messageBuilder(SimulationResultPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
                 .encoder(SimulationResultPacket::encode)
@@ -115,6 +127,18 @@ public class ModMessages {
                 .encoder(OperatingPointPacket::encode)
                 .decoder(OperatingPointPacket::decode)
                 .consumerMainThread(ModMessages::handleOperatingPoint)
+                .add();
+
+        INSTANCE.messageBuilder(MeasSignalsPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(MeasSignalsPacket::encode)
+                .decoder(MeasSignalsPacket::decode)
+                .consumerMainThread(ModMessages::handleMeasSignals)
+                .add();
+
+        INSTANCE.messageBuilder(MeasTestResultPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(MeasTestResultPacket::encode)
+                .decoder(MeasTestResultPacket::decode)
+                .consumerMainThread(ModMessages::handleMeasTestResult)
                 .add();
     }
 
@@ -204,6 +228,30 @@ public class ModMessages {
     }
 
     private static void handleOperatingPoint(OperatingPointPacket msg,
+                                              Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(msg::handle);
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleMeasSignalsRequest(MeasSignalsRequestPacket msg,
+                                                  Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleMeasTest(MeasTestPacket msg,
+                                        Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleMeasSignals(MeasSignalsPacket msg,
+                                           Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(msg::handle);
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleMeasTestResult(MeasTestResultPacket msg,
                                               Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(msg::handle);
         ctx.get().setPacketHandled(true);
