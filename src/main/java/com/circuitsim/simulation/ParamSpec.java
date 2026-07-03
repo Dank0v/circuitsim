@@ -17,8 +17,14 @@ import java.util.Set;
  *   <li><b>scalar</b> — a number with SI suffix or plain ({@code 1k},
  *       {@code 4.7u}, {@code 1e-3}),</li>
  *   <li><b>range sweep</b> — {@code start:stop:step} (inclusive of stop where
- *       it lands on a step), or</li>
- *   <li><b>list sweep</b> — {@code v1,v2,v3,...}.</li>
+ *       it lands on a step),</li>
+ *   <li><b>list sweep</b> — {@code v1,v2,v3,...}, or</li>
+ *   <li><b>distribution</b> — an ngspice statistical function call
+ *       ({@code gauss(nom, rel, sigma)}, {@code agauss(nom, abs, sigma)},
+ *       {@code unif(nom, rel)}, {@code aunif(nom, abs)},
+ *       {@code limit(nom, abs)}; manual ch. 18.2), passed through verbatim as
+ *       a {@code .param} line and re-rolled per Monte Carlo run by
+ *       {@code mc_source}.</li>
  * </ul>
  * At most one variable in a circuit may be a sweep; the per-block check here
  * reports both offenders by name, and the server repeats the check across
@@ -26,6 +32,15 @@ import java.util.Set;
  * so the edit screen can point at the broken line.
  */
 public final class ParamSpec {
+
+    /** Matches the ngspice statistical functions usable inside {@code .param}. */
+    private static final java.util.regex.Pattern DIST =
+            java.util.regex.Pattern.compile("(?i)^(a?gauss|a?unif|limit)\\s*\\(.*\\)$");
+
+    /** True when {@code value} is a distribution call like {@code gauss(1k, 0.05, 3)}. */
+    public static boolean isDistribution(String value) {
+        return value != null && DIST.matcher(value.strip()).matches();
+    }
 
     /** Maximum points one sweep may expand to (matches the legacy limit). */
     public static final int MAX_SWEEP_VALUES = 50;
@@ -35,13 +50,17 @@ public final class ParamSpec {
         public final String       name;
         public final String       rawValue;   // value text exactly as typed
         public final boolean      isSweep;
+        /** Distribution call passed through verbatim; {@link #values} is empty. */
+        public final boolean      isDist;
         public final List<Double> values;     // 1 value for scalars, N for sweeps
 
-        Entry(int lineNo, String name, String rawValue, boolean isSweep, List<Double> values) {
+        Entry(int lineNo, String name, String rawValue, boolean isSweep,
+              boolean isDist, List<Double> values) {
             this.lineNo   = lineNo;
             this.name     = name;
             this.rawValue = rawValue;
             this.isSweep  = isSweep;
+            this.isDist   = isDist;
             this.values   = values;
         }
     }
@@ -95,6 +114,11 @@ public final class ParamSpec {
                 continue;
             }
 
+            if (isDistribution(value)) {
+                out.entries.add(new Entry(lineNo, name, value, false, true, List.of()));
+                continue;
+            }
+
             List<Double> values;
             boolean sweep;
             try {
@@ -131,7 +155,7 @@ public final class ParamSpec {
                 }
                 sweepName = name;
             }
-            out.entries.add(new Entry(lineNo, name, value, sweep, values));
+            out.entries.add(new Entry(lineNo, name, value, sweep, false, values));
         }
         return out;
     }

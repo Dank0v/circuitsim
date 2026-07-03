@@ -157,6 +157,10 @@ public class GraphScreen extends Screen {
     // plot. With two cursors the readout reports dx / dy between them.
     private boolean logYTop = false, logYBot = false;
     private boolean cursorModeTop = false, cursorModeBot = false;
+    // Histogram mode: the plot bins each active curve's Y values and draws a
+    // bar distribution instead of curves — the way to view Monte Carlo
+    // scalars (value-vs-run sessions) as histograms.
+    private boolean histTop = false, histBot = false;
     // {cursor1, cursor2} as sweep-sample indices, or -1 when unplaced. Cursor 1
     // is dragged with the left mouse button, cursor 2 with the right
     // (OrCAD-style); both appear when cursor mode is switched on.
@@ -167,8 +171,8 @@ public class GraphScreen extends Screen {
     // Hit rectangles {x, y, w, h} recomputed every render so mouseClicked can
     // map clicks onto the on-plot toggle buttons and the plot interior. Null
     // when the corresponding plot isn't currently drawn.
-    private int[] logBtnTop, curBtnTop, fftBtnTop, plotRectTop;
-    private int[] logBtnBot, curBtnBot, fftBtnBot, plotRectBot;
+    private int[] logBtnTop, curBtnTop, fftBtnTop, histBtnTop, plotRectTop;
+    private int[] logBtnBot, curBtnBot, fftBtnBot, histBtnBot, plotRectBot;
 
     public GraphScreen(String sweepComponentName, String sweepUnit, boolean isLogFrequency,
                        boolean defaultLogY, int fftSessionId,
@@ -448,6 +452,7 @@ public class GraphScreen extends Screen {
             return true;
         }
         if (hitRect(fftBtnTop, mx, my)) { openFft(); return true; }
+        if (hitRect(histBtnTop, mx, my)) { histTop = !histTop; return true; }
         if (hitRect(logBtnBot, mx, my)) { logYBot = !logYBot; return true; }
         if (hitRect(curBtnBot, mx, my)) {
             cursorModeBot = !cursorModeBot;
@@ -455,6 +460,7 @@ public class GraphScreen extends Screen {
             return true;
         }
         if (hitRect(fftBtnBot, mx, my)) { openFft(); return true; }
+        if (hitRect(histBtnBot, mx, my)) { histBot = !histBot; return true; }
         return false;
     }
 
@@ -758,8 +764,8 @@ public class GraphScreen extends Screen {
     private void drawPlots(GuiGraphics g, int mouseX, int mouseY) {
         // Clear last frame's hit rectangles; each plot re-registers its own as
         // it draws. Plots that aren't shown this frame leave theirs null.
-        logBtnTop = curBtnTop = fftBtnTop = plotRectTop = null;
-        logBtnBot = curBtnBot = fftBtnBot = plotRectBot = null;
+        logBtnTop = curBtnTop = fftBtnTop = histBtnTop = plotRectTop = null;
+        logBtnBot = curBtnBot = fftBtnBot = histBtnBot = plotRectBot = null;
 
         boolean haveTop = !slot1.isEmpty();
         boolean haveBot = !slot2.isEmpty();
@@ -847,6 +853,12 @@ public class GraphScreen extends Screen {
         if (active.isEmpty() || sweepValues.isEmpty()) {
             g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
             g.drawCenteredString(font, "No data", gx + gw / 2, gy + gh / 2 - 4, 0xFFFF4444);
+            return;
+        }
+
+        if (isTopSlot ? histTop : histBot) {
+            drawHistogramPlot(g, gx, gy, gw, gh, active, palette, drawXAxis,
+                    isTopSlot, mouseX, mouseY);
             return;
         }
 
@@ -1052,11 +1064,13 @@ public class GraphScreen extends Screen {
         int[] fftBtn = fftSessionId >= 0
                 ? drawToggle(g, logBtn[0] - 3, gy + 2, "FFT", false, mouseX, mouseY)
                 : null;
+        int[] histBtn = drawToggle(g, (fftBtn != null ? fftBtn[0] : logBtn[0]) - 3,
+                gy + 2, "Hist", false, mouseX, mouseY);
         if (isTopSlot) {
-            curBtnTop = curBtn; logBtnTop = logBtn; fftBtnTop = fftBtn;
+            curBtnTop = curBtn; logBtnTop = logBtn; fftBtnTop = fftBtn; histBtnTop = histBtn;
             plotRectTop = new int[]{ gx, gy, gw, gh };
         } else {
-            curBtnBot = curBtn; logBtnBot = logBtn; fftBtnBot = fftBtn;
+            curBtnBot = curBtn; logBtnBot = logBtn; fftBtnBot = fftBtn; histBtnBot = histBtn;
             plotRectBot = new int[]{ gx, gy, gw, gh };
         }
     }
@@ -1138,6 +1152,216 @@ public class GraphScreen extends Screen {
                 g.fill(x, py, x + 4, py + 1, C_AXIS);
                 g.drawString(font, fmtAxis(yVal), x + 6, py - 4, C_LABEL);
             }
+        }
+    }
+
+    /**
+     * Histogram mode: bins each active curve's Y values over their combined
+     * range and draws overlaid semi-transparent bars — count on the Y axis,
+     * value on the X axis. Built for Monte Carlo value-vs-run sessions, where
+     * each curve's samples are one scalar's distribution; works on any series.
+     * The X axis is per-plot here (a value range, not the shared sweep axis),
+     * so its tick labels are always drawn. Log / cursors don't apply — the
+     * toolbar collapses to the Hist toggle.
+     */
+    private void drawHistogramPlot(GuiGraphics g, int gx, int gy, int gw, int gh,
+                                    List<Integer> active, int[] palette,
+                                    boolean drawXAxis, boolean isTopSlot,
+                                    int mouseX, int mouseY) {
+        g.fill(gx, gy, gx + gw, gy + gh, C_PLOT_BG);
+
+        double lo = Double.POSITIVE_INFINITY, hi = Double.NEGATIVE_INFINITY;
+        int nmax = 0;
+        for (int idx : active) {
+            List<Double> s = probeData.get(idx);
+            nmax = Math.max(nmax, s.size());
+            for (double v : s) {
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+            }
+        }
+        if (!Double.isFinite(lo) || !Double.isFinite(hi)) { lo = 0; hi = 1; }
+        if (hi == lo) {
+            // All samples identical — widen so the single bar has a scale.
+            double w = Math.max(Math.abs(lo) * 0.01, 1e-12);
+            lo -= w; hi += w;
+        } else {
+            double pad = (hi - lo) * 0.05;
+            lo -= pad; hi += pad;
+        }
+
+        int bins = Math.max(5, Math.min(24, (int) Math.ceil(Math.sqrt(nmax))));
+        int[][] counts = new int[active.size()][bins];
+        int maxCount = 1;
+        for (int c = 0; c < active.size(); c++) {
+            for (double v : probeData.get(active.get(c))) {
+                int b = (int) ((v - lo) / (hi - lo) * bins);
+                if (b < 0) b = 0;
+                if (b >= bins) b = bins - 1;
+                maxCount = Math.max(maxCount, ++counts[c][b]);
+            }
+        }
+
+        // 14 px of headroom keeps the tallest bar clear of the toolbar row.
+        int baseY   = gy + gh - 1;
+        double yScl = (gh - 15) / (double) maxCount;
+
+        int yStep = Math.max(1, (int) Math.round(niceTickStep(maxCount, gh < 160 ? 4 : 6)));
+        for (int yv = yStep; yv <= maxCount; yv += yStep) {
+            int py = baseY - (int) (yv * yScl);
+            g.fill(gx, py, gx + gw, py + 1, C_GRID);
+            String lbl = String.valueOf(yv);
+            g.drawString(font, lbl, gx - font.width(lbl) - 3, py - 4, C_LABEL);
+        }
+
+        // Value ticks along X. This axis is unrelated to the shared sweep
+        // axis, so labels are drawn even when drawXAxis is false (they fit in
+        // the split-view gap).
+        double xStep  = niceTickStep(hi - lo, 6);
+        double xFirst = Math.ceil(lo / xStep) * xStep;
+        for (double xv = xFirst; xv <= hi + xStep * 1e-9; xv += xStep) {
+            int pxx = gx + (int) ((xv - lo) / (hi - lo) * gw);
+            g.fill(pxx, gy, pxx + 1, gy + gh, C_GRID);
+            String lbl = fmtAxis(xv);
+            g.drawCenteredString(font, lbl, pxx, gy + gh + 2, C_LABEL);
+        }
+
+        double bw = gw / (double) bins;
+        for (int c = 0; c < active.size(); c++) {
+            int colour = palette[c % palette.length];
+            int fill   = (colour & 0x00FFFFFF) | 0x66000000;
+            for (int b = 0; b < bins; b++) {
+                if (counts[c][b] == 0) continue;
+                int x0 = gx + (int) (b * bw) + 1;
+                int x1 = gx + (int) ((b + 1) * bw) - 1;
+                if (x1 <= x0) x1 = x0 + 1;
+                int py = baseY - (int) (counts[c][b] * yScl);
+                g.fill(x0, py, x1, baseY, fill);
+                g.fill(x0, py, x1, py + 1, colour);
+            }
+        }
+
+        g.fill(gx, gy,      gx + 1,  gy + gh,     C_AXIS);
+        g.fill(gx, gy + gh, gx + gw, gy + gh + 1, C_AXIS);
+
+        g.drawString(font, "count", gx + 2, gy - 9, C_LABEL);
+        String stem = slotGroup(active);
+        String unit = commonUnit(active);
+        if (drawXAxis) {
+            String xLabel = (stem == null ? "value" : stem)
+                    + (unit.isEmpty() ? "" : " (" + unit + ")")
+                    + "  —  " + nmax + " samples, " + bins + " bins";
+            g.drawCenteredString(font, xLabel, gx + gw / 2, gy + gh + 10, C_UNIT);
+        }
+
+        // Distribution statistics per curve, shown in a cursor-style readout
+        // box. The first curve's mean/sd also drive the sigma markers below.
+        List<String> statLines = new ArrayList<>();
+        double meanFirst = 0, sdFirst = 0;
+        for (int c = 0; c < active.size(); c++) {
+            List<Double> s = probeData.get(active.get(c));
+            int cn = s.size();
+            double mean = 0;
+            for (double v : s) mean += v;
+            mean /= Math.max(1, cn);
+            double var = 0;
+            for (double v : s) var += (v - mean) * (v - mean);
+            double sd = cn > 1 ? Math.sqrt(var / (cn - 1)) : 0;
+            List<Double> sorted = new ArrayList<>(s);
+            java.util.Collections.sort(sorted);
+            double median = cn == 0 ? 0
+                    : cn % 2 == 1 ? sorted.get(cn / 2)
+                    : (sorted.get(cn / 2 - 1) + sorted.get(cn / 2)) / 2.0;
+            if (c == 0) { meanFirst = mean; sdFirst = sd; }
+            String prefix = active.size() > 1 ? probeNames.get(active.get(c)) + ":  " : "";
+            statLines.add(prefix + "n=" + cn + "  mean=" + fmtAxis(mean)
+                    + "  sd=" + fmtAxis(sd));
+            statLines.add((active.size() > 1 ? "    " : "")
+                    + "median=" + fmtAxis(median)
+                    + "  min=" + fmtAxis(sorted.isEmpty() ? 0 : sorted.get(0))
+                    + "  max=" + fmtAxis(sorted.isEmpty() ? 0 : sorted.get(cn - 1)));
+        }
+
+        // Sigma markers: dashed verticals at μ and μ±kσ, labelled just above
+        // the axis so they don't collide with the value tick labels below it.
+        // Only drawn for a single curve — several overlaid μ/σ sets are noise.
+        if (active.size() == 1 && sdFirst > 0) {
+            for (int k = -3; k <= 3; k++) {
+                double xv = meanFirst + k * sdFirst;
+                if (xv < lo || xv > hi) continue;
+                int pxx = gx + (int) ((xv - lo) / (hi - lo) * gw);
+                int lineCol = k == 0 ? 0xFFDDDDEE : C_AXIS;
+                if (k == 0) {
+                    g.fill(pxx, gy + 14, pxx + 1, gy + gh, lineCol);
+                } else {
+                    for (int yy = gy + 14; yy < gy + gh - 2; yy += 5) {
+                        g.fill(pxx, yy, pxx + 1, yy + 3, lineCol);
+                    }
+                }
+                String lbl = k == 0 ? "μ" : (k > 0 ? "+" : "-") + Math.abs(k) + "σ";
+                g.drawCenteredString(font, lbl, pxx, gy + gh - 10,
+                        k == 0 ? 0xFFDDDDEE : C_LABEL);
+            }
+        }
+
+        // Stats box top-left, hopping to top-right (below the toolbar) when
+        // the left bars are tall enough to reach it.
+        if (!statLines.isEmpty()) {
+            int[] sz = readoutSize(statLines, gw);
+            int[][] cand = {
+                { gx + 3,              gy + 3,  sz[0], sz[1] },
+                { gx + gw - sz[0] - 3, gy + 16, sz[0], sz[1] },
+            };
+            int best = 0;
+            outer:
+            for (int ci = 0; ci < cand.length; ci++) {
+                int[] r = cand[ci];
+                for (int b = 0; b < bins; b++) {
+                    int bx0 = gx + (int) (b * bw), bx1 = gx + (int) ((b + 1) * bw);
+                    if (bx1 < r[0] || bx0 > r[0] + r[2]) continue;
+                    int barTop = baseY;
+                    for (int c = 0; c < active.size(); c++) {
+                        barTop = Math.min(barTop, baseY - (int) (counts[c][b] * yScl));
+                    }
+                    if (barTop < r[1] + r[3] + 2) continue outer;  // bar reaches the box
+                }
+                best = ci;
+                break;
+            }
+            drawReadout(g, cand[best], statLines);
+        }
+
+        // Hover: the bin under the pointer, with its value range and each
+        // curve's count.
+        if (mouseX >= gx && mouseX < gx + gw && mouseY >= gy && mouseY < gy + gh) {
+            int b = (int) ((mouseX - gx) / bw);
+            if (b >= 0 && b < bins) {
+                double b0 = lo + (hi - lo) * b / bins;
+                double b1 = lo + (hi - lo) * (b + 1) / bins;
+                StringBuilder tip = new StringBuilder(
+                        "[" + fmtAxis(b0) + " .. " + fmtAxis(b1) + "): ");
+                boolean any = false;
+                for (int c = 0; c < active.size(); c++) {
+                    if (counts[c][b] == 0) continue;
+                    if (any) tip.append(", ");
+                    if (active.size() > 1) {
+                        tip.append(probeNames.get(active.get(c))).append('=');
+                    }
+                    tip.append(counts[c][b]);
+                    any = true;
+                }
+                if (!any) tip.append('0');
+                drawTooltip(g, tip.toString(), mouseX, mouseY);
+            }
+        }
+
+        int[] histBtn = drawToggle(g, gx + gw - 2, gy + 2, "Hist", true, mouseX, mouseY);
+        if (isTopSlot) {
+            histBtnTop = histBtn;
+            plotRectTop = new int[]{ gx, gy, gw, gh };
+        } else {
+            histBtnBot = histBtn;
+            plotRectBot = new int[]{ gx, gy, gw, gh };
         }
     }
 

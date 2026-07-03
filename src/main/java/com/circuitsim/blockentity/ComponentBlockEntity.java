@@ -102,6 +102,11 @@ public class ComponentBlockEntity extends BlockEntity {
     // AC/TRAN overlay one curve per temperature on top of their natural axis.
     private String simTemp     = "27";
 
+    // Monte Carlo config for the simulate block. mcRuns "" / "0" / "1" = off;
+    // mcSeed "" = a fresh random seed per invocation.
+    private String mcRuns = "";
+    private String mcSeed = "";
+
     // commands block: free-form ngspice control commands, one per line
     private String commands    = "";
 
@@ -268,6 +273,10 @@ public class ComponentBlockEntity extends BlockEntity {
     public void    setDcStep2(String v)       { this.dcStep2 = v == null ? "0" : v; setChanged(); }
     public String getSimTemp()               { return simTemp; }
     public void setSimTemp(String t)         { this.simTemp = (t == null || t.isEmpty()) ? "27" : t; setChanged(); }
+    public String getMcRuns()                { return mcRuns == null ? "" : mcRuns; }
+    public void setMcRuns(String v)          { this.mcRuns = v == null ? "" : v; setChanged(); }
+    public String getMcSeed()                { return mcSeed == null ? "" : mcSeed; }
+    public void setMcSeed(String v)          { this.mcSeed = v == null ? "" : v; setChanged(); }
     public String getCommands()              { return commands; }
     public void setCommands(String c)        { this.commands = c == null ? "" : c; setChanged(); }
     public boolean isOffsetEnabled()         { return offsetEnabled; }
@@ -342,6 +351,8 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simTranParam2", simTranParam2);
         tag.putString("simTranParam3", simTranParam3);
         tag.putString("simTemp",     simTemp);
+        tag.putString("mcRuns",      getMcRuns());
+        tag.putString("mcSeed",      getMcSeed());
         tag.putString("commands",    commands);
         tag.putBoolean("offsetEnabled", offsetEnabled);
         tag.putDouble("pulseVLow", pulseVLow);
@@ -427,6 +438,8 @@ public class ComponentBlockEntity extends BlockEntity {
             simTranParam1 = simParam1; simTranParam2 = simParam2; simTranParam3 = simParam3;
         }
         if (tag.contains("simTemp"))     simTemp     = tag.getString("simTemp");
+        if (tag.contains("mcRuns"))      mcRuns      = tag.getString("mcRuns");
+        if (tag.contains("mcSeed"))      mcSeed      = tag.getString("mcSeed");
         if (tag.contains("commands"))    commands    = tag.getString("commands");
         if (tag.contains("offsetEnabled")) offsetEnabled = tag.getBoolean("offsetEnabled");
         if (tag.contains("pulseVLow"))   pulseVLow   = tag.getDouble("pulseVLow");
@@ -507,6 +520,8 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putString("simTranParam2", simTranParam2);
         tag.putString("simTranParam3", simTranParam3);
         tag.putString("simTemp",     simTemp);
+        tag.putString("mcRuns",      getMcRuns());
+        tag.putString("mcSeed",      getMcSeed());
         tag.putString("commands",    commands);
         tag.putBoolean("offsetEnabled", offsetEnabled);
         tag.putDouble("pulseVLow", pulseVLow);

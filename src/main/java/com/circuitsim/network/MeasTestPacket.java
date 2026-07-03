@@ -161,6 +161,11 @@ public class MeasTestPacket {
         // .param lines (sweeps tested at their first value), .temp override.
         List<String> defs = new ArrayList<>();
         for (CircuitExtractor.ParametricInfo p : ex.parametricBlocks) {
+            if (com.circuitsim.simulation.ParamSpec.isDistribution(p.valuesString)) {
+                // Distribution param (Monte Carlo): test with a single draw.
+                defs.add(p.varName + " = " + p.valuesString);
+                continue;
+            }
             try {
                 List<Double> vals = SimulatePacket.parseSweepString(p.valuesString);
                 if (!vals.isEmpty()) {

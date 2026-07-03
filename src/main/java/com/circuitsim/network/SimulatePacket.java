@@ -80,6 +80,12 @@ public class SimulatePacket {
     // it back to the client's output viewer instead of running ngspice.
     private boolean viewNetlistOnly = false;
 
+    // Monte Carlo config (raw UI strings). mcRuns: number of runs, blank/0/1 =
+    // off. mcSeed: RNG seed for reproducibility, blank = a fresh random seed
+    // each invocation (echoed to chat so a run can be reproduced).
+    private String mcRuns = "";
+    private String mcSeed = "";
+
     // .NOISE analysis config — raw UI strings (parsed at sim time).
     private final String noiseOut;     // output node (probe label or node id)
     private final String noiseRef;     // optional reference node
@@ -256,11 +262,20 @@ public class SimulatePacket {
         this.tranParam2 = buf.readUtf(32);
         this.tranParam3 = buf.readUtf(32);
         this.viewNetlistOnly = buf.readBoolean();
+        this.mcRuns = buf.readUtf(16);
+        this.mcSeed = buf.readUtf(32);
     }
 
     /** Marks this packet as a netlist-view request (build the deck, don't run it). */
     public SimulatePacket asNetlistView() {
         this.viewNetlistOnly = true;
+        return this;
+    }
+
+    /** Attaches the Monte Carlo configuration (see {@link #mcRuns}). */
+    public SimulatePacket withMonteCarlo(String runs, String seed) {
+        this.mcRuns = runs == null ? "" : runs;
+        this.mcSeed = seed == null ? "" : seed;
         return this;
     }
 
@@ -302,6 +317,8 @@ public class SimulatePacket {
         buf.writeUtf(tranParam2, 32);
         buf.writeUtf(tranParam3, 32);
         buf.writeBoolean(viewNetlistOnly);
+        buf.writeUtf(mcRuns, 16);
+        buf.writeUtf(mcSeed, 32);
     }
 
     public static SimulatePacket decode(FriendlyByteBuf buf) {
@@ -350,6 +367,8 @@ public class SimulatePacket {
             simCbe.setSimTranParam1(tranParam1);
             simCbe.setSimTranParam2(tranParam2);
             simCbe.setSimTranParam3(tranParam3);
+            simCbe.setMcRuns(mcRuns);
+            simCbe.setMcSeed(mcSeed);
             simCbe.setChanged();
             simCbe.syncToClient();
         }
@@ -653,6 +672,38 @@ public class SimulatePacket {
             } else if (!checkAllVariablesDefined(player, extraction,
                     Collections.emptySet())) {
                 return;       // a component references a variable with no Parametric block
+            }
+
+            // ── Monte Carlo ─────────────────────────────────────────────────
+            // N reruns of the selected analysis in ONE ngspice process; a
+            // control loop reloads the netlist per run (mc_source), which
+            // re-rolls every gauss/agauss/unif/aunif/limit .param — see the
+            // manual ch. 18.5. Mutually exclusive with a swept Param variable.
+            int mcN = 0;
+            try { mcN = Integer.parseInt(mcRuns.trim()); } catch (NumberFormatException ignored) {}
+            if (mcN >= 2) {
+                if (sweepParam != null) {
+                    msg(player, "Monte Carlo can't combine with a swept Param variable ('"
+                            + sweepParam.varName + "'). Use a single value or a distribution.",
+                            ChatFormatting.RED);
+                    return;
+                }
+                if ("NOISE".equals(analysis) || "STB".equals(analysis)) {
+                    msg(player, "Monte Carlo supports OP / AC / DC / TRAN (not " + analysis + ").",
+                            ChatFormatting.RED);
+                    return;
+                }
+                if (mcN > 300) {
+                    msg(player, "Monte Carlo capped at 300 runs.", ChatFormatting.YELLOW);
+                    mcN = 300;
+                }
+                double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
+                if (tempValues.size() > 1) {
+                    msg(player, "Monte Carlo runs at a single temperature; using "
+                            + ComponentEditScreen.formatValue(tempC) + "C.", ChatFormatting.YELLOW);
+                }
+                runMonteCarlo(player, extraction, mcN, tempC, bookLines);
+                return;
             }
 
             if (sweepParam != null) {
@@ -1923,6 +1974,11 @@ public class SimulatePacket {
         Map<String, Double>                   constMap  = new LinkedHashMap<>();
         CircuitExtractor.ParametricInfo       sweep     = null;
         List<Double>                          sweepVals = Collections.emptyList();
+        // Distribution declarations (gauss/agauss/unif/aunif/limit) pass
+        // through verbatim as .param lines — never substituted into
+        // components, so mc_source can re-roll them per Monte Carlo run.
+        List<String>                          distDefs  = new ArrayList<>();
+        Set<String>                           distNames = new LinkedHashSet<>();
 
         for (CircuitExtractor.ParametricInfo p : extraction.parametricBlocks) {
             boolean used = extraction.components.stream()
@@ -1932,6 +1988,12 @@ public class SimulatePacket {
                         "Parametric variable '" + p.varName + "' is not used by any component.",
                         ChatFormatting.RED);
                 return null;
+            }
+
+            if (com.circuitsim.simulation.ParamSpec.isDistribution(p.valuesString)) {
+                distDefs.add(p.varName + " = " + p.valuesString);
+                distNames.add(p.varName);
+                continue;
             }
 
             List<Double> vals;
@@ -1971,6 +2033,7 @@ public class SimulatePacket {
 
         // Components referencing an undefined variable: also an error.
         Set<String> defined = new LinkedHashSet<>(constMap.keySet());
+        defined.addAll(distNames);
         if (sweep != null) defined.add(sweep.varName);
         if (!checkAllVariablesDefined(player, extraction, defined)) return null;
 
@@ -1980,6 +2043,7 @@ public class SimulatePacket {
             paramDefs.add(String.format(java.util.Locale.ROOT,
                     "%s=%g", e.getKey(), e.getValue()));
         }
+        paramDefs.addAll(distDefs);
 
         if (constMap.isEmpty()) {
             return new ApplyResult(extraction, sweep, sweepVals, paramDefs);
@@ -2381,6 +2445,340 @@ public class SimulatePacket {
                         voltData, currData, probeUnits, bookLines);
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Monte Carlo
+    // -------------------------------------------------------------------------
+
+    /**
+     * Wraps the deck's control block in a Monte Carlo loop. {@code mc_source}
+     * reloads the netlist from internal storage each iteration, re-rolling
+     * every statistical {@code .param} (gauss/agauss/unif/aunif/limit) and any
+     * distribution the model library carries (manual ch. 18.5); the body's
+     * {@code run} then executes the reloaded deck's analysis line. The marker
+     * echo before each run lets {@link NgSpiceRunner#runSweep} split the
+     * combined stdout per iteration, and {@code setseed} makes the whole
+     * session reproducible. Verified on ngspice-46 in batch mode.
+     */
+    private static String wrapControlWithMc(String netlist, int runs, int seed) {
+        int ctrl = netlist.indexOf(".control\n");
+        int endc = netlist.lastIndexOf(".endc");
+        if (ctrl < 0 || endc <= ctrl) return netlist;
+        int bodyStart = ctrl + ".control\n".length();
+        String body = netlist.substring(bodyStart, endc);
+
+        StringBuilder sb = new StringBuilder(body.length() + 256);
+        sb.append("  setseed ").append(seed).append('\n');
+        sb.append("  let mcrun = 1\n");
+        sb.append("  dowhile mcrun <= ").append(runs).append('\n');
+        sb.append("    mc_source\n");
+        sb.append("    echo ").append(NgSpiceRunner.SWEEP_MARKER).append(" $&mcrun\n");
+        for (String line : body.split("\n")) {
+            if (line.isEmpty()) continue;
+            sb.append("  ").append(line).append('\n');
+        }
+        sb.append("    let mcrun = mcrun + 1\n");
+        sb.append("  end\n");
+        return netlist.substring(0, bodyStart) + sb + netlist.substring(endc);
+    }
+
+    /**
+     * Monte Carlo: {@code runs} reruns of the selected analysis in ONE ngspice
+     * process. Variation comes from distribution Param variables and/or the
+     * model library. Per-run curves overlay as {@code @runK} series (AC / TRAN
+     * / DC); OP plots each probe against the run index. Every {@code meas} /
+     * {@code print} scalar is sampled across runs and summarised as
+     * mean / sd / min / max — per-run values go to the book only, so chat
+     * stays readable at high run counts.
+     */
+    private void runMonteCarlo(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        int runs,
+        double tempC,
+        List<String> bookLines
+    ) {
+        List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
+        List<NetlistBuilder.CurrentProbeInfo> cpList = extraction.currentProbes;
+
+        int seed;
+        try {
+            seed = Integer.parseInt(mcSeed.trim());
+        } catch (NumberFormatException e) {
+            seed = 1 + new java.util.Random().nextInt(Integer.MAX_VALUE - 1);
+        }
+
+        String header = "=== Monte Carlo: " + runs + " runs (" + analysis
+                + ", seed " + seed + ") ===";
+        msg(player, header, ChatFormatting.GOLD);
+        bookLines.add(header);
+        boolean anyDist = extraction.parametricBlocks.stream().anyMatch(
+                p -> com.circuitsim.simulation.ParamSpec.isDistribution(p.valuesString));
+        if (!anyDist) {
+            msg(player, "Note: no distribution Param variables (e.g. Rv = gauss(10k, 0.05, 3)) — "
+                    + "variation must come from the model library (e.g. an 'mc' corner section).",
+                    ChatFormatting.YELLOW);
+        }
+        if (mcSeed.isBlank()) {
+            msg(player, "Seed " + seed + " — enter it in the seed field to reproduce this run.",
+                    ChatFormatting.GRAY);
+        }
+
+        // Base netlist for the analysis — same builders as the param sweep.
+        String netlist;
+        String dcSrc = "";
+        switch (analysis) {
+            case "AC" -> netlist = NetlistBuilder.buildAcNetlist(
+                    extraction.components, effectiveProbes, cpList,
+                    fStart, fStop, ptsPerDec,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots);
+            case "TRAN" -> netlist = NetlistBuilder.buildTranNetlist(
+                    extraction.components, effectiveProbes, cpList,
+                    fStart, fStop,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots);
+            case "DC" -> {
+                double dcStartV, dcStopV, dcStepV;
+                try {
+                    dcStartV = ComponentEditScreen.parseSI(dcStart1);
+                    dcStopV  = ComponentEditScreen.parseSI(dcStop1);
+                    dcStepV  = ComponentEditScreen.parseSI(dcStep1);
+                } catch (NumberFormatException nfe) {
+                    msg(player, "DC range fields must parse as numbers.", ChatFormatting.RED);
+                    return;
+                }
+                dcSrc = dcSource1 == null ? "" : dcSource1.trim();
+                if (dcStepV == 0 || dcSrc.isEmpty()) {
+                    msg(player, "DC sweep needs a source name and a non-zero step.", ChatFormatting.RED);
+                    return;
+                }
+                netlist = NetlistBuilder.buildDcNetlist(
+                        extraction.components, effectiveProbes, cpList,
+                        dcSrc, dcStartV, dcStopV, dcStepV,
+                        false, "", 0, 0, 1,
+                        pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                        extraction.userCommands, extraction.userPlots);
+            }
+            default -> netlist = NetlistBuilder.buildNetlist(
+                    extraction.components, effectiveProbes, cpList,
+                    pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
+                    extraction.userCommands, extraction.userPlots);
+        }
+
+        netlist = injectTemp(injectParams(injectSubcktDefs(netlist, activeSubcktDefs),
+                activeParamDefs), tempC);
+        netlist = wrapControlWithMc(netlist, runs, seed);
+        printNetlist(player, netlist, bookLines);
+
+        NgSpiceRunner.SweepResult sw = NgSpiceRunner.runSweep(netlist, ngBehavior);
+        if (sw.error != null) {
+            String first = sw.error.lines().filter(l -> !l.isBlank())
+                    .findFirst().orElse("unknown error");
+            msg(player, "Simulation Error: " + first, ChatFormatting.RED);
+            bookLines.add("Error: " + first);
+            return;
+        }
+        int n = Math.min(sw.steps.size(), runs);
+        if (n == 0) {
+            msg(player, "Monte Carlo returned no per-run results.", ChatFormatting.RED);
+            return;
+        }
+        if (sw.steps.size() != runs) {
+            msg(player, "Monte Carlo produced " + sw.steps.size() + " of "
+                    + runs + " runs.", ChatFormatting.YELLOW);
+        }
+
+        Map<String, List<Double>> voltData   = new LinkedHashMap<>();
+        Map<String, List<Double>> currData   = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
+        // meas/print scalar samples across runs, for the summary statistics.
+        Map<String, List<Double>> measSamples = new LinkedHashMap<>();
+
+        switch (analysis) {
+            case "AC" -> {
+                List<Double> freqAxis = null;
+                for (int i = 0; i < n; i++) {
+                    NgSpiceRunner.Result step = sw.steps.get(i);
+                    if (step.acData.isEmpty()) continue;
+                    List<Double> sorted = new ArrayList<>(step.acData.keySet());
+                    Collections.sort(sorted);
+                    if (freqAxis == null) freqAxis = sorted;
+                    collectSweepSeries(step.acData, sorted, "@run" + (i + 1), true,
+                            effectiveProbes, cpList, extraction.userPlots,
+                            voltData, currData, probeUnits);
+                    collectMeasSamples(step, measSamples, bookLines);
+                }
+                if (freqAxis == null) return;
+                storeAndLink(player, "Frequency", "Hz", freqAxis, true, -1,
+                        voltData, currData, probeUnits, bookLines);
+            }
+            case "TRAN" -> {
+                // No FFT companion for MC — hundreds of spectra bloat the
+                // session for little value; run FFT on a single run instead.
+                List<Double> timeAxis = null;
+                for (int i = 0; i < n; i++) {
+                    NgSpiceRunner.Result step = sw.steps.get(i);
+                    if (step.tranData.isEmpty()) continue;
+                    List<Double> sorted = new ArrayList<>(step.tranData.keySet());
+                    Collections.sort(sorted);
+                    if (timeAxis == null) timeAxis = sorted;
+                    collectSweepSeries(step.tranData, sorted, "@run" + (i + 1), false,
+                            effectiveProbes, cpList, extraction.userPlots,
+                            voltData, currData, probeUnits);
+                    collectMeasSamples(step, measSamples, bookLines);
+                }
+                if (timeAxis == null) return;
+                storeAndLink(player, "Time", "s", timeAxis, false, -1,
+                        voltData, currData, probeUnits, bookLines);
+            }
+            case "DC" -> {
+                List<Double> dcAxis = null;
+                for (int i = 0; i < n; i++) {
+                    NgSpiceRunner.Result step = sw.steps.get(i);
+                    if (step.dcData.isEmpty()) continue;
+                    List<Double> sorted = new ArrayList<>(step.dcData.keySet());
+                    Collections.sort(sorted);
+                    if (dcAxis == null) dcAxis = sorted;
+                    collectSweepSeries(step.dcData, sorted, "@run" + (i + 1), false,
+                            effectiveProbes, cpList, extraction.userPlots,
+                            voltData, currData, probeUnits);
+                    collectMeasSamples(step, measSamples, bookLines);
+                }
+                if (dcAxis == null) return;
+                String xUnit = Character.toUpperCase(dcSrc.charAt(0)) == 'I' ? "A" : "V";
+                storeAndLink(player, dcSrc, xUnit, dcAxis, false, -1,
+                        voltData, currData, probeUnits, bookLines);
+            }
+            default -> {   // OP: one scalar set per run → probe-vs-run plot
+                List<Double> validRuns = new ArrayList<>();
+                // K-menu frames per run stay affordable at low counts only.
+                List<NetlistBuilder.DeviceRef> opRefs = runs <= 40
+                        ? NetlistBuilder.describeDevices(extraction.components) : null;
+                List<OperatingPointPacket.Frame> opFrames = new ArrayList<>();
+                for (NetlistBuilder.ProbeInfo p : plotted(effectiveProbes))
+                    voltData.put(p.label, new ArrayList<>());
+                for (int k = 0; k < cpList.size(); k++)
+                    currData.put(cpList.get(k).label, new ArrayList<>());
+                for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                    voltData.put(plot.label, new ArrayList<>());
+                    probeUnits.put(plot.label, plot.unit);
+                }
+                for (int i = 0; i < n; i++) {
+                    NgSpiceRunner.Result step = sw.steps.get(i);
+                    if (step.values.isEmpty() && step.extrasByName.isEmpty()) continue;
+                    validRuns.add((double) (i + 1));
+                    if (opRefs != null && !step.deviceOps.isEmpty()) {
+                        opFrames.add(opFrame(opRefs, "run " + (i + 1),
+                                step.deviceOps, extraction));
+                    }
+                    for (NetlistBuilder.ProbeInfo probe : plotted(effectiveProbes)) {
+                        Double v = step.values.get("v(" + probe.netName + ")");
+                        voltData.get(probe.label).add(v != null ? v : 0.0);
+                    }
+                    for (int k = 0; k < cpList.size(); k++) {
+                        Double v = step.values.get("i(vm" + (k + 1) + ")");
+                        currData.get(cpList.get(k).label).add(v != null ? v : 0.0);
+                    }
+                    for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                        Double v = step.extrasByName.get(plot.name);
+                        voltData.get(plot.label).add(v != null ? v : 0.0);
+                    }
+                    collectMeasSamples(step, measSamples, bookLines);
+                }
+                if (opRefs != null) sendOpFrames(player, opFrames);
+                // Each fully-sampled meas scalar becomes its own value-vs-run
+                // series so its spread is visible in the graph.
+                java.util.Set<String> upNames = new java.util.HashSet<>();
+                for (NetlistBuilder.UserPlot plot : extraction.userPlots) {
+                    upNames.add(plot.name.toLowerCase(java.util.Locale.ROOT));
+                }
+                for (Map.Entry<String, List<Double>> e : measSamples.entrySet()) {
+                    if (upNames.contains(e.getKey().toLowerCase(java.util.Locale.ROOT))) continue;
+                    if (e.getValue().size() == validRuns.size() && !voltData.containsKey(e.getKey())) {
+                        voltData.put(e.getKey(), e.getValue());
+                        probeUnits.put(e.getKey(), "");
+                    }
+                }
+                if (validRuns.isEmpty()) return;
+                storeAndLink(player, "MC run", "", validRuns, false, -1,
+                        voltData, currData, probeUnits, bookLines);
+            }
+        }
+
+        // The headline numbers: distribution statistics of every measured
+        // scalar across the runs.
+        if (!measSamples.isEmpty()) {
+            String title = "--- Monte Carlo statistics (" + n + " runs) ---";
+            msg(player, title, ChatFormatting.GOLD);
+            bookLines.add(title);
+            for (Map.Entry<String, List<Double>> e : measSamples.entrySet()) {
+                String line = "  " + statsLine(e.getKey(), e.getValue());
+                msg(player, line, ChatFormatting.AQUA);
+                bookLines.add(line);
+            }
+        }
+
+        // For AC/TRAN/DC the main session's X axis is frequency/time/voltage,
+        // so the meas scalars (gain, pm, …) get their own value-vs-run session
+        // — open it and toggle "Hist" on the plot for a distribution
+        // histogram. (The OP branch already carries them as series.)
+        if (!"OP".equals(analysis) && !measSamples.isEmpty()) {
+            int axisLen = measSamples.values().stream()
+                    .mapToInt(List::size).max().orElse(0);
+            if (axisLen >= 2) {
+                Map<String, List<Double>> mcScalars = new LinkedHashMap<>();
+                Map<String, String>       mcUnits   = new LinkedHashMap<>();
+                for (Map.Entry<String, List<Double>> e : measSamples.entrySet()) {
+                    // Only fully-sampled scalars: a meas that failed on some
+                    // runs can't align with the run axis.
+                    if (e.getValue().size() == axisLen) {
+                        mcScalars.put(e.getKey(), e.getValue());
+                        mcUnits.put(e.getKey(), "");
+                    }
+                }
+                if (!mcScalars.isEmpty()) {
+                    List<Double> runAxis = new ArrayList<>(axisLen);
+                    for (int i = 1; i <= axisLen; i++) runAxis.add((double) i);
+                    int sid = ParametricResultCache.store(
+                            new ParametricResultCache.ResultSet(
+                                    "MC run", "", runAxis, mcScalars,
+                                    new LinkedHashMap<>(), mcUnits, false));
+                    msg(player, "MC scalar distributions (open and toggle Hist):",
+                            ChatFormatting.DARK_AQUA);
+                    emitGraphLinks(player, sid, mcScalars,
+                            new LinkedHashMap<>(), mcUnits);
+                }
+            }
+        }
+    }
+
+    /** Samples every meas/print scalar of one run; per-run lines go to the book only. */
+    private static void collectMeasSamples(NgSpiceRunner.Result step,
+                                           Map<String, List<Double>> samples,
+                                           List<String> bookLines) {
+        for (Map.Entry<String, Double> e : step.extrasByName.entrySet()) {
+            samples.computeIfAbsent(e.getKey(), k -> new ArrayList<>()).add(e.getValue());
+        }
+        for (String extra : step.extras) bookLines.add("  " + extra);
+    }
+
+    /** "name: mean=… sd=… min=… max=… (n=…)" with SI-formatted values. */
+    private static String statsLine(String name, List<Double> vals) {
+        int n = vals.size();
+        double mean = 0;
+        for (double v : vals) mean += v;
+        mean /= n;
+        double var = 0;
+        for (double v : vals) var += (v - mean) * (v - mean);
+        double sd = n > 1 ? Math.sqrt(var / (n - 1)) : 0;
+        double min = Collections.min(vals), max = Collections.max(vals);
+        return name + ": mean=" + ComponentEditScreen.formatValue(mean)
+                + "  sd=" + ComponentEditScreen.formatValue(sd)
+                + "  min=" + ComponentEditScreen.formatValue(min)
+                + "  max=" + ComponentEditScreen.formatValue(max)
+                + "  (n=" + n + ")";
     }
 
     /**

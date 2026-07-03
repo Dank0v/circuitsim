@@ -57,6 +57,9 @@ public class SimulateEditScreen extends Screen {
     // the incoming one's (see loadActiveParams) instead of resetting to defaults.
     private String savedAc1   = "10", savedAc2   = "1Meg", savedAc3   = "10";
     private String savedTran1 = "1u", savedTran2 = "10m",  savedTran3 = "";
+    // Monte Carlo state — run count ("" = off) and RNG seed ("" = random).
+    private String savedMcRuns = "";
+    private String savedMcSeed = "";
     // Set after the first init() so subsequent rebuilds preserve in-flight edits
     // instead of re-reading from the block entity.
     private boolean loadedFromBe = false;
@@ -73,6 +76,8 @@ public class SimulateEditScreen extends Screen {
     private EditBox param2Field;
     private EditBox param3Field;
     private EditBox tempField;
+    private EditBox mcRunsField;
+    private EditBox mcSeedField;
     // DC widgets — populated when DC fields are visible in the layout.
     private EditBox dcSrc1Field, dcStart1Field, dcStop1Field, dcStep1Field;
     private EditBox dcSrc2Field, dcStart2Field, dcStop2Field, dcStep2Field;
@@ -83,7 +88,7 @@ public class SimulateEditScreen extends Screen {
     private static final String[] NOISE_SWEEPS = {"dec", "lin", "oct"};
 
     private static final int W = 290,
-        H = 358;
+        H = 381;
 
     // Analysis types live in an array so the selector scales: add an entry
     // here (plus a description and a refreshFields()/setAnalysis() branch) and
@@ -137,19 +142,22 @@ public class SimulateEditScreen extends Screen {
     private static final int Y_NOISE_ROW1  = 88;
     private static final int Y_NOISE_ROW2  = 125;
     private static final int Y_PARAM_TEMP = 147;       // temperature override (single value or sweep spec)
-    private static final int Y_DIV_AFTER_PARAMS = 167;
+    // Monte Carlo row: run count + seed. Distributions come from Param blocks
+    // (e.g. Rv = gauss(10k, 0.05, 3)); the row applies to the active analysis.
+    private static final int Y_PARAM_MC   = 170;
+    private static final int Y_DIV_AFTER_PARAMS = 190;
     // Compat section
-    private static final int Y_COMPAT_LABEL = 174;
-    private static final int Y_COMPAT_CHIPS = 188;
-    private static final int Y_DIV_AFTER_COMPAT = 211;
+    private static final int Y_COMPAT_LABEL = 197;
+    private static final int Y_COMPAT_CHIPS = 211;
+    private static final int Y_DIV_AFTER_COMPAT = 234;
     // Library section (hsa/psa only). A single label + multi-line box, one
     // include path per line. No PDK selector here anymore — the model prefix
     // is chosen per IC component block.
-    private static final int Y_LIB_LABEL2  = 218;
-    private static final int Y_LIB_FIELD2  = 232;
+    private static final int Y_LIB_LABEL2  = 241;
+    private static final int Y_LIB_FIELD2  = 255;
     // MultiLineEditBox draws its "chars/limit" counter at (bottom + 4), so the
-    // box must end well above the Simulate/Cancel row (at H-28 = 330) or the
-    // counter overlaps the buttons. 232 + 78 = 310 leaves the counter clear.
+    // box must end well above the Simulate/Cancel row (at H-28 = 353) or the
+    // counter overlaps the buttons. 255 + 78 = 333 leaves the counter clear.
     private static final int H_LIB_FIELD   = 78;
 
     public SimulateEditScreen(BlockPos pos) {
@@ -198,6 +206,8 @@ public class SimulateEditScreen extends Screen {
                 savedTran1 = cbe.getSimTranParam1();
                 savedTran2 = cbe.getSimTranParam2();
                 savedTran3 = cbe.getSimTranParam3();
+                savedMcRuns = cbe.getMcRuns();
+                savedMcSeed = cbe.getMcSeed();
             }
             // Migrate any saved world that still has the now-removed
             // dedicated TEMP analysis to plain OP — the temperature field
@@ -274,6 +284,15 @@ public class SimulateEditScreen extends Screen {
         String tempHint = "27 or 20:40:5";
         tempField.setSuggestion(savedTemp.isEmpty() ? tempHint : "");
         tempField.setResponder(text -> tempField.setSuggestion(text.isEmpty() ? tempHint : ""));
+
+        // Monte Carlo: run count + seed. Distributions come from Param blocks
+        // (gauss/agauss/unif/aunif/limit); off when the runs field is empty.
+        mcRunsField = small(px + 128, py + Y_PARAM_MC, 40, savedMcRuns);
+        mcRunsField.setSuggestion(savedMcRuns.isEmpty() ? "off" : "");
+        mcRunsField.setResponder(t -> mcRunsField.setSuggestion(t.isEmpty() ? "off" : ""));
+        mcSeedField = small(px + 216, py + Y_PARAM_MC, 60, savedMcSeed);
+        mcSeedField.setSuggestion(savedMcSeed.isEmpty() ? "auto" : "");
+        mcSeedField.setResponder(t -> mcSeedField.setSuggestion(t.isEmpty() ? "auto" : ""));
         refreshFields();
 
         addRenderableWidget(
@@ -492,6 +511,8 @@ public class SimulateEditScreen extends Screen {
         if (noiseFstartField != null) savedNoiseFstart = noiseFstartField.getValue();
         if (noiseFstopField  != null) savedNoiseFstop  = noiseFstopField.getValue();
         if (noiseSumField    != null) savedNoiseSum    = noiseSumField.getValue();
+        if (mcRunsField      != null) savedMcRuns      = mcRunsField.getValue();
+        if (mcSeedField      != null) savedMcSeed      = mcSeedField.getValue();
     }
 
     @Override
@@ -663,6 +684,11 @@ public class SimulateEditScreen extends Screen {
         // ("20:40:5" or "20,30,40") triggers one run per temperature.
         g.drawString(f, "Temperature (°C):", px + 16, py + Y_PARAM_TEMP + 3, LABEL);
 
+        // Monte Carlo row. Runs come from this field; distributions from
+        // Param blocks (gauss/agauss/unif/aunif/limit).
+        g.drawString(f, "Monte Carlo runs:", px + 16, py + Y_PARAM_MC + 3, LABEL);
+        g.drawString(f, "seed:", px + 184, py + Y_PARAM_MC + 3, LABEL);
+
         // compat section (moved above PDK)
         g.drawString(f, "compat:", px + 16, py + Y_COMPAT_LABEL, LABEL);
         for (int i = 0; i < NG_MODES.length; i++) {
@@ -754,6 +780,9 @@ public class SimulateEditScreen extends Screen {
                 savedNoiseOut, savedNoiseRef, savedNoiseSrc, savedNoiseSweep,
                 savedNoisePts, savedNoiseFstart, savedNoiseFstop, savedNoiseSum,
                 savedAc1, savedAc2, savedAc3, savedTran1, savedTran2, savedTran3);
+        pkt.withMonteCarlo(
+                mcRunsField != null ? mcRunsField.getValue().trim() : savedMcRuns,
+                mcSeedField != null ? mcSeedField.getValue().trim() : savedMcSeed);
         if (netlistOnly) pkt.asNetlistView();
         ModMessages.sendToServer(pkt);
     }
