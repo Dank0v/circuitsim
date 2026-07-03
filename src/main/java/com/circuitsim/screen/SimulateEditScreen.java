@@ -88,16 +88,17 @@ public class SimulateEditScreen extends Screen {
     // Analysis types live in an array so the selector scales: add an entry
     // here (plus a description and a refreshFields()/setAnalysis() branch) and
     // it shows up as another tab — no layout/height changes required.
-    private static final String[] ANALYSES = {"OP", "DC", "AC", "TRAN", "NOISE"};
+    private static final String[] ANALYSES = {"OP", "DC", "AC", "TRAN", "NOISE", "STB"};
     private static final String[] ANALYSIS_DESC = {
         ".OP — DC operating point",
         ".DC — DC sweep",
         ".AC — frequency sweep",
         ".TRAN — transient analysis",
         ".NOISE — small-signal noise analysis",
+        ".STB — loop-gain stability (needs a Loop Probe)",
     };
     // Tab-strip geometry (constant height regardless of analysis count).
-    private static final int TAB_W = 48, TAB_GAP = 6, TAB_H = 16;
+    private static final int TAB_W = 42, TAB_GAP = 6, TAB_H = 16;
 
     private static final int BG = 0xFF1E1E1E;
     private static final int BORDER = 0xFF4A90D9;
@@ -341,24 +342,27 @@ public class SimulateEditScreen extends Screen {
         boolean tran  = "TRAN".equals(analysis);
         boolean dc    = "DC".equals(analysis);
         boolean noise = "NOISE".equals(analysis);
-        boolean acTran = ac || tran;
+        boolean stb   = "STB".equals(analysis);
+        // STB reuses the AC frequency-sweep fields (start / stop / pts-per-dec).
+        boolean acStb = ac || stb;
+        boolean freqRow = ac || tran || stb;
 
-        // AC/TRAN param row widgets — visible (and editable) only for those
+        // AC/TRAN/STB param row widgets — visible (and editable) only for those
         // analyses; otherwise hidden so the DC fields can occupy the same Y.
         if (param1Field != null) {
-            param1Field.visible = acTran;
-            param1Field.setEditable(acTran);
-            param1Field.setTextColor(acTran ? 0xFFFFFFFF : DIM);
+            param1Field.visible = freqRow;
+            param1Field.setEditable(freqRow);
+            param1Field.setTextColor(freqRow ? 0xFFFFFFFF : DIM);
         }
         if (param2Field != null) {
-            param2Field.visible = acTran;
-            param2Field.setEditable(acTran);
-            param2Field.setTextColor(acTran ? 0xFFFFFFFF : DIM);
+            param2Field.visible = freqRow;
+            param2Field.setEditable(freqRow);
+            param2Field.setTextColor(freqRow ? 0xFFFFFFFF : DIM);
         }
         if (param3Field != null) {
-            param3Field.visible = acTran;
-            param3Field.setEditable(ac);
-            param3Field.setTextColor(ac ? 0xFFFFFFFF : DIM);
+            param3Field.visible = freqRow;
+            param3Field.setEditable(acStb);
+            param3Field.setTextColor(acStb ? 0xFFFFFFFF : DIM);
         }
 
         // DC widgets — visible only when DC is selected.
@@ -401,7 +405,8 @@ public class SimulateEditScreen extends Screen {
      * these three fields; for the others this is a no-op.
      */
     private void stashActiveParams() {
-        if ("AC".equals(analysis)) {
+        if ("AC".equals(analysis) || "STB".equals(analysis)) {
+            // STB reuses the AC frequency-sweep fields, so it shares AC's bucket.
             savedAc1 = savedParam1; savedAc2 = savedParam2; savedAc3 = savedParam3;
         } else if ("TRAN".equals(analysis)) {
             savedTran1 = savedParam1; savedTran2 = savedParam2; savedTran3 = savedParam3;
@@ -415,7 +420,7 @@ public class SimulateEditScreen extends Screen {
      * whose param widgets stay hidden. Safe to call before the widgets exist.
      */
     private void loadActiveParams() {
-        if ("AC".equals(analysis)) {
+        if ("AC".equals(analysis) || "STB".equals(analysis)) {
             savedParam1 = savedAc1; savedParam2 = savedAc2; savedParam3 = savedAc3;
         } else if ("TRAN".equals(analysis)) {
             savedParam1 = savedTran1; savedParam2 = savedTran2; savedParam3 = savedTran3;
@@ -576,6 +581,7 @@ public class SimulateEditScreen extends Screen {
         boolean ac    = "AC".equals(analysis);
         boolean tran  = "TRAN".equals(analysis);
         boolean noise = "NOISE".equals(analysis);
+        boolean stb   = "STB".equals(analysis);
 
         // Analysis-type tab strip — one row, constant height however many
         // analyses exist (see ANALYSES). Selected tab is highlighted like the
@@ -634,7 +640,7 @@ public class SimulateEditScreen extends Screen {
         // AC/TRAN param labels — rendered only when the matching analysis is
         // active. OP and DC leave this region empty (DC uses the same Y for
         // its own labels above).
-        if (ac) {
+        if (ac || stb) {
             g.drawString(f, "Start Freq (Hz):", px + 16, py + Y_PARAM1 + 3, LABEL);
             g.drawString(f, "Stop Freq  (Hz):", px + 16, py + Y_PARAM2 + 3, LABEL);
             g.drawString(f, "Pts / Decade:",   px + 16, py + Y_PARAM3 + 3, LABEL);
@@ -688,7 +694,8 @@ public class SimulateEditScreen extends Screen {
             p2 = 0.0;
         int p3 = 10;
 
-        if ("AC".equals(analysis)) {
+        if ("AC".equals(analysis) || "STB".equals(analysis)) {
+            // STB uses the same start/stop/pts-per-decade frequency sweep as AC.
             try {
                 p1 = ComponentEditScreen.parseSI(param1Field.getValue().trim());
             } catch (Exception ignored) {

@@ -13,6 +13,7 @@
     "block.circuitsim.ground": "Ground",
     "block.circuitsim.probe": "Probe",
     "block.circuitsim.current_probe": "Current Probe",
+    "block.circuitsim.loop_probe": "Loop Probe",
     "block.circuitsim.simulate": "Simulate Block",
     "block.circuitsim.parametric": "Param Block",
     "block.circuitsim.commands": "Commands Block",

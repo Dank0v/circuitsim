@@ -72,6 +72,10 @@ public class ModBlocks {
             () -> new CurrentProbeBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_LIGHT_BLUE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> LOOP_PROBE = BLOCKS.register("loop_probe",
+            () -> new LoopProbeBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_PURPLE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static final RegistryObject<Block> SIMULATE = BLOCKS.register("simulate",
             () -> new SimulateBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_LIGHT_GREEN).strength(2.0f).pushReaction(PushReaction.BLOCK)));

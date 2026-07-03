@@ -967,6 +967,7 @@ public class CircuitExtractor {
                 || block instanceof GroundBlock
                 || block instanceof ProbeBlock
                 || block instanceof CurrentProbeBlock
+                || block instanceof LoopProbeBlock
                 || block instanceof SimulateBlock
                 || block instanceof ParametricBlock
                 || block instanceof CommandsBlock

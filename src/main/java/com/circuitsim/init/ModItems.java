@@ -29,6 +29,7 @@ public class ModItems {
     public static final RegistryObject<Item> GROUND             = blockItem(ModBlocks.GROUND);
     public static final RegistryObject<Item> PROBE              = blockItem(ModBlocks.PROBE);
     public static final RegistryObject<Item> CURRENT_PROBE      = blockItem(ModBlocks.CURRENT_PROBE);
+    public static final RegistryObject<Item> LOOP_PROBE         = blockItem(ModBlocks.LOOP_PROBE);
     public static final RegistryObject<Item> SIMULATE           = blockItem(ModBlocks.SIMULATE);
     public static final RegistryObject<Item> PARAMETRIC         = blockItem(ModBlocks.PARAMETRIC);
     public static final RegistryObject<Item> COMMANDS           = blockItem(ModBlocks.COMMANDS);

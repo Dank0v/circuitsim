@@ -35,6 +35,7 @@ public class ModCreativeTabs {
                                 output.accept(ModItems.GROUND.get());
                                 output.accept(ModItems.PROBE.get());
                                 output.accept(ModItems.CURRENT_PROBE.get());
+                                output.accept(ModItems.LOOP_PROBE.get());
                                 output.accept(ModItems.SIMULATE.get());
                                 output.accept(ModItems.PARAMETRIC.get());
                                 output.accept(ModItems.COMMANDS.get());

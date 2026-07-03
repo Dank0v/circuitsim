@@ -480,6 +480,13 @@ public class SimulatePacket {
             } else if ("DC".equals(analysis)) {
                 double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
                 runDcSimulation(player, extraction, bookLines, tempC);
+            } else if ("STB".equals(analysis)) {
+                double tempC = tempValues.isEmpty() ? 27.0 : tempValues.get(0);
+                if (tempValues.size() > 1) {
+                    msg(player, "Stability analysis runs at a single temperature; using "
+                            + ComponentEditScreen.formatValue(tempC) + "C.", ChatFormatting.YELLOW);
+                }
+                runStbSimulation(player, extraction, bookLines, tempC);
             } else if (tempValues.size() > 1 && "OP".equals(analysis)) {
                 // OP + multi-temp produces a 1D probe-vs-temperature plot.
                 runTempSweep(player, extraction, tempValues, bookLines);
@@ -771,6 +778,218 @@ public class SimulatePacket {
         );
         emitOutputViewerLink(player, sessionId, bookLines,
                 "CircuitSim Output (AC)");
+    }
+
+    // -------------------------------------------------------------------------
+    // .STB  (loop-gain stability — Tian dual injection)
+    // -------------------------------------------------------------------------
+
+    private void runStbSimulation(
+        ServerPlayer player,
+        CircuitExtractor.ExtractionResult extraction,
+        List<String> bookLines,
+        double tempC
+    ) {
+        // Locate the loop probe(s). v1 supports exactly one break point.
+        List<NetlistBuilder.CircuitComponent> loops = new ArrayList<>();
+        for (NetlistBuilder.CircuitComponent c : extraction.components) {
+            if (c.block instanceof LoopProbeBlock) loops.add(c);
+        }
+        if (loops.isEmpty()) {
+            msg(player, "Stability (.STB) needs a Loop Probe placed in series in the feedback loop.",
+                    ChatFormatting.RED);
+            bookLines.add("Error: no Loop Probe in circuit.");
+            return;
+        }
+        if (loops.size() > 1) {
+            msg(player, "Found " + loops.size() + " Loop Probes; .STB supports exactly one break point.",
+                    ChatFormatting.RED);
+            bookLines.add("Error: multiple Loop Probes.");
+            return;
+        }
+        int loopA = loops.get(0).nodeA;   // amp-output side (front)
+        int loopB = loops.get(0).nodeB;   // load / feedback side (back)
+
+        List<NetlistBuilder.ProbeInfo> effectiveProbes = effectiveProbes(extraction);
+
+        // Two injection decks: voltage injection (Tv) and current injection (Ti).
+        NgSpiceRunner.Result vRun = runStbDeck(player, extraction, effectiveProbes,
+                loopA, loopB, tempC, true, bookLines);
+        if (vRun == null) return;
+        NgSpiceRunner.Result iRun = runStbDeck(player, extraction, effectiveProbes,
+                loopA, loopB, tempC, false, bookLines);
+        if (iRun == null) return;
+
+        // Combine per frequency: T = (2·Tv·Ti + Tv + Ti)/(Tv + Ti + 2).
+        List<Double> freqAxis = new ArrayList<>(vRun.acData.keySet());
+        freqAxis.retainAll(iRun.acData.keySet());
+        Collections.sort(freqAxis);
+        if (freqAxis.isEmpty()) {
+            msg(player, "No STB results returned (check the loop probe placement).", ChatFormatting.RED);
+            return;
+        }
+
+        List<Double> gainDb = new ArrayList<>(freqAxis.size());
+        List<Double> phaseDeg = new ArrayList<>(freqAxis.size());
+        for (double f : freqAxis) {
+            double[] tv = { valOr(vRun.acData.get(f), "tr_re_mag", 0),
+                            valOr(vRun.acData.get(f), "tr_im_mag", 0) };
+            double[] ti = { valOr(iRun.acData.get(f), "tr_re_mag", 0),
+                            valOr(iRun.acData.get(f), "tr_im_mag", 0) };
+            // Middlebrook double injection: 1/(1+T) = 1/(1+Tv) + 1/(1+Ti),
+            // i.e. T = (Tv·Ti − 1)/(Tv + Ti + 2). This collapses to whichever of
+            // Tv/Ti is the accurate one at the break (e.g. Tv at a high-Z node,
+            // where Ti → ∞), so it recovers the true loop gain regardless of the
+            // break-point impedance.
+            double[] tvti  = cMul(tv, ti);
+            double[] num   = new double[]{tvti[0] - 1, tvti[1]};
+            double[] den   = cAdd(cAdd(tv, ti), new double[]{2, 0});
+            double[] t     = cDiv(num, den);
+            double mag = Math.hypot(t[0], t[1]);
+            gainDb.add(20.0 * Math.log10(Math.max(mag, 1e-300)));
+            phaseDeg.add(Math.toDegrees(Math.atan2(t[1], t[0])));
+        }
+        // Unwrap so the phase is continuous — atan2 wraps at ±180°, which would
+        // otherwise hide the −180° crossing (gain margin) and jag the Bode plot.
+        unwrapDegrees(phaseDeg);
+
+        // Headline metrics: DC/low-freq gain, unity-gain freq + phase margin,
+        // −180° frequency + gain margin.
+        double dcGain = gainDb.get(0);
+        double[] cross = firstCrossing(freqAxis, gainDb, 0.0);       // |T| = 0 dB
+        double[] pi180 = firstCrossing(freqAxis, phaseDeg, -180.0);  // ∠T = −180°
+
+        msg(player, "--- Stability (loop gain, " + freqAxis.size() + " pts) ---", ChatFormatting.GREEN);
+        bookLines.add("=== Stability (.STB) ===");
+        stbLine(player, bookLines, "DC loop gain", ComponentEditScreen.formatValue(dcGain) + " dB");
+        // True gain-bandwidth product = DC loop gain (linear) × −3 dB bandwidth.
+        // Distinct from the unity-gain crossover below (they coincide only for a
+        // dominant single pole).
+        double[] f3dbCross = firstCrossing(freqAxis, gainDb, dcGain - 3.0);
+        if (f3dbCross != null) {
+            double f3db = f3dbCross[0];
+            double gbw  = Math.pow(10.0, dcGain / 20.0) * f3db;
+            stbLine(player, bookLines, "−3 dB bandwidth", ComponentEditScreen.formatValue(f3db) + " Hz");
+            stbLine(player, bookLines, "Gain·BW product", ComponentEditScreen.formatValue(gbw) + " Hz");
+        }
+        if (cross != null) {
+            double fc = cross[0], phAtFc = interp(freqAxis, phaseDeg, fc, true);
+            double pm = 180.0 + phAtFc;
+            stbLine(player, bookLines, "Unity-gain freq", ComponentEditScreen.formatValue(fc) + " Hz");
+            stbLine(player, bookLines, "Phase margin", ComponentEditScreen.formatValue(pm) + "°");
+        } else {
+            stbLine(player, bookLines, "Unity-gain freq", "not crossed in sweep");
+        }
+        if (pi180 != null) {
+            double f180 = pi180[0], gAt180 = interp(freqAxis, gainDb, f180, true);
+            stbLine(player, bookLines, "−180° freq", ComponentEditScreen.formatValue(f180) + " Hz");
+            stbLine(player, bookLines, "Gain margin", ComponentEditScreen.formatValue(-gAt180) + " dB");
+        } else {
+            stbLine(player, bookLines, "Gain margin", "phase stays above −180°");
+        }
+
+        // Two independently-openable curves: loop gain (dB) and phase (deg).
+        Map<String, List<Double>> voltData = new LinkedHashMap<>();
+        Map<String, List<Double>> currData = new LinkedHashMap<>();
+        Map<String, String>       probeUnits = new LinkedHashMap<>();
+        voltData.put("Loop Gain", gainDb);
+        voltData.put("Loop Phase", phaseDeg);
+        probeUnits.put("Loop Gain", "dB");
+        probeUnits.put("Loop Phase", "°");
+
+        int sessionId = ParametricResultCache.store(
+                new ParametricResultCache.ResultSet(
+                        "Frequency", "Hz", freqAxis, voltData, currData, probeUnits, true));
+        emitGraphLinks(player, sessionId, voltData, currData, probeUnits);
+        emitOutputViewerLink(player, sessionId, bookLines, "CircuitSim Output (STB)");
+    }
+
+    /** Builds, prepares, runs and error-checks one STB injection deck. */
+    private NgSpiceRunner.Result runStbDeck(
+        ServerPlayer player, CircuitExtractor.ExtractionResult extraction,
+        List<NetlistBuilder.ProbeInfo> effectiveProbes, int loopA, int loopB,
+        double tempC, boolean voltageInjection, List<String> bookLines
+    ) {
+        String netlist = NetlistBuilder.buildStbNetlist(
+                extraction.components, effectiveProbes, loopA, loopB,
+                fStart, fStop, ptsPerDec, pdkName, pdkLibPath, pdkLibPaths,
+                ngBehavior, voltageInjection);
+        netlist = prepareNetlist(netlist, tempC);
+        printNetlist(player, netlist, bookLines);
+        NgSpiceRunner.Result result = NgSpiceRunner.run(netlist, ngBehavior);
+        if (result.error != null) {
+            msg(player, "Simulation Error (" + (voltageInjection ? "V" : "I")
+                    + " injection): " + result.error, ChatFormatting.RED);
+            bookLines.add("Error: " + result.error);
+            return null;
+        }
+        return result;
+    }
+
+    private static void stbLine(ServerPlayer player, List<String> bookLines, String label, String value) {
+        String line = "  " + label + ": " + value;
+        msg(player, line, ChatFormatting.AQUA);
+        bookLines.add(line);
+    }
+
+    private static double valOr(Map<String, Double> row, String key, double dflt) {
+        if (row == null) return dflt;
+        Double v = row.get(key);
+        return v == null ? dflt : v;
+    }
+
+    /** In-place phase unwrap (degrees): removes ±360° jumps for a continuous curve. */
+    private static void unwrapDegrees(List<Double> ph) {
+        for (int i = 1; i < ph.size(); i++) {
+            double adj = ph.get(i);
+            while (adj - ph.get(i - 1) > 180)  adj -= 360;
+            while (adj - ph.get(i - 1) < -180) adj += 360;
+            ph.set(i, adj);
+        }
+    }
+
+    // --- small complex helpers (re, im) ---
+    private static double[] cAdd(double[] a, double[] b) { return new double[]{a[0] + b[0], a[1] + b[1]}; }
+    private static double[] cMul(double[] a, double[] b) {
+        return new double[]{a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]};
+    }
+    private static double[] cDiv(double[] a, double[] b) {
+        double d = b[0] * b[0] + b[1] * b[1];
+        if (d == 0) return new double[]{0, 0};
+        return new double[]{(a[0] * b[0] + a[1] * b[1]) / d, (a[1] * b[0] - a[0] * b[1]) / d};
+    }
+
+    /**
+     * First frequency (log-interpolated) at which {@code y} crosses {@code level},
+     * or null if it never does. Returns {@code [freq]}.
+     */
+    private static double[] firstCrossing(List<Double> freq, List<Double> y, double level) {
+        for (int i = 1; i < freq.size(); i++) {
+            double y0 = y.get(i - 1) - level, y1 = y.get(i) - level;
+            if (y0 == 0) return new double[]{freq.get(i - 1)};
+            if (y0 * y1 < 0) {
+                double frac = y0 / (y0 - y1);
+                double lf = Math.log10(freq.get(i - 1))
+                        + frac * (Math.log10(freq.get(i)) - Math.log10(freq.get(i - 1)));
+                return new double[]{Math.pow(10, lf)};
+            }
+        }
+        return null;
+    }
+
+    /** Value of {@code y} at frequency {@code fx}, linear (or log-freq) interpolated. */
+    private static double interp(List<Double> freq, List<Double> y, double fx, boolean logFreq) {
+        for (int i = 1; i < freq.size(); i++) {
+            double f0 = freq.get(i - 1), f1 = freq.get(i);
+            if ((fx >= f0 && fx <= f1) || (fx >= f1 && fx <= f0)) {
+                double a0 = logFreq ? Math.log10(f0) : f0;
+                double a1 = logFreq ? Math.log10(f1) : f1;
+                double ax = logFreq ? Math.log10(fx) : fx;
+                double frac = (a1 == a0) ? 0 : (ax - a0) / (a1 - a0);
+                return y.get(i - 1) + frac * (y.get(i) - y.get(i - 1));
+            }
+        }
+        return y.get(fx <= freq.get(0) ? 0 : y.size() - 1);
     }
 
     // -------------------------------------------------------------------------

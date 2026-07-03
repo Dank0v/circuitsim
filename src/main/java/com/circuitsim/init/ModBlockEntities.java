@@ -30,6 +30,7 @@ public class ModBlockEntities {
                             ModBlocks.GROUND.get(),
                             ModBlocks.PROBE.get(),
                             ModBlocks.CURRENT_PROBE.get(),
+                            ModBlocks.LOOP_PROBE.get(),
                             ModBlocks.SIMULATE.get(),
                             ModBlocks.PARAMETRIC.get(),
                             ModBlocks.COMMANDS.get(),

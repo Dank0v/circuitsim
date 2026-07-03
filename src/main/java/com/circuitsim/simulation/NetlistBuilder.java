@@ -345,6 +345,14 @@ public class NetlistBuilder {
                 line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof VSwitchBlock) {
                 line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else if (comp.block instanceof LoopProbeBlock) {
+                // A loop probe is a transparent 0 V short in every analysis
+                // except .STB (which builds its own injection deck). The name is
+                // keyed off the block position so it stays unique without a
+                // counter and never collides with the V / VM families.
+                line = String.format("VLP%d %s %s DC 0",
+                        Math.abs(comp.pos.hashCode()) % 100000,
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -475,6 +483,14 @@ public class NetlistBuilder {
                 line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof VSwitchBlock) {
                 line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else if (comp.block instanceof LoopProbeBlock) {
+                // A loop probe is a transparent 0 V short in every analysis
+                // except .STB (which builds its own injection deck). The name is
+                // keyed off the block position so it stays unique without a
+                // counter and never collides with the V / VM families.
+                line = String.format("VLP%d %s %s DC 0",
+                        Math.abs(comp.pos.hashCode()) % 100000,
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -821,6 +837,14 @@ public class NetlistBuilder {
                 line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof VSwitchBlock) {
                 line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else if (comp.block instanceof LoopProbeBlock) {
+                // A loop probe is a transparent 0 V short in every analysis
+                // except .STB (which builds its own injection deck). The name is
+                // keyed off the block position so it stays unique without a
+                // counter and never collides with the V / VM families.
+                line = String.format("VLP%d %s %s DC 0",
+                        Math.abs(comp.pos.hashCode()) % 100000,
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -885,6 +909,146 @@ public class NetlistBuilder {
                                          List<CurrentProbeInfo> currentProbes,
                                          double fStart, double fStop, int ptsPerDec) {
         return buildAcNetlist(components, probes, currentProbes, fStart, fStop, ptsPerDec, "none", "");
+    }
+
+    // -------------------------------------------------------------------------
+    // .STB  (loop-gain stability, Tian dual-injection)
+    // -------------------------------------------------------------------------
+
+    /** Internal break node created by the loop-probe injection triple. */
+    private static final String STB_MID = "lpstbmid";
+
+    /**
+     * Builds one injection deck for the Tian dual-injection loop-gain method.
+     * The loop probe (its net pair {@code loopA}/{@code loopB}) is removed and
+     * replaced by an injection triple around the internal node {@link #STB_MID}:
+     * <pre>
+     *   Vinj   loopA  mid   DC 0 AC {1|0}   ; series voltage injection + amp-side ammeter
+     *   Vsense mid    loopB DC 0 AC 0        ; load-side ammeter
+     *   Iinj   0      mid   DC 0 AC {0|1}   ; shunt current injection
+     * </pre>
+     * All three are DC 0, so the bias / loop closure is identical to the intact
+     * circuit (this is what keeps the current-injection deck's operating point
+     * well-defined). {@code voltageInjection=true} energises {@code Vinj} and
+     * prints the voltage return ratio {@code -v(A)/v(B)}; {@code false} energises
+     * {@code Iinj} and prints the current return ratio {@code -i(Vsense)/i(Vinj)}.
+     * All independent-source AC magnitudes are forced to 0 so the injection is
+     * the only excitation. The caller combines the two runs' return ratios via
+     * the Tian formula {@code T = (2·Tv·Ti + Tv + Ti)/(Tv + Ti + 2)}.
+     */
+    public static String buildStbNetlist(List<CircuitComponent> components,
+                                         List<ProbeInfo> probes,
+                                         int loopA, int loopB,
+                                         double fStart, double fStop, int ptsPerDec,
+                                         String pdkName, String pdkLibPath,
+                                         String pdkLibPaths, String ngBehavior,
+                                         boolean voltageInjection) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("* CircuitSim STB Netlist (")
+          .append(voltageInjection ? "voltage" : "current")
+          .append(" injection)\n");
+        appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+
+        java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
+
+        IndexAssigner rIdx = new IndexAssigner(), cIdx = new IndexAssigner(),
+                      lIdx = new IndexAssigner(), vIdx = new IndexAssigner(),
+                      iIdx = new IndexAssigner(), dIdx = new IndexAssigner(),
+                      mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
+                      eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
+                      gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+        claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+        java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
+        boolean hasDiode = false;
+
+        for (CircuitComponent comp : components) {
+            // The loop probe's slot is taken over by the injection triple below.
+            if (comp.block instanceof LoopProbeBlock) continue;
+            String line;
+            if (comp.subcircuitNodes != null) {
+                line = formatSubcircuit(xIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcResistorBlock) {
+                line = formatIcResistor(rIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcCapacitorBlock) {
+                line = formatIcCapacitor(cIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof IcNmos4Block) {
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof IcPmos4Block) {
+                line = formatIcMosfet(mIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof ResistorBlock) {
+                line = formatResistor(rIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof CapacitorBlock) {
+                line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof InductorBlock) {
+                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof VoltageSourceBlock) {
+                // AC forced to 0 — only the injection excites the loop.
+                line = String.format("V%d %s %s DC %s AC 0",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof VoltageSourceSinBlock) {
+                line = String.format("V%d %s %s DC 0 AC 0",
+                        vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
+            } else if (comp.block instanceof VoltageSourcePulseBlock) {
+                line = String.format("V%d %s %s DC %g AC 0",
+                        vIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                        comp.wParam);
+            } else if (comp.block instanceof CurrentSourceBlock) {
+                line = String.format("I%d %s %s DC %s AC 0",
+                        iIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+            } else if (comp.block instanceof DiodeBlock) {
+                String dmodel = (comp.modelName == null || comp.modelName.isBlank())
+                        ? "DMOD" : comp.modelName.trim();
+                line = String.format("D%d %s %s %s",
+                        dIdx.assign(comp.componentNumber),
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
+                if ("DMOD".equals(dmodel)) hasDiode = true;
+            } else if (comp.block instanceof BehavioralVoltageSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, true, aliases);
+            } else if (comp.block instanceof BehavioralCurrentSourceBlock) {
+                line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
+            } else if (comp.block instanceof VSwitchBlock) {
+                line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else {
+                String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
+                if (controlled == null) continue;
+                line = controlled;
+            }
+            sb.append(line).append("\n");
+        }
+
+        // Injection triple in place of the loop probe.
+        String a = nodeRef(loopA, aliases), b = nodeRef(loopB, aliases);
+        sb.append(String.format("Vinj %s %s DC 0 AC %d\n", a, STB_MID, voltageInjection ? 1 : 0));
+        sb.append(String.format("Vsense %s %s DC 0 AC 0\n", STB_MID, b));
+        sb.append(String.format("Iinj 0 %s DC 0 AC %d\n", STB_MID, voltageInjection ? 0 : 1));
+
+        if (hasDiode) sb.append(".MODEL DMOD D\n");
+        appendSwitchModels(sb, swModels);
+
+        sb.append(String.format(".ac dec %d %g %g\n", ptsPerDec, fStart, fStop));
+        sb.append(".control\n");
+        sb.append("  run\n");
+        // The return ratio for this injection; printed as real + imag so the
+        // Java side can rebuild the complex value and combine both runs.
+        // Tv = -v(A)/v(B); Ti = i(Vinj)/i(Vsense) = -i_ampSide/i_feedbackSide, so
+        // Ti → ∞ at a high-impedance feedback node (which makes the Middlebrook
+        // combine collapse to the accurate voltage-injection value there).
+        if (voltageInjection) {
+            sb.append(String.format("  let tr = -v(%s)/v(%s)\n", a, b));
+        } else {
+            sb.append("  let tr = i(vinj)/i(vsense)\n");
+        }
+        sb.append("  let tr_re = real(tr)\n");
+        sb.append("  let tr_im = imag(tr)\n");
+        sb.append("  print tr_re tr_im\n");
+        sb.append(".endc\n");
+        sb.append(".end\n");
+        return sb.toString();
     }
 
     // -------------------------------------------------------------------------
@@ -979,6 +1143,14 @@ public class NetlistBuilder {
                 line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof VSwitchBlock) {
                 line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else if (comp.block instanceof LoopProbeBlock) {
+                // A loop probe is a transparent 0 V short in every analysis
+                // except .STB (which builds its own injection deck). The name is
+                // keyed off the block position so it stays unique without a
+                // counter and never collides with the V / VM families.
+                line = String.format("VLP%d %s %s DC 0",
+                        Math.abs(comp.pos.hashCode()) % 100000,
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -1099,6 +1271,14 @@ public class NetlistBuilder {
                 line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof VSwitchBlock) {
                 line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else if (comp.block instanceof LoopProbeBlock) {
+                // A loop probe is a transparent 0 V short in every analysis
+                // except .STB (which builds its own injection deck). The name is
+                // keyed off the block position so it stays unique without a
+                // counter and never collides with the V / VM families.
+                line = String.format("VLP%d %s %s DC 0",
+                        Math.abs(comp.pos.hashCode()) % 100000,
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;
@@ -1273,6 +1453,14 @@ public class NetlistBuilder {
                 line = formatBehavioral(bIdx.assign(comp.componentNumber), comp, false, aliases);
             } else if (comp.block instanceof VSwitchBlock) {
                 line = formatSwitch(comp, sIdx, aliases, swModels);
+            } else if (comp.block instanceof LoopProbeBlock) {
+                // A loop probe is a transparent 0 V short in every analysis
+                // except .STB (which builds its own injection deck). The name is
+                // keyed off the block position so it stays unique without a
+                // counter and never collides with the V / VM families.
+                line = String.format("VLP%d %s %s DC 0",
+                        Math.abs(comp.pos.hashCode()) % 100000,
+                        nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases));
             } else {
                 String controlled = formatControlledSource(comp, eIdx, fIdx, gIdx, hIdx, aliases);
                 if (controlled == null) continue;

@@ -1,0 +1,8 @@
+{
+    "parent": "minecraft:block/orientable",
+    "textures": {
+        "top": "circuitsim:block/loop_probe",
+        "side": "circuitsim:block/loop_probe_side",
+        "front": "circuitsim:block/loop_probe_front"
+    }
+}

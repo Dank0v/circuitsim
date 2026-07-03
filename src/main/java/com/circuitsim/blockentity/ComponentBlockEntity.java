@@ -156,6 +156,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.DIODE.get())              return "diode";
         if (block == ModBlocks.PROBE.get())              return "probe";
         if (block == ModBlocks.CURRENT_PROBE.get())      return "current_probe";
+        if (block == ModBlocks.LOOP_PROBE.get())         return "loop_probe";
         if (block == ModBlocks.SIMULATE.get())           return "simulate";
         if (block == ModBlocks.IC_RESISTOR.get())          return "ic_resistor3";
         if (block == ModBlocks.IC_CAPACITOR.get())         return "ic_capacitor2";
