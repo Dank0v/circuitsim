@@ -20,10 +20,18 @@ import java.util.Set;
  * group has an expand/collapse chevron, and group-level T/B buttons toggle
  * every variant into the matching slot at once.
  *
- * <p>A plot slot can only hold variants from one group at a time — adding a
- * probe from a different group auto-clears the slot first. This prevents
- * accidentally overlaying unrelated quantities (e.g. gain_db with gain_ph)
- * on the same axes.
+ * <p>A plot slot can mix probes from different groups, so unrelated
+ * quantities can be overlaid on the same axes deliberately (e.g. v(in) with
+ * v(out)). When a slot's occupants span more than one group the Y-axis stem
+ * is dropped, and the unit is shown only when all occupants agree on it; the
+ * sidebar swatches, hover tooltip and cursor readout identify the individual
+ * curves. A probe still lives in only one slot (top or bottom) at a time.
+ *
+ * <p>The T/B buttons cycle each curve (or group) through three states:
+ * off → left axis → right axis (shown as "R") → off. Right-axis curves get
+ * their own auto-scaled Y axis rendered at the plot's right edge, so
+ * quantities with very different ranges — an amplifier's gain in dB and its
+ * phase in degrees — can share a plot without squashing each other.
  *
  * <p>When {@code isLogFrequency} is true the shared X axis is rendered on a
  * log10 scale, the standard presentation for AC Bode-style plots.
@@ -58,6 +66,14 @@ public class GraphScreen extends Screen {
     // the palette colour. slot1 = top plot, slot2 = bottom.
     private final Set<Integer> slot1 = new LinkedHashSet<>();
     private final Set<Integer> slot2 = new LinkedHashSet<>();
+    /**
+     * Probes whose curve reads against the right-hand Y axis of whatever plot
+     * they're in. The T/B buttons cycle each curve: off → left axis → right
+     * axis → off, so e.g. gain (dB) and phase (deg) can share a plot without
+     * one squashing the other. Ignored while it would leave the left axis
+     * empty (a lone right-axis curve renders as a normal left-axis plot).
+     */
+    private final Set<Integer> rightAxis = new HashSet<>();
 
     // ── group model ─────────────────────────────────────────────────────────
     // Groups are derived from probe names by taking the prefix before '@'.
@@ -234,81 +250,83 @@ public class GraphScreen extends Screen {
     // ── slot assignment ─────────────────────────────────────────────────────
 
     /**
-     * Adds {@code idx} to slot 1 (top). If the slot currently holds probes
-     * from a different group they're cleared first — a slot only holds one
-     * group's variants at a time. Removes from slot 2 if it's there.
+     * Adds {@code idx} to slot 1 (top). Probes from different groups may share
+     * a slot — overlaying unrelated quantities is allowed; the Y-axis label
+     * and unit fall back to whatever the occupants have in common. A probe
+     * still lives in only one slot at a time, so it's removed from slot 2.
      */
     private void addToSlot1(int idx) {
-        String g = groupOf(idx);
-        if (slotGroup(slot1) != null && !slotGroup(slot1).equals(g)) slot1.clear();
         slot2.remove(idx);
         slot1.add(idx);
+        rightAxis.remove(idx);
     }
 
     private void addToSlot2(int idx) {
-        String g = groupOf(idx);
-        if (slotGroup(slot2) != null && !slotGroup(slot2).equals(g)) slot2.clear();
         slot1.remove(idx);
         slot2.add(idx);
+        rightAxis.remove(idx);
     }
 
-    private void removeFromSlot1(int idx) { slot1.remove(idx); }
-    private void removeFromSlot2(int idx) { slot2.remove(idx); }
-
-    /** Toggle a single variant in the top slot. */
+    /** Cycle a single variant through the top slot: off → left → right → off. */
     private void toggleVariantSlot1(int idx) {
-        if (slot1.contains(idx)) removeFromSlot1(idx);
-        else                     addToSlot1(idx);
+        if (!slot1.contains(idx))            addToSlot1(idx);
+        else if (!rightAxis.contains(idx))   rightAxis.add(idx);
+        else                                 { slot1.remove(idx); rightAxis.remove(idx); }
     }
 
     private void toggleVariantSlot2(int idx) {
-        if (slot2.contains(idx)) removeFromSlot2(idx);
-        else                     addToSlot2(idx);
+        if (!slot2.contains(idx))            addToSlot2(idx);
+        else if (!rightAxis.contains(idx))   rightAxis.add(idx);
+        else                                 { slot2.remove(idx); rightAxis.remove(idx); }
     }
 
     /**
-     * Toggles every variant of {@code group} in/out of the top slot. If every
-     * variant is already there, remove them all; otherwise replace the slot's
-     * contents with this group's full set.
+     * Cycles every variant of {@code group} through the top slot together:
+     * (none/partial) → all on the left axis → all on the right axis → off.
      */
     private void toggleGroupSlot1(String group) {
-        List<Integer> members = groupMembers.get(group);
-        if (members == null) return;
-        boolean allIn = !members.isEmpty();
-        for (int idx : members) if (!slot1.contains(idx)) { allIn = false; break; }
-        if (allIn) {
-            for (int idx : members) slot1.remove(idx);
-        } else {
-            String existing = slotGroup(slot1);
-            if (existing != null && !existing.equals(group)) slot1.clear();
-            for (int idx : members) {
-                slot2.remove(idx);
-                slot1.add(idx);
-            }
-        }
+        cycleGroup(group, slot1, slot2);
     }
 
     private void toggleGroupSlot2(String group) {
+        cycleGroup(group, slot2, slot1);
+    }
+
+    private void cycleGroup(String group, Set<Integer> slot, Set<Integer> other) {
         List<Integer> members = groupMembers.get(group);
-        if (members == null) return;
-        boolean allIn = !members.isEmpty();
-        for (int idx : members) if (!slot2.contains(idx)) { allIn = false; break; }
-        if (allIn) {
-            for (int idx : members) slot2.remove(idx);
+        if (members == null || members.isEmpty()) return;
+        boolean allIn = true, allRight = true;
+        for (int idx : members) {
+            if (!slot.contains(idx))      { allIn = false; break; }
+            if (!rightAxis.contains(idx)) allRight = false;
+        }
+        if (allIn && allRight) {
+            for (int idx : members) { slot.remove(idx); rightAxis.remove(idx); }
+        } else if (allIn) {
+            rightAxis.addAll(members);
         } else {
-            String existing = slotGroup(slot2);
-            if (existing != null && !existing.equals(group)) slot2.clear();
             for (int idx : members) {
-                slot1.remove(idx);
-                slot2.add(idx);
+                other.remove(idx);
+                slot.add(idx);
+                rightAxis.remove(idx);
             }
         }
     }
 
-    /** Returns the (single) group name occupying this slot, or null if empty. */
-    private String slotGroup(Set<Integer> slot) {
-        if (slot.isEmpty()) return null;
-        return groupOf(slot.iterator().next());
+    /**
+     * Returns the group name shared by every occupant of this slot, or null
+     * when the slot is empty or holds a mix of groups — callers use it for
+     * the slot summary and Y-axis stem, which have no single honest name in
+     * the mixed case.
+     */
+    private String slotGroup(java.util.Collection<Integer> slot) {
+        String common = null;
+        for (int idx : slot) {
+            String g = groupOf(idx);
+            if (common == null) common = g;
+            else if (!common.equals(g)) return null;
+        }
+        return common;
     }
 
     /** Returns the palette colour assigned to probe {@code idx} in its slot, or 0. */
@@ -329,14 +347,20 @@ public class GraphScreen extends Screen {
         return -1;
     }
 
-    /** "all", "some", or "none" of this group's variants in the given slot. */
+    /**
+     * "all", "right" (all present and all on the right axis), "some", or
+     * "none" of this group's variants in the given slot.
+     */
     private String groupSlotState(String group, Set<Integer> slot) {
         List<Integer> members = groupMembers.get(group);
         if (members == null || members.isEmpty()) return "none";
-        int hits = 0;
-        for (int idx : members) if (slot.contains(idx)) hits++;
+        int hits = 0, right = 0;
+        for (int idx : members) {
+            if (slot.contains(idx)) hits++;
+            if (rightAxis.contains(idx)) right++;
+        }
         if (hits == 0) return "none";
-        if (hits == members.size()) return "all";
+        if (hits == members.size()) return right == members.size() ? "right" : "all";
         return "some";
     }
 
@@ -635,12 +659,13 @@ public class GraphScreen extends Screen {
             } else { // VARIANT row
                 boolean inTop = slot1.contains(row.probeIdx);
                 boolean inBot = slot2.contains(row.probeIdx);
+                boolean onRight = rightAxis.contains(row.probeIdx);
                 int curveColour = colourOf(row.probeIdx);
                 if (drawBtns) {
-                    drawSlotButton(g, sx + X_BTN_T, btnY, inTop, curveColour, "T",
-                            mouseX, mouseY);
-                    drawSlotButton(g, sx + X_BTN_B, btnY, inBot, curveColour, "B",
-                            mouseX, mouseY);
+                    drawSlotButton(g, sx + X_BTN_T, btnY, inTop, curveColour,
+                            inTop && onRight ? "R" : "T", mouseX, mouseY);
+                    drawSlotButton(g, sx + X_BTN_B, btnY, inBot, curveColour,
+                            inBot && onRight ? "R" : "B", mouseX, mouseY);
                 }
                 int textX = sx + X_TEXT + VARIANT_INDENT;
                 // Swatch when in a slot
@@ -708,11 +733,12 @@ public class GraphScreen extends Screen {
         boolean hover = mouseX >= x && mouseX < x + BTN_W && mouseY >= y && mouseY < y + BTN_H;
         int bg;
         switch (state) {
-            case "all"  -> bg = onColour;
-            case "some" -> bg = C_BTN_PARTIAL;
-            default     -> bg = hover ? C_BTN_OFF_HV : C_BTN_OFF;
+            case "all", "right" -> bg = onColour;
+            case "some"         -> bg = C_BTN_PARTIAL;
+            default             -> bg = hover ? C_BTN_OFF_HV : C_BTN_OFF;
         }
-        drawButton(g, x, y, bg, label, !"none".equals(state));
+        // "R" marks a group reading against the right-hand Y axis.
+        drawButton(g, x, y, bg, "right".equals(state) ? "R" : label, !"none".equals(state));
     }
 
     private void drawButton(GuiGraphics g, int x, int y, int bg, String label, boolean on) {
@@ -824,39 +850,22 @@ public class GraphScreen extends Screen {
             return;
         }
 
-        // Log Y needs a positive floor; if the data has no positive samples a
-        // log axis is meaningless, so quietly fall back to linear for this draw.
-        double yFloor = 1e-30;
-        boolean effLogY = logY;
-        if (effLogY) {
-            double posMin = Double.POSITIVE_INFINITY;
-            for (int idx : active)
-                for (double v : probeData.get(idx))
-                    if (v > 0 && v < posMin) posMin = v;
-            if (Double.isFinite(posMin)) yFloor = posMin;
-            else effLogY = false;
-        }
+        // Split the occupants by Y axis. A right-axis assignment only takes
+        // effect while the left axis keeps at least one curve — a plot of
+        // only "right" curves renders as a normal left-axis plot.
+        List<Integer> activeL = new ArrayList<>(), activeR = new ArrayList<>();
+        for (int idx : active) (rightAxis.contains(idx) ? activeR : activeL).add(idx);
+        if (activeL.isEmpty()) { activeL = activeR; activeR = List.of(); }
+        boolean dual = !activeR.isEmpty();
+        // The sidebar sits immediately right of the plot, so the right axis'
+        // tick labels can't hang outside — reserve a gutter inside instead.
+        if (dual) gw -= 42;
 
-        double yMin = Double.POSITIVE_INFINITY, yMax = Double.NEGATIVE_INFINITY;
-        for (int idx : active) {
-            for (double v : probeData.get(idx)) {
-                double s = scaleY(v, effLogY, yFloor);
-                if (s < yMin) yMin = s;
-                if (s > yMax) yMax = s;
-            }
-        }
-        if (!Double.isFinite(yMin) || !Double.isFinite(yMax)) { yMin = 0; yMax = 1; }
-        if (yMax == yMin) { yMin -= 1; yMax += 1; }
-        if (effLogY) {
-            // Snap the range out to whole decades so gridlines and labels land
-            // on clean powers of ten.
-            yMin = Math.floor(yMin);
-            yMax = Math.ceil(yMax);
-            if (yMax == yMin) yMax += 1;
-        } else {
-            double yPad = (yMax - yMin) * 0.10;
-            yMin -= yPad; yMax += yPad;
-        }
+        double[] axL = computeYAxis(activeL, logY);
+        double[] axR = dual ? computeYAxis(activeR, logY) : null;
+        double  yMin    = axL[0], yMax = axL[1];
+        boolean effLogY = axL[2] != 0;
+        double  yFloor  = axL[3];
 
         double[] xr = xRange();
         double xMin = xr[0], xMax = xr[1];
@@ -888,14 +897,29 @@ public class GraphScreen extends Screen {
         g.fill(gx,      gy,      gx + 1, gy + gh,      C_AXIS);
         g.fill(gx,      gy + gh, gx + gw, gy + gh + 1, C_AXIS);
 
-        String stem = slotGroup(slot);
-        String yUnitLabel = commonUnit(active);
+        if (dual) drawRightAxis(g, gx, gy, gw, gh, axR);
+
+        String stem = slotGroup(activeL);
+        String yUnitLabel = commonUnit(activeL);
         String yLabel = (stem == null ? "" : stem)
                 + (yUnitLabel.isEmpty() ? "" : "  (" + yUnitLabel + ")")
                 + (effLogY ? "  [log]" : "");
         if (!yLabel.isEmpty()) {
-            int yColour = active.size() == 1 ? palette[0] : C_LABEL;
-            g.drawString(font, ellipsize(yLabel, gw - 4), gx + 2, gy - 9, yColour);
+            int yColour = activeL.size() == 1 ? colourOf(activeL.get(0)) : C_LABEL;
+            g.drawString(font, ellipsize(yLabel, dual ? gw / 2 : gw - 4),
+                    gx + 2, gy - 9, yColour);
+        }
+        if (dual) {
+            String stemR = slotGroup(activeR);
+            String unitR = commonUnit(activeR);
+            String rLabel = (stemR == null ? "" : stemR)
+                    + (unitR.isEmpty() ? "" : "  (" + unitR + ")")
+                    + (axR[2] != 0 ? "  [log]" : "");
+            if (!rLabel.isEmpty()) {
+                int rColour = activeR.size() == 1 ? colourOf(activeR.get(0)) : C_LABEL;
+                String shown = ellipsize(rLabel, gw / 2);
+                g.drawString(font, shown, gx + gw + 42 - font.width(shown), gy - 9, rColour);
+            }
         }
 
         if (drawXAxis) {
@@ -910,21 +934,59 @@ public class GraphScreen extends Screen {
         int hoverCurve = -1;
         int hoverIdx   = -1;
 
+        // Cursor readout placement: instead of always covering the top-left
+        // (where flat Bode passbands and multi-curve param sweeps usually
+        // live), tally how many curve samples fall under each candidate
+        // corner while the curves are being mapped, then put the box in the
+        // emptiest one. The top-right candidate sits below the Log/Cur
+        // toolbar.
+        boolean anyCursor = cursorMode
+                && ((cursors[0] >= 0 && cursors[0] < n) || (cursors[1] >= 0 && cursors[1] < n));
+        List<String> roLines = anyCursor ? cursorReadout(active, cursors) : null;
+        int[][] roCand = null;
+        int[]   roCounts = null;
+        if (roLines != null && !roLines.isEmpty()) {
+            int[] sz = readoutSize(roLines, gw);
+            int byBot = Math.max(gy + 3, gy + gh - sz[1] - 3);
+            roCand = new int[][]{
+                { gx + 3,              gy + 3,  sz[0], sz[1] },
+                { gx + gw - sz[0] - 3, gy + 16, sz[0], sz[1] },
+                { gx + 3,              byBot,   sz[0], sz[1] },
+                { gx + gw - sz[0] - 3, byBot,   sz[0], sz[1] },
+            };
+            roCounts = new int[4];
+        }
+
         int order = 0;
         for (int probeIdx : active) {
             int colour = palette[order % palette.length];
             order++;
+            // Map against whichever Y axis this curve reads on.
+            boolean onR   = dual && activeR.contains(probeIdx);
+            double  aMin  = onR ? axR[0] : yMin;
+            double  aMax  = onR ? axR[1] : yMax;
+            boolean aLog  = onR ? axR[2] != 0 : effLogY;
+            double  aFloor = onR ? axR[3] : yFloor;
             List<Double> series = probeData.get(probeIdx);
             int[] px = new int[n];
             int[] py = new int[n];
             for (int i = 0; i < n; i++) {
                 double xf   = (scaleX(sweepValues.get(i)) - xMin) / (xMax - xMin);
-                double yf   = (scaleY(series.get(i), effLogY, yFloor) - yMin) / (yMax - yMin);
+                double yf   = (scaleY(series.get(i), aLog, aFloor) - aMin) / (aMax - aMin);
                 px[i] = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
                 py[i] = clamp(gy + gh - 1 - (int)(yf * (gh - 1)), gy, gy + gh - 1);
                 if (Math.abs(mouseX - px[i]) <= 5 && Math.abs(mouseY - py[i]) <= 5) {
                     hoverCurve = probeIdx;
                     hoverIdx   = i;
+                }
+                if (roCand != null) {
+                    for (int c = 0; c < roCand.length; c++) {
+                        int[] r = roCand[c];
+                        if (px[i] >= r[0] - 2 && px[i] < r[0] + r[2] + 2
+                                && py[i] >= r[1] - 2 && py[i] < r[1] + r[3] + 2) {
+                            roCounts[c]++;
+                        }
+                    }
                 }
             }
             for (int i = 1; i < n; i++) drawLine(g, px[i-1], py[i-1], px[i], py[i], colour);
@@ -938,7 +1000,15 @@ public class GraphScreen extends Screen {
 
         // Cursors and their readout sit above the curves but below the hover
         // highlight so a hovered point stays legible.
-        drawCursors(g, gx, gy, gw, gh, xMin, xMax, active, cursors);
+        int[] roRect = null;
+        if (roCand != null) {
+            int best = 0;
+            for (int c = 1; c < roCand.length; c++) {
+                if (roCounts[c] < roCounts[best]) best = c;
+            }
+            roRect = roCand[best];
+        }
+        drawCursors(g, gx, gy, gw, gh, xMin, xMax, cursors, roLines, roRect);
 
         if (hoverIdx >= 0 && hoverCurve >= 0) {
             List<Double> series = probeData.get(hoverCurve);
@@ -952,8 +1022,13 @@ public class GraphScreen extends Screen {
             String name = probeNames.get(hoverCurve);
             String tip  = name + ": " + yStr + " at " + xStr;
             int tw = font.width(tip) + 6, th = 12;
+            boolean hR    = dual && activeR.contains(hoverCurve);
+            double  hMin  = hR ? axR[0] : yMin;
+            double  hMax  = hR ? axR[1] : yMax;
+            boolean hLog  = hR ? axR[2] != 0 : effLogY;
+            double  hFloor = hR ? axR[3] : yFloor;
             double xf = (scaleX(rawXH) - xMin) / (xMax - xMin);
-            double yf = (scaleY(series.get(hoverIdx), effLogY, yFloor) - yMin) / (yMax - yMin);
+            double yf = (scaleY(series.get(hoverIdx), hLog, hFloor) - hMin) / (hMax - hMin);
             int hx = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
             int hy = clamp(gy + gh - 1 - (int)(yf * (gh - 1)), gy, gy + gh - 1);
             int tx = clamp(hx + 6, gx, gx + gw - tw);
@@ -989,6 +1064,81 @@ public class GraphScreen extends Screen {
     /** Maps a raw value into scaled Y space (log10 above a floor when logarithmic). */
     private static double scaleY(double v, boolean logY, double floor) {
         return logY ? Math.log10(Math.max(v, floor)) : v;
+    }
+
+    /**
+     * Scale of one Y axis over {@code curves}: {yMin, yMax, effLog (0/1),
+     * floor}, in scaled-Y space, padded (linear) or decade-snapped (log).
+     * Log Y needs a positive floor; if the data has no positive samples a log
+     * axis is meaningless, so it quietly falls back to linear for this draw.
+     */
+    private double[] computeYAxis(List<Integer> curves, boolean logY) {
+        double yFloor = 1e-30;
+        boolean effLogY = logY;
+        if (effLogY) {
+            double posMin = Double.POSITIVE_INFINITY;
+            for (int idx : curves)
+                for (double v : probeData.get(idx))
+                    if (v > 0 && v < posMin) posMin = v;
+            if (Double.isFinite(posMin)) yFloor = posMin;
+            else effLogY = false;
+        }
+
+        double yMin = Double.POSITIVE_INFINITY, yMax = Double.NEGATIVE_INFINITY;
+        for (int idx : curves) {
+            for (double v : probeData.get(idx)) {
+                double s = scaleY(v, effLogY, yFloor);
+                if (s < yMin) yMin = s;
+                if (s > yMax) yMax = s;
+            }
+        }
+        if (!Double.isFinite(yMin) || !Double.isFinite(yMax)) { yMin = 0; yMax = 1; }
+        if (yMax == yMin) { yMin -= 1; yMax += 1; }
+        if (effLogY) {
+            // Snap the range out to whole decades so gridlines and labels land
+            // on clean powers of ten.
+            yMin = Math.floor(yMin);
+            yMax = Math.ceil(yMax);
+            if (yMax == yMin) yMax += 1;
+        } else {
+            double yPad = (yMax - yMin) * 0.10;
+            yMin -= yPad; yMax += yPad;
+        }
+        return new double[]{ yMin, yMax, effLogY ? 1 : 0, yFloor };
+    }
+
+    /**
+     * The right-hand Y axis: a vertical line at the plot's right edge with
+     * tick dashes and labels in the reserved gutter. No gridlines — the grid
+     * belongs to the left axis, and a second overlaid grid at unrelated
+     * positions reads as noise.
+     */
+    private void drawRightAxis(GuiGraphics g, int gx, int gy, int gw, int gh, double[] ax) {
+        double yMin = ax[0], yMax = ax[1];
+        boolean logR = ax[2] != 0;
+        int x = gx + gw;
+        g.fill(x, gy, x + 1, gy + gh, C_AXIS);
+        if (logR) {
+            int decLo = (int) Math.floor(yMin);
+            int decHi = (int) Math.ceil(yMax);
+            for (int d = decLo; d <= decHi; d++) {
+                double yf = (d - yMin) / (yMax - yMin);
+                if (yf < 0 || yf > 1) continue;
+                int py = gy + (int)((1.0 - yf) * gh);
+                g.fill(x, py, x + 4, py + 1, C_AXIS);
+                g.drawString(font, fmtAxis(Math.pow(10, d)), x + 6, py - 4, C_LABEL);
+            }
+        } else {
+            int yTicks = gh < 160 ? 4 : 6;
+            double yStep = niceTickStep(yMax - yMin, yTicks);
+            double yFirst = Math.ceil(yMin / yStep) * yStep;
+            for (double yVal = yFirst; yVal <= yMax + yStep * 1e-9; yVal += yStep) {
+                double t  = (yVal - yMin) / (yMax - yMin);
+                int    py = gy + (int)((1.0 - t) * gh);
+                g.fill(x, py, x + 4, py + 1, C_AXIS);
+                g.drawString(font, fmtAxis(yVal), x + 6, py - 4, C_LABEL);
+            }
+        }
     }
 
     /** Draws a small right-aligned toggle button, returning its {x,y,w,h} rect. */
@@ -1034,14 +1184,12 @@ public class GraphScreen extends Screen {
      * with both placed the readout reports absolute values for each plus deltas.
      */
     private void drawCursors(GuiGraphics g, int gx, int gy, int gw, int gh,
-                              double xMin, double xMax, List<Integer> active,
-                              int[] cursors) {
+                              double xMin, double xMax, int[] cursors,
+                              List<String> readoutLines, int[] readoutRect) {
         int n = sweepValues.size();
-        boolean any = false;
         for (int k = 0; k < cursors.length; k++) {
             int ci = cursors[k];
             if (ci < 0 || ci >= n) continue;
-            any = true;
             double xf = (scaleX(sweepValues.get(ci)) - xMin) / (xMax - xMin);
             int px = clamp(gx + (int)(xf * gw), gx, gx + gw - 1);
             int col = CURSOR_COLOURS[k % CURSOR_COLOURS.length];
@@ -1051,8 +1199,7 @@ public class GraphScreen extends Screen {
             g.fill(tagX, gy, tagX + 9, gy + 9, 0xCC000000);
             g.drawString(font, tag, tagX + (9 - font.width(tag)) / 2, gy + 1, col);
         }
-        if (!any) return;
-        drawReadout(g, gx, gy, gw, gh, cursorReadout(active, cursors));
+        drawReadout(g, readoutRect, readoutLines);
     }
 
     /**
@@ -1066,6 +1213,10 @@ public class GraphScreen extends Screen {
         int c1 = cursors[0], c2 = cursors[1];
         boolean has1 = c1 >= 0, has2 = c2 >= 0;
         boolean single = active.size() == 1;
+        // With curves from several groups on one plot the @-suffix alone is
+        // ambiguous (gain_db@300fF and gain_ph@300fF both read "300fF") —
+        // fall back to full probe names.
+        boolean mixed = slotGroup(active) == null;
 
         if (has1 && has2) {
             lines.add(col("x", fmtXVal(sweepValues.get(c1)),
@@ -1074,7 +1225,8 @@ public class GraphScreen extends Screen {
             for (int idx : active) {
                 List<Double> series = probeData.get(idx);
                 String unit = probeUnits.get(idx);
-                String prefix = single ? "" : variantLabel(idx) + ": ";
+                String prefix = single ? ""
+                        : (mixed ? probeNames.get(idx) : variantLabel(idx)) + ": ";
                 double y1 = series.get(c1), y2 = series.get(c2);
                 lines.add(prefix + col("y", fmtYVal(y1, unit), fmtYVal(y2, unit),
                                             fmtYVal(y2 - y1, unit)));
@@ -1083,12 +1235,13 @@ public class GraphScreen extends Screen {
             int c = has1 ? c1 : c2;
             lines.add("x = " + fmtXVal(sweepValues.get(c)));
             for (int idx : active) {
-                String nm = single ? "y" : variantLabel(idx);
+                String nm = single ? "y" : (mixed ? probeNames.get(idx) : variantLabel(idx));
                 lines.add(nm + " = " + fmtYVal(probeData.get(idx).get(c), probeUnits.get(idx)));
             }
         }
         return lines;
     }
+
 
     /** Packs a label and its cursor-1 / cursor-2 / delta values into one line. */
     private static String col(String tag, String v1, String v2, String dv) {
@@ -1113,22 +1266,25 @@ public class GraphScreen extends Screen {
     }
 
     /** Translucent readout box anchored to the plot's top-left interior. */
-    private void drawReadout(GuiGraphics g, int gx, int gy, int gw, int gh, List<String> lines) {
-        if (lines.isEmpty()) return;
-        final int pad = 3, lh = 9;
+    private static final int READOUT_PAD = 3, READOUT_LH = 9;
+
+    /** {boxW, boxH} of the readout for {@code lines}, capped to the plot width. */
+    private int[] readoutSize(List<String> lines, int gw) {
         int textW = 0;
         for (String s : lines) textW = Math.max(textW, font.width(s));
-        int boxW = Math.min(textW + pad * 2, gw - 4);
-        int boxH = lines.size() * lh + pad;
-        int bx = gx + 3;
-        int by = gy + 3;
-        if (by + boxH > gy + gh) by = Math.max(gy + 1, gy + gh - boxH);
+        return new int[]{ Math.min(textW + READOUT_PAD * 2, gw - 4),
+                          lines.size() * READOUT_LH + READOUT_PAD };
+    }
+
+    private void drawReadout(GuiGraphics g, int[] rect, List<String> lines) {
+        if (rect == null || lines == null || lines.isEmpty()) return;
+        int bx = rect[0], by = rect[1], boxW = rect[2], boxH = rect[3];
         g.fill(bx - 1, by - 1, bx + boxW + 1, by + boxH + 1, C_BORDER);
         g.fill(bx, by, bx + boxW, by + boxH, 0xE6101022);
-        int ty = by + pad - 1;
+        int ty = by + READOUT_PAD - 1;
         for (String s : lines) {
-            g.drawString(font, ellipsize(s, boxW - pad * 2), bx + pad, ty, 0xFFFFFFFF);
-            ty += lh;
+            g.drawString(font, ellipsize(s, boxW - READOUT_PAD * 2), bx + READOUT_PAD, ty, 0xFFFFFFFF);
+            ty += READOUT_LH;
         }
     }
 

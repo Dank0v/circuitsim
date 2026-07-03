@@ -989,43 +989,13 @@ public class ComponentEditScreen
         return base * multiplier;
     }
 
+    /** SI-suffixed display format — the shared implementation lives in {@link com.circuitsim.simulation.SiFormat}. */
     public static String formatValue(double val) {
-        if (val == 0.0) return "0";
-
-        double abs = Math.abs(val);
-
-        double[][] tiers = {
-            { 1e12, 1e15, 1e12, -1 },
-            { 1e9, 1e12, 1e9, -1 },
-            { 1e6, 1e9, 1e6, -1 },
-            { 1e3, 1e6, 1e3, -1 },
-            { 1e0, 1e3, 1e0, -1 },
-            { 1e-3, 1e0, 1e-3, -1 },
-            { 1e-6, 1e-3, 1e-6, -1 },
-            { 1e-9, 1e-6, 1e-9, -1 },
-            { 1e-12, 1e-9, 1e-12, -1 },
-            { 1e-15, 1e-12, 1e-15, -1 },
-        };
-        String[] names = { "T", "G", "Meg", "k", "", "m", "u", "n", "p", "f" };
-
-        for (int i = 0; i < tiers.length; i++) {
-            if (abs >= tiers[i][0] && abs < tiers[i][1]) {
-                double scaled = val / tiers[i][2];
-                String number = trimTrailingZeros(
-                    String.format("%.6f", scaled)
-                );
-                return number + names[i];
-            }
-        }
-
-        return String.valueOf(val);
+        return com.circuitsim.simulation.SiFormat.value(val);
     }
 
     public static String trimTrailingZeros(String s) {
-        if (!s.contains(".")) return s;
-        s = s.replaceAll("0+$", "");
-        if (s.endsWith(".")) s = s.substring(0, s.length() - 1);
-        return s;
+        return com.circuitsim.simulation.SiFormat.trimTrailingZeros(s);
     }
 
     private void sendUpdatePacket(net.minecraft.core.BlockPos pos) {

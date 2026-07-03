@@ -94,17 +94,17 @@ public class NgSpiceRunner {
          */
         public String getNodeVoltage(String netName) {
             if (netName == null) return "N/A";
-            if ("0".equals(netName)) return "0.000000 V (Ground)";
+            if ("0".equals(netName)) return "0V (Ground)";
             String key = "v(" + netName.toLowerCase() + ")";
             if (values.containsKey(key))
-                return String.format("%.6f V", values.get(key));
+                return SiFormat.value(values.get(key)) + "V";
             return "N/A";
         }
 
         public String getBranchCurrent(String sourceName) {
             String key = "i(" + sourceName.toLowerCase() + ")";
             if (values.containsKey(key))
-                return String.format("%.6f A", values.get(key));
+                return SiFormat.value(values.get(key)) + "A";
             return "N/A";
         }
     }
@@ -222,9 +222,9 @@ public class NgSpiceRunner {
             for (Map.Entry<String, Double> e : result.values.entrySet()) {
                 String k = e.getKey();
                 double v = e.getValue();
-                if (k.startsWith("v("))      result.output.add(String.format("  %s = %.6f V", k, v));
-                else if (k.startsWith("i(")) result.output.add(String.format("  %s = %.6f A", k, v));
-                else                          result.output.add(String.format("  %s = %g",    k, v));
+                if (k.startsWith("v("))      result.output.add("  " + k + " = " + SiFormat.value(v) + "V");
+                else if (k.startsWith("i(")) result.output.add("  " + k + " = " + SiFormat.value(v) + "A");
+                else                          result.output.add("  " + k + " = " + SiFormat.value(v));
             }
             // result.extras is intentionally NOT appended here — SimulatePacket
             // emits it in its own colour so user print outputs stand out from
@@ -683,10 +683,7 @@ public class NgSpiceRunner {
     }
 
     private static String formatScalar(double v) {
-        double abs = Math.abs(v);
-        if (abs == 0) return "0";
-        if (abs >= 1e4 || abs < 1e-3) return String.format("%.6g", v);
-        return String.format("%.6f", v);
+        return SiFormat.value(v);
     }
 
     // -------------------------------------------------------------------------
