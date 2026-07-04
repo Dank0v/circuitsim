@@ -177,6 +177,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.CCCS.get())                 return "cccs";
         if (block == ModBlocks.VCVS.get())                 return "vcvs";
         if (block == ModBlocks.VCCS.get())                 return "vccs";
+        if (block == ModBlocks.TRANSFORMER.get())          return "transformer";
         return "unknown";
     }
 

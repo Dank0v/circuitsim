@@ -47,6 +47,7 @@ public class ModBlockEntities {
                             ModBlocks.CCCS.get(),
                             ModBlocks.VCVS.get(),
                             ModBlocks.VCCS.get(),
+                            ModBlocks.TRANSFORMER.get(),
                             ModBlocks.VSWITCH.get()
                     ).build(null)
             );

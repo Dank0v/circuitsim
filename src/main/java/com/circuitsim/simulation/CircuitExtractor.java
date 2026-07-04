@@ -504,6 +504,46 @@ public class CircuitExtractor {
                         expr == null ? "" : expr,
                         1.0, 1.0, 1.0, 1.0, compNum));
 
+            } else if (block instanceof TransformerBlock) {
+                // Coupled inductors: one component per 2×3 instance, at the
+                // anchor. West pins (CTRL_*) = primary winding, east pins
+                // (OUT_*) = secondary. k rides in value/valueExpr, Lp in
+                // wParam/wExpr, Ls in lParam/lExpr.
+                Controlled2x3Block.CellKind kind = state.getValue(Controlled2x3Block.CELL_KIND);
+                if (kind != Controlled2x3Block.CellKind.ANCHOR) continue;
+
+                Direction facing = state.getValue(Controlled2x3Block.FACING);
+                double k = 1.0, lp = 1.0, ls = 1.0, rp = 0.001, rs = 0.001;
+                int    compNum = 0;
+                String kExpr = "", lpExpr = "", lsExpr = "", rpExpr = "", rsExpr = "";
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    k       = be.getValue();
+                    kExpr   = be.getValueExpr();
+                    lp      = be.getWParam();
+                    lpExpr  = be.getWExpr();
+                    ls      = be.getLParam();
+                    lsExpr  = be.getLExpr();
+                    rp      = be.getMultParam();
+                    rpExpr  = be.getMultExpr();
+                    rs      = be.getNfParam();
+                    rsExpr  = be.getNfExpr();
+                    compNum = be.getComponentNumber();
+                }
+
+                int priP = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.CTRL_P, visited, nodeMap, nextNode);
+                int priN = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.CTRL_N, visited, nodeMap, nextNode);
+                int secP = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.OUT_P, visited, nodeMap, nextNode);
+                int secN = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.OUT_N, visited, nodeMap, nextNode);
+
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, priP, priN, secP, secN,
+                        k, "DC", 0, "", lp, ls, rp, rs,
+                        compNum, null, kExpr, lpExpr, lsExpr, rpExpr, rsExpr));
+
             } else if (block instanceof Controlled2x3Block) {
                 // Only emit one component per 2×3 instance — at the anchor cell.
                 Controlled2x3Block.CellKind kind = state.getValue(Controlled2x3Block.CELL_KIND);
@@ -704,7 +744,9 @@ public class CircuitExtractor {
                         lSlot    = be.getPulseTr();
                         multSlot = be.getPulseTf();
                         nfSlot   = be.getPulsePw();
-                    } else if (block instanceof VoltageSourceBlock) {
+                    } else if (block instanceof VoltageSourceBlock || block instanceof InductorBlock) {
+                        // voltage source: AC magnitude; inductor: series
+                        // resistance Rser (0 = ideal winding, the default)
                         acValueSlot     = be.getAcValue();
                         acValueExprSlot = be.getAcValueExpr();
                     }

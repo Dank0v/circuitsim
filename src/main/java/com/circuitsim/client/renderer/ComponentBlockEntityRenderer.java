@@ -174,6 +174,12 @@ public class ComponentBlockEntityRenderer
             lines.add(formatScalarOrVar(val, valExpr, "F"));
         } else if (block == ModBlocks.INDUCTOR.get()) {
             lines.add(formatScalarOrVar(val, valExpr, "H"));
+            // Series resistance rides in the acValue slot; 0 = ideal (hidden).
+            double rser     = be.getAcValue();
+            String rserExpr = be.getAcValueExpr();
+            if (!rserExpr.isEmpty() || rser > 0) {
+                lines.add("Rser=" + formatScalarOrVar(rser, rserExpr, "Ω"));
+            }
         } else if (block == ModBlocks.VOLTAGE_SOURCE.get()) {
             // Two-row label: DC bias on top, AC magnitude underneath. The AC
             // row is suppressed when the user has not set an AC component, so
@@ -256,6 +262,13 @@ public class ComponentBlockEntityRenderer
             }
             String model = be.getModelName();
             lines.add((model == null || model.isEmpty()) ? "cap_mim_m3_1" : model);
+        } else if (block == ModBlocks.TRANSFORMER.get()) {
+            lines.add("XFMR (K)");
+            lines.add("Lp=" + formatScalarOrVar(be.getWParam(), wExpr, "H")
+                    + " Ls=" + formatScalarOrVar(be.getLParam(), lExpr, "H"));
+            // A never-edited block (k = 0) simulates as k = 1 — show that.
+            lines.add("k=" + (!valExpr.isEmpty() ? valExpr
+                    : ComponentEditScreen.formatValue(val <= 0 || val > 1 ? 1.0 : val)));
         } else if (block == ModBlocks.VCVS.get()) {
             lines.add("VCVS");
             lines.add(formatScalarOrVar(val, valExpr, " V/V"));

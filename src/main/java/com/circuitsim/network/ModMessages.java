@@ -80,6 +80,12 @@ public class ModMessages {
                 .consumerMainThread(ModMessages::handleControlledSourceUpdate)
                 .add();
 
+        INSTANCE.messageBuilder(TransformerUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(TransformerUpdatePacket::encode)
+                .decoder(TransformerUpdatePacket::decode)
+                .consumerMainThread(ModMessages::handleTransformerUpdate)
+                .add();
+
         INSTANCE.messageBuilder(VSwitchUpdatePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
                 .encoder(VSwitchUpdatePacket::encode)
                 .decoder(VSwitchUpdatePacket::decode)
@@ -194,6 +200,12 @@ public class ModMessages {
 
     private static void handleControlledSourceUpdate(ControlledSourceUpdatePacket msg,
                                                       Supplier<NetworkEvent.Context> ctx) {
+        ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleTransformerUpdate(TransformerUpdatePacket msg,
+                                                 Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> msg.handle(ctx.get()));
         ctx.get().setPacketHandled(true);
     }

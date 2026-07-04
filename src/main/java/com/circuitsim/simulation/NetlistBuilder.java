@@ -31,8 +31,11 @@ public class NetlistBuilder {
     private static int rIndexFamily(CircuitComponent c) {
         // returns 0 for none, 1=R, 2=C, 3=L, 4=V, 5=I, 6=D, 7=M, 8=X (subcircuits)
         // 9=E (VCVS), 10=F (CCCS), 11=G (VCCS), 12=H (CCVS), 13=S (switch),
-        // 14=B (behavioral V/I sources — both share the B namespace)
+        // 14=B (behavioral V/I sources — both share the B namespace),
+        // 15=K (coupled inductors — the K line only; the transformer's two
+        //       winding L lines draw from the shared family-3 counter)
         if (c.subcircuitNodes != null) return 8;
+        if (c.block instanceof TransformerBlock) return 15;
         if (c.block instanceof BehavioralVoltageSourceBlock
                 || c.block instanceof BehavioralCurrentSourceBlock) return 14;
         if (c.block instanceof ResistorBlock || c.block instanceof IcResistorBlock) return 1;
@@ -59,7 +62,8 @@ public class NetlistBuilder {
                                     IndexAssigner m, IndexAssigner x,
                                     IndexAssigner e, IndexAssigner f,
                                     IndexAssigner g, IndexAssigner h,
-                                    IndexAssigner s, IndexAssigner b) {
+                                    IndexAssigner s, IndexAssigner b,
+                                    IndexAssigner k) {
         for (CircuitComponent comp : components) {
             int n = comp.componentNumber;
             if (n <= 0) continue;
@@ -78,9 +82,95 @@ public class NetlistBuilder {
                 case 12 -> h.claim(n);
                 case 13 -> s.claim(n);
                 case 14 -> b.claim(n);
+                case 15 -> k.claim(n);
                 default -> {}
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Coupled inductors / transformer (two L lines + one K line)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Formats a transformer instance as up to five deck lines: the two
+     * winding inductors (auto-indexed from the shared L family so they never
+     * collide with standalone inductor blocks), an optional series resistance
+     * per winding, and the {@code K<n> L<a> L<b> k} coupling line. Pins:
+     * nodeA/nodeB = primary +/−, nodeC/nodeD = secondary +/−. Slots:
+     * value/valueExpr = k, wParam/wExpr = Lp, lParam/lExpr = Ls,
+     * multParam/multExpr = primary Rser, nfParam/nfExpr = secondary Rser
+     * (0 = ideal winding, no resistor line). A never-edited block (k = 0)
+     * falls back to k = 1 and 1 mΩ per winding.
+     *
+     * <p>The series resistors (LTspice's default inductor Rser trick) keep
+     * the DC operating point solvable when a winding sits directly across an
+     * ideal voltage source or another winding — without them two ideal
+     * voltage-defining branches in parallel make the OP matrix singular
+     * ("singular matrix: check node l#branch"). Their names (RKP/RKS) and
+     * internal node names (xfp/xfs) are keyed off the K index, which is
+     * unique per instance, and live outside the R index family.
+     */
+    private static String formatTransformer(CircuitComponent comp,
+                                            IndexAssigner lIdx, IndexAssigner kIdx,
+                                            java.util.Map<Integer, String> aliases) {
+        int la = lIdx.assign(0);
+        int lb = lIdx.assign(0);
+        int kn = kIdx.assign(comp.componentNumber);
+        double k  = comp.value;
+        double rp = comp.multParam;
+        double rs = comp.nfParam;
+        if ((comp.valueExpr == null || comp.valueExpr.isEmpty()) && (k <= 0 || k > 1)) {
+            k = 1.0;
+            // never-edited block: the BE's generic mult/nf defaults (1.0)
+            // were never meant as resistances — use the standard 1 mΩ.
+            rp = 0.001;
+            rs = 0.001;
+        }
+        StringBuilder sb = new StringBuilder();
+        appendWinding(sb, la, comp.nodeA, comp.nodeB, num(comp.wParam, comp.wExpr),
+                rp, comp.multExpr, "xfp" + kn, "RKP" + kn, aliases);
+        sb.append('\n');
+        appendWinding(sb, lb, comp.nodeC, comp.nodeD, num(comp.lParam, comp.lExpr),
+                rs, comp.nfExpr, "xfs" + kn, "RKS" + kn, aliases);
+        sb.append('\n');
+        sb.append(String.format("K%d L%d L%d %s", kn, la, lb, num(k, comp.valueExpr)));
+        return sb.toString();
+    }
+
+    /**
+     * Appends one winding: {@code L<idx> n+ n- <L>} directly, or split
+     * through {@code midNode} with a series resistor when {@code rser} is
+     * positive (or expression-driven).
+     */
+    private static void appendWinding(StringBuilder sb, int idx, int nodeP, int nodeN,
+                                      String lValue, double rser, String rserExpr,
+                                      String midNode, String rName,
+                                      java.util.Map<Integer, String> aliases) {
+        boolean hasRser = rser > 0 || (rserExpr != null && !rserExpr.isEmpty());
+        if (!hasRser) {
+            sb.append(String.format("L%d %s %s %s",
+                    idx, nodeRef(nodeP, aliases), nodeRef(nodeN, aliases), lValue));
+            return;
+        }
+        sb.append(String.format("L%d %s %s %s\n%s %s %s %s",
+                idx, nodeRef(nodeP, aliases), midNode, lValue,
+                rName, midNode, nodeRef(nodeN, aliases), num(rser, rserExpr)));
+    }
+
+    /**
+     * Formats a standalone inductor: a plain {@code L<idx>} line, plus a
+     * series resistor ({@code RLS<idx>} through internal node
+     * {@code xl<idx>}) when the block's Rser is set. Rser rides in the
+     * acValue/acValueExpr slots — their 0/"" default means every existing
+     * inductor stays ideal.
+     */
+    private static String formatInductor(int idx, CircuitComponent comp,
+                                         java.util.Map<Integer, String> aliases) {
+        StringBuilder sb = new StringBuilder();
+        appendWinding(sb, idx, comp.nodeA, comp.nodeB, num(comp.value, comp.valueExpr),
+                comp.acValue, comp.acValueExpr, "xl" + idx, "RLS" + idx, aliases);
+        return sb.toString();
     }
 
     // -------------------------------------------------------------------------
@@ -280,9 +370,10 @@ public class NetlistBuilder {
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
-                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
+                      kIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         boolean hasDiode = false;
 
@@ -303,7 +394,9 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+                line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof TransformerBlock) {
+                line = formatTransformer(comp, lIdx, kIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // Carry both DC bias and (when set) AC magnitude so the subckt
                 // is usable in .op AND .ac without re-extraction.
@@ -422,9 +515,10 @@ public class NetlistBuilder {
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
-                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
+                      kIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
@@ -446,7 +540,9 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+                line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof TransformerBlock) {
+                line = formatTransformer(comp, lIdx, kIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // OP analysis cares only about the DC bias; the AC magnitude is
                 // a small-signal perturbation that is meaningless here.
@@ -567,19 +663,31 @@ public class NetlistBuilder {
      * The returned order matches the component order.
      */
     public static List<DeviceRef> describeDevices(List<CircuitComponent> components) {
-        IndexAssigner[] fam = new IndexAssigner[15];
-        for (int k = 1; k <= 14; k++) fam[k] = new IndexAssigner();
+        IndexAssigner[] fam = new IndexAssigner[16];
+        for (int k = 1; k <= 15; k++) fam[k] = new IndexAssigner();
         for (CircuitComponent comp : components) {
             int n = comp.componentNumber;
             if (n > 0) {
                 int f = rIndexFamily(comp);
-                if (f >= 1 && f <= 14) fam[f].claim(n);
+                if (f >= 1 && f <= 15) fam[f].claim(n);
             }
         }
         List<DeviceRef> out = new ArrayList<>();
         for (CircuitComponent comp : components) {
             int f = rIndexFamily(comp);
-            if (f < 1 || f > 14) continue;
+            if (f < 1 || f > 15) continue;
+            if (f == 15) {
+                // Transformer: its two winding L lines consume shared L-family
+                // indices in deck order — burn them here too so standalone
+                // inductors after it keep matching names. Annotate the block
+                // with the primary winding's device name (the secondary's
+                // show-table entry simply matches no ref).
+                int la = fam[3].assign(0);
+                fam[3].assign(0);
+                fam[15].assign(comp.componentNumber);
+                out.add(new DeviceRef(comp.pos, "L" + la, 'l', false, "transformer", "Transformer"));
+                continue;
+            }
             int idx = fam[f].assign(comp.componentNumber);
             DeviceRef ref = describeOne(comp, idx);
             if (ref != null) out.add(ref);
@@ -765,9 +873,10 @@ public class NetlistBuilder {
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
-                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
+                      kIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode    = false;
@@ -790,7 +899,9 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+                line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof TransformerBlock) {
+                line = formatTransformer(comp, lIdx, kIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // Both halves are independent: DC sets the bias point that the
                 // small-signal solver linearises around, AC is the perturbation.
@@ -957,9 +1068,10 @@ public class NetlistBuilder {
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
-                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
+                      kIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         boolean hasDiode = false;
 
@@ -982,7 +1094,9 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+                line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof TransformerBlock) {
+                line = formatTransformer(comp, lIdx, kIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // AC forced to 0 — only the injection excites the loop.
                 line = String.format("V%d %s %s DC %s AC 0",
@@ -1090,9 +1204,10 @@ public class NetlistBuilder {
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
-                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
+                      kIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
@@ -1114,7 +1229,9 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+                line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof TransformerBlock) {
+                line = formatTransformer(comp, lIdx, kIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 line = String.format("V%d %s %s DC %s AC %s",
                         vIdx.assign(comp.componentNumber),
@@ -1217,9 +1334,10 @@ public class NetlistBuilder {
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
-                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
+                      kIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
@@ -1241,7 +1359,9 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+                line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof TransformerBlock) {
+                line = formatTransformer(comp, lIdx, kIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 line = String.format("V%d %s %s DC %s", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceSinBlock) {
@@ -1386,9 +1506,10 @@ public class NetlistBuilder {
                       mIdx = new IndexAssigner(), xIdx = new IndexAssigner(),
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
-                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner();
+                      sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
+                      kIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
@@ -1410,7 +1531,9 @@ public class NetlistBuilder {
             } else if (comp.block instanceof CapacitorBlock) {
                 line = String.format("C%d %s %s %s", cIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof InductorBlock) {
-                line = String.format("L%d %s %s %s", lIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
+                line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
+            } else if (comp.block instanceof TransformerBlock) {
+                line = formatTransformer(comp, lIdx, kIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 line = String.format("V%d %s %s DC %s", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceSinBlock) {

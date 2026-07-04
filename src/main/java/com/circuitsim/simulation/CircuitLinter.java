@@ -121,6 +121,12 @@ public final class CircuitLinter {
     private static List<int[]> dcGroups(CircuitComponent c) {
         Block b = c.block;
 
+        // Transformer: both windings are inductors (DC shorts), but the two
+        // sides stay galvanically isolated from each other.
+        if (b instanceof TransformerBlock) {
+            return List.of(new int[]{c.nodeA, c.nodeB}, new int[]{c.nodeC, c.nodeD});
+        }
+
         // Two-terminal DC conductors.
         if (b instanceof ResistorBlock || b instanceof IcResistorBlock
                 || b instanceof InductorBlock

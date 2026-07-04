@@ -210,7 +210,9 @@ public class ComponentEditScreen
         // The DC/AC toggle is gone — voltage_source now exposes DC and AC as
         // independent value fields. Other sources never used the toggle.
         showSourceType = false;
-        showAcValue = isVoltSrc;
+        // The acValue slot is dual-purpose: AC magnitude for voltage sources,
+        // series resistance (Rser) for inductors — the label switches in render().
+        showAcValue = isVoltSrc || "inductor".equals(componentType);
         // Pulse and sine sources both reuse the BE.frequency slot — sine
         // stores Hz there, pulse stores the period in seconds — but the
         // labelling and surrounding rows are different.
@@ -683,7 +685,9 @@ public class ComponentEditScreen
         if (showAcValue) {
             g.drawString(
                 Minecraft.getInstance().font,
-                "AC Value (V):",
+                "inductor".equals(componentType)
+                        ? "Series resistance (Ω, 0 = ideal):"
+                        : "AC Value (V):",
                 labelX,
                 cursorY,
                 LABEL_COLOR

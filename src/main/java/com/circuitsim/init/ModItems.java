@@ -46,6 +46,7 @@ public class ModItems {
     public static final RegistryObject<Item> CCCS                  = blockItem(ModBlocks.CCCS);
     public static final RegistryObject<Item> VCVS                  = blockItem(ModBlocks.VCVS);
     public static final RegistryObject<Item> VCCS                  = blockItem(ModBlocks.VCCS);
+    public static final RegistryObject<Item> TRANSFORMER           = blockItem(ModBlocks.TRANSFORMER);
     public static final RegistryObject<Item> VSWITCH               = blockItem(ModBlocks.VSWITCH);
     public static final RegistryObject<Item> SIM_LINK              = blockItem(ModBlocks.SIM_LINK);
     public static final RegistryObject<Item> SUBCIRCUIT            = blockItem(ModBlocks.SUBCIRCUIT);

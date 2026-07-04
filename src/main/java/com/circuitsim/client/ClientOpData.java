@@ -279,6 +279,8 @@ public final class ClientOpData {
         if (t.contains("resistor"))       return List.of("i", "p", "resistance");
         if (t.contains("capacitor"))      return List.of("i", "capacitance");
         if (t.equals("inductor"))         return List.of("i", "inductance");
+        // transformer OP data comes from its primary winding's L device
+        if (t.equals("transformer"))      return List.of("i", "inductance");
         if (t.equals("voltage_source"))   return List.of("i", "p");
         if (t.equals("current_source"))   return List.of("v", "p");
         if (t.equals("vswitch"))          return List.of("i", "p");
