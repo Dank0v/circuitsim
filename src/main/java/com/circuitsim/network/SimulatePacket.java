@@ -17,6 +17,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -2509,16 +2510,50 @@ public class SimulatePacket {
             seed = 1 + new java.util.Random().nextInt(Integer.MAX_VALUE - 1);
         }
 
+        // Component tolerances: every toleranced R/C/L (tolerance percent rides
+        // in the wParam carrier slot) gets its OWN synthetic distribution param
+        // — ngspice rolls a .param's statistical call once per netlist parse
+        // and every reference sees that one value (manual 18.2), so sharing a
+        // param would lock same-tolerance components together. mc_source's
+        // per-run re-parse then re-rolls all of them. gauss(nom, tol, 3) makes
+        // ±tol the 3-sigma point. A value sourced from a Param variable keeps
+        // the variable as the gauss() nominal argument (defs are injected
+        // after the user's, so the reference resolves).
+        List<NetlistBuilder.CircuitComponent> mcComponents =
+                new ArrayList<>(extraction.components.size());
+        List<String> tolDefs = new ArrayList<>();
+        for (NetlistBuilder.CircuitComponent c : extraction.components) {
+            boolean rcl = c.block instanceof ResistorBlock
+                    || c.block instanceof CapacitorBlock
+                    || c.block instanceof InductorBlock;
+            if (!rcl || c.wParam <= 0) {
+                mcComponents.add(c);
+                continue;
+            }
+            String pname = "mctol" + (tolDefs.size() + 1);
+            String nominal = !c.valueExpr.isEmpty()
+                    ? c.valueExpr
+                    : String.format(java.util.Locale.ROOT, "%g", c.value);
+            tolDefs.add(String.format(java.util.Locale.ROOT,
+                    "%s = gauss(%s, %g, 3)", pname, nominal, c.wParam / 100.0));
+            mcComponents.add(c.withValueExpr(pname));
+        }
+
         String header = "=== Monte Carlo: " + runs + " runs (" + analysis
                 + ", seed " + seed + ") ===";
         msg(player, header, ChatFormatting.GOLD);
         bookLines.add(header);
-        boolean anyDist = extraction.parametricBlocks.stream().anyMatch(
+        boolean anyDist = !tolDefs.isEmpty() || extraction.parametricBlocks.stream().anyMatch(
                 p -> com.circuitsim.simulation.ParamSpec.isDistribution(p.valuesString));
         if (!anyDist) {
-            msg(player, "Note: no distribution Param variables (e.g. Rv = gauss(10k, 0.05, 3)) — "
+            msg(player, "Note: no component tolerances and no distribution Param variables "
+                    + "(e.g. Rv = gauss(10k, 0.05, 3)) — "
                     + "variation must come from the model library (e.g. an 'mc' corner section).",
                     ChatFormatting.YELLOW);
+        }
+        if (!tolDefs.isEmpty()) {
+            msg(player, tolDefs.size() + " toleranced component(s) vary per run "
+                    + "(Gaussian, tolerance = 3 sigma).", ChatFormatting.GRAY);
         }
         if (mcSeed.isBlank()) {
             msg(player, "Seed " + seed + " — enter it in the seed field to reproduce this run.",
@@ -2530,12 +2565,12 @@ public class SimulatePacket {
         String dcSrc = "";
         switch (analysis) {
             case "AC" -> netlist = NetlistBuilder.buildAcNetlist(
-                    extraction.components, effectiveProbes, cpList,
+                    mcComponents, effectiveProbes, cpList,
                     fStart, fStop, ptsPerDec,
                     pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
                     extraction.userCommands, extraction.userPlots);
             case "TRAN" -> netlist = NetlistBuilder.buildTranNetlist(
-                    extraction.components, effectiveProbes, cpList,
+                    mcComponents, effectiveProbes, cpList,
                     fStart, fStop,
                     pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
                     extraction.userCommands, extraction.userPlots);
@@ -2555,20 +2590,22 @@ public class SimulatePacket {
                     return;
                 }
                 netlist = NetlistBuilder.buildDcNetlist(
-                        extraction.components, effectiveProbes, cpList,
+                        mcComponents, effectiveProbes, cpList,
                         dcSrc, dcStartV, dcStopV, dcStepV,
                         false, "", 0, 0, 1,
                         pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
                         extraction.userCommands, extraction.userPlots);
             }
             default -> netlist = NetlistBuilder.buildNetlist(
-                    extraction.components, effectiveProbes, cpList,
+                    mcComponents, effectiveProbes, cpList,
                     pdkName, pdkLibPath, pdkLibPaths, ngBehavior,
                     extraction.userCommands, extraction.userPlots);
         }
 
+        List<String> mcParamDefs = new ArrayList<>(activeParamDefs);
+        mcParamDefs.addAll(tolDefs);
         netlist = injectTemp(injectParams(injectSubcktDefs(netlist, activeSubcktDefs),
-                activeParamDefs), tempC);
+                mcParamDefs), tempC);
         netlist = wrapControlWithMc(netlist, runs, seed);
         printNetlist(player, netlist, bookLines);
 
@@ -3973,33 +4010,77 @@ public class SimulatePacket {
 
         msg(player, "--- Graphs - click to open ---", ChatFormatting.DARK_AQUA);
 
+        // One link per waveform family, not per sweep variant. Parametric
+        // runs name each series "<base>@<value>"; emitting a link for every
+        // variant flooded chat with near-identical lines. Group them the same
+        // way the GraphScreen sidebar does and emit a single link whose click
+        // (via the group's first probe index) opens the screen with every
+        // variant of that family selected.
+        Map<String, List<Integer>> groups = new LinkedHashMap<>();
         for (int idx = 0; idx < allNames.size(); idx++) {
-            String name = allNames.get(idx);
-            boolean isVolt = voltData.containsKey(name);
+            groups.computeIfAbsent(sweepBaseName(allNames.get(idx)),
+                    k -> new ArrayList<>()).add(idx);
+        }
+
+        for (Map.Entry<String, List<Integer>> e : groups.entrySet()) {
+            List<Integer> members = e.getValue();
+            String firstName = allNames.get(members.get(0));
+            boolean isVolt = voltData.containsKey(firstName);
             String unit;
-            if (probeUnits != null && probeUnits.containsKey(name)) {
-                unit = probeUnits.get(name);
+            if (probeUnits != null && probeUnits.containsKey(firstName)) {
+                unit = probeUnits.get(firstName);
             } else {
                 unit = isVolt ? "V" : "A";
             }
             String unitTag = unit == null || unit.isEmpty() ? "" : " (" + unit + ")";
-            String cmd = "/circuitsim graph " + sessionId + " " + idx;
-            String label = "  Plot " + name + unitTag;
+            String countTag = members.size() > 1
+                    ? " [" + members.size() + " curves]" : "";
+            String cmd = "/circuitsim graph " + sessionId + " " + members.get(0);
+            String label = "  Plot " + e.getKey() + unitTag + countTag;
 
-            sendChatComponent(player,
-                Component.literal(label).withStyle(
-                    Style.EMPTY.withColor(
-                        isVolt
-                            ? ChatFormatting.AQUA
-                            : ChatFormatting.LIGHT_PURPLE
-                    )
-                        .withUnderlined(true)
-                        .withClickEvent(
-                            new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd)
-                        )
+            Style style = Style.EMPTY.withColor(
+                    isVolt
+                        ? ChatFormatting.AQUA
+                        : ChatFormatting.LIGHT_PURPLE
                 )
-            );
+                .withUnderlined(true)
+                .withClickEvent(
+                    new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd)
+                );
+            if (members.size() > 1) {
+                style = style.withHoverEvent(new HoverEvent(
+                        HoverEvent.Action.SHOW_TEXT,
+                        Component.literal(variantSummary(allNames, members))));
+            }
+            sendChatComponent(player, Component.literal(label).withStyle(style));
         }
+    }
+
+    /**
+     * Base name of a swept series — the prefix before the {@code @<value>}
+     * suffix appended by the sweep collectors. Must mirror
+     * {@link com.circuitsim.screen.GraphScreen}'s suffix split: a leading
+     * {@code @} is ngspice device-parameter syntax
+     * ({@code @m.xm1...[gm]}), not a sweep suffix.
+     */
+    private static String sweepBaseName(String name) {
+        int at = name.lastIndexOf('@');
+        return at > 0 ? name.substring(0, at) : name;
+    }
+
+    /** Hover text for a grouped link: the sweep values it contains. */
+    private static String variantSummary(List<String> allNames, List<Integer> members) {
+        StringBuilder sb = new StringBuilder("Opens all of:");
+        int shown = Math.min(members.size(), 8);
+        for (int i = 0; i < shown; i++) {
+            String n = allNames.get(members.get(i));
+            int at = n.lastIndexOf('@');
+            sb.append('\n').append(at > 0 ? n.substring(at) : n);
+        }
+        if (members.size() > shown) {
+            sb.append("\n… +").append(members.size() - shown).append(" more");
+        }
+        return sb.toString();
     }
 
     /**

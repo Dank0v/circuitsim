@@ -54,6 +54,9 @@ public class ComponentEditScreen
     // the resistor contributes no thermal noise to .noise analysis.
     private int     rNoiseRowY = 0; // absolute Y of the noiseless checkbox row (set during init)
     private boolean rNoiseless = false;
+    // R/C/L manufacturing tolerance in percent; blank/0 = ideal. Monte Carlo
+    // re-rolls the value per run within ±tol (Gaussian, 3-sigma).
+    private EditBox toleranceField;
     // Probe "subcircuit pin" toggle + ordering. When set, the probe's net is
     // exported as a subcircuit terminal on conversion; the order field places it
     // in the .subckt pin list.
@@ -76,6 +79,8 @@ public class ComponentEditScreen
     private boolean showSubcktPin;
     /** Plain resistor only: show the "noiseless (noisy=0)" checkbox row. */
     private boolean showRNoise;
+    /** Plain R/C/L only: show the "Tolerance (%)" field. */
+    private boolean showTolerance;
     /** Voltage source: show the AC magnitude field below the DC value field. */
     private boolean showAcValue;
     /** True for CCVS/CCCS: show a "Control voltage source (vnam)" text field,
@@ -140,6 +145,7 @@ public class ComponentEditScreen
         double currentNf = 1.0;
         int    currentNumber = 0;
         int    currentSubcktOrder = 0;
+        double currentTolerance = 0.0;
         String currentValueExpr = "";
         String currentWExpr = "";
         String currentLExpr = "";
@@ -173,6 +179,7 @@ public class ComponentEditScreen
             subcktPin          = cbe.isSubcktPin();
             currentSubcktOrder = cbe.getSubcktPinOrder();
             rNoiseless         = cbe.isRNoiseless();
+            currentTolerance   = cbe.getTolerance();
             // For pulse sources the period lives in the BE's frequency slot;
             // pre-fill the editor with a sensible default (matches the BE
             // default) if the player just placed the block.
@@ -225,6 +232,9 @@ public class ComponentEditScreen
         // Subcircuit-pin toggle is also a voltage-probe concept.
         showSubcktPin = isProbe;
         showRNoise = "resistor".equals(componentType);
+        showTolerance = "resistor".equals(componentType)
+                || "capacitor".equals(componentType)
+                || "inductor".equals(componentType);
         showSky130 = isSky130 || isIcCap || isNmos4 || isPmos4;
         showNf = isNmos4 || isPmos4;
         showMirror = isNmos4 || isPmos4;
@@ -246,6 +256,7 @@ public class ComponentEditScreen
         if (showNoPlot) rowCount++;
         if (showSubcktPin) rowCount += 2; // checkbox row + order field row
         if (showRNoise) rowCount++;
+        if (showTolerance) rowCount++;
         if (showSky130) rowCount += 5 + (showNf ? 1 : 0) + (showMirror ? 1 : 0); // pdk, model, W, L, mult [, NF] [, Mirror]
         if (showControlSource) rowCount++;
         if (showDiodeModel) rowCount++;
@@ -285,6 +296,17 @@ public class ComponentEditScreen
                 fieldW,
                 initial,
                 32
+            );
+            cursorY += ROW_H;
+        }
+
+        if (showTolerance) {
+            toleranceField = makeBox(
+                fieldX,
+                cursorY + LABEL_H + GAP,
+                fieldW,
+                currentTolerance > 0 ? formatValue(currentTolerance) : "",
+                8
             );
             cursorY += ROW_H;
         }
@@ -664,6 +686,16 @@ public class ComponentEditScreen
             g.drawString(
                 Minecraft.getInstance().font,
                 getValueLabel(componentType) + ":",
+                labelX,
+                cursorY,
+                LABEL_COLOR
+            );
+            cursorY += ROW_H;
+        }
+        if (showTolerance) {
+            g.drawString(
+                Minecraft.getInstance().font,
+                "Tolerance (%, blank = ideal, MC only):",
                 labelX,
                 cursorY,
                 LABEL_COLOR
@@ -1074,6 +1106,15 @@ public class ComponentEditScreen
             }
         }
 
+        double tolerance = 0.0;
+        if (showTolerance && toleranceField != null) {
+            String raw = toleranceField.getValue().trim().replace("%", "");
+            if (!raw.isEmpty()) {
+                try { tolerance = Math.max(0, parseSI(raw)); }
+                catch (NumberFormatException ignored) {}
+            }
+        }
+
         int subcktOrder = 0;
         if (showSubcktPin && subcktOrderField != null) {
             String raw = subcktOrderField.getValue().trim();
@@ -1135,7 +1176,8 @@ public class ComponentEditScreen
                 probeNoPlot,
                 rNoiseless,
                 subcktPin,
-                subcktOrder
+                subcktOrder,
+                tolerance
             )
         );
     }

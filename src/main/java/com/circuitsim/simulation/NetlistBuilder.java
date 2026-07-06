@@ -2192,6 +2192,18 @@ public class NetlistBuilder {
                     acValue, acValueExpr).withPdkName(pdkName);
         }
 
+        /** Copy with the value slot re-pointed at {@code expr}; the numeric
+         *  {@link #value} stays as a fallback. Used by Monte Carlo to route a
+         *  toleranced R/C/L through its synthetic distribution param. */
+        public CircuitComponent withValueExpr(String expr) {
+            return new CircuitComponent(block, pos, nodeA, nodeB, nodeC, nodeD,
+                    value, sourceType, frequency,
+                    modelName, wParam, lParam, multParam, nfParam,
+                    componentNumber, subcircuitNodes, expr,
+                    wExpr, lExpr, multExpr, nfExpr,
+                    acValue, acValueExpr).withPdkName(pdkName);
+        }
+
         /** True if any expression slot references {@code varName}. */
         public boolean referencesVariable(String varName) {
             return varName.equals(valueExpr) || varName.equals(wExpr)

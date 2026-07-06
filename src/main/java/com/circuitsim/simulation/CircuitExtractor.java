@@ -713,9 +713,10 @@ public class CircuitExtractor {
                 double frequency  = 0;
                 int    compNum    = 0;
                 String valueExpr  = "";
-                // Pulse-source-only — see NetlistBuilder pulse branch for the
-                // exact slot meanings. For every other component these stay 1.0
-                // and are ignored downstream.
+                // Carrier slots: the pulse source packs V1/TR/TF/PW into all
+                // four (see NetlistBuilder pulse branch); plain R/C/L carry
+                // their tolerance percent in wSlot (0 = ideal). Every other
+                // component leaves them at 1.0, ignored downstream.
                 double wSlot = 1.0, lSlot = 1.0, multSlot = 1.0, nfSlot = 1.0;
                 double acValueSlot   = 0.0;
                 String acValueExprSlot = "";
@@ -731,6 +732,10 @@ public class CircuitExtractor {
                     valueExpr  = be.getValueExpr();
                     if (block instanceof ResistorBlock && be.isRNoiseless()) {
                         modelSlot = "noiseless";
+                    }
+                    if (block instanceof ResistorBlock || block instanceof CapacitorBlock
+                            || block instanceof InductorBlock) {
+                        wSlot = be.getTolerance();
                     }
                     if (block instanceof VoltageSourcePulseBlock) {
                         // Repurpose the otherwise-idle sky130 carrier slots so

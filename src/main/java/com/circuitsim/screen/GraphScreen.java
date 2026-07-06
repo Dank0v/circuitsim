@@ -192,10 +192,16 @@ public class GraphScreen extends Screen {
         this.fftSessionId       = fftSessionId;
         buildGroups();
         if (initialIndex >= 0 && initialIndex < probeNames.size()) {
-            this.slot1.add(initialIndex);
+            // Chat emits one link per waveform family, so a click means "show
+            // this waveform at every sweep value" — select the whole group,
+            // not just the variant the index happens to point at. Non-swept
+            // sessions have single-member groups, so this degenerates to the
+            // old single-curve behaviour.
+            String g = groupOf(initialIndex);
+            this.slot1.addAll(groupMembers.get(g));
             // Expand the group containing the initial selection so the user
             // sees what's underneath it without having to click.
-            expandedGroups.add(groupOf(initialIndex));
+            expandedGroups.add(g);
         }
         rebuildVisibleRows();
     }

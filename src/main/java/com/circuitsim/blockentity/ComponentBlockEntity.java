@@ -34,6 +34,11 @@ public class ComponentBlockEntity extends BlockEntity {
     // ngspice instance flag `noisy=0`, excluding its thermal noise from
     // .noise analysis. Only meaningful for plain resistors.
     private boolean rNoiseless = false;
+    // Manufacturing tolerance in percent (5 = ±5%); 0 = ideal/exact. Only
+    // meaningful for plain R/C/L. Monte Carlo re-rolls the value per run as
+    // gauss(nom, tol/100, 3) — ±tol is the 3-sigma point; every other
+    // analysis uses the nominal value.
+    private double tolerance = 0.0;
     private int    componentNumber = 0;   // 0 = auto, otherwise R<N>/C<N>/etc. in netlist
     // When non-empty, the component's "value" is sourced at simulation time
     // from a Parametric block defining this variable name. Empty means use
@@ -199,6 +204,8 @@ public class ComponentBlockEntity extends BlockEntity {
     public void setSubcktPinOrder(int n) { this.subcktPinOrder = Math.max(0, n); setChanged(); }
     public boolean isRNoiseless()        { return rNoiseless; }
     public void setRNoiseless(boolean b) { this.rNoiseless = b; setChanged(); }
+    public double getTolerance()         { return tolerance; }
+    public void setTolerance(double t)   { this.tolerance = Math.max(0, t); setChanged(); }
     public int getComponentNumber()        { return componentNumber; }
     public void setComponentNumber(int n)  { this.componentNumber = Math.max(0, n); setChanged(); }
     public String getValueExpr()           { return valueExpr == null ? "" : valueExpr; }
@@ -331,6 +338,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putBoolean("subcktPin", subcktPin);
         tag.putInt("subcktPinOrder", subcktPinOrder);
         tag.putBoolean("rNoiseless", rNoiseless);
+        tag.putDouble("tolerance",  tolerance);
         tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
         tag.putDouble("wParam",     wParam);
@@ -402,6 +410,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("subcktPin"))      subcktPin      = tag.getBoolean("subcktPin");
         if (tag.contains("subcktPinOrder")) subcktPinOrder = tag.getInt("subcktPinOrder");
         if (tag.contains("rNoiseless"))  rNoiseless  = tag.getBoolean("rNoiseless");
+        if (tag.contains("tolerance"))   tolerance   = tag.getDouble("tolerance");
         if (tag.contains("componentNumber")) componentNumber = tag.getInt("componentNumber");
         if (tag.contains("modelName"))  modelName  = tag.getString("modelName");
         if (tag.contains("wParam"))     wParam     = tag.getDouble("wParam");
@@ -500,6 +509,7 @@ public class ComponentBlockEntity extends BlockEntity {
         tag.putBoolean("subcktPin", subcktPin);
         tag.putInt("subcktPinOrder", subcktPinOrder);
         tag.putBoolean("rNoiseless", rNoiseless);
+        tag.putDouble("tolerance",  tolerance);
         tag.putInt("componentNumber", componentNumber);
         tag.putString("modelName",  modelName);
         tag.putDouble("wParam",     wParam);

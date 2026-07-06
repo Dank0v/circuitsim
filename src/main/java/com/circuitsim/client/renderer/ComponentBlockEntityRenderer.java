@@ -167,13 +167,17 @@ public class ComponentBlockEntityRenderer
         String nfExpr   = be.getNfExpr();
         boolean icHasExpr = !wExpr.isEmpty() || !lExpr.isEmpty() || !multExpr.isEmpty();
 
+        // R/C/L tolerance rides on the value line, e.g. "1k\u03A9 \u00B15%".
+        String tol = be.getTolerance() > 0
+                ? " \u00B1" + ComponentEditScreen.formatValue(be.getTolerance()) + "%"
+                : "";
         if (block == ModBlocks.RESISTOR.get()) {
-            lines.add(formatScalarOrVar(val, valExpr, "\u03A9"));
+            lines.add(formatScalarOrVar(val, valExpr, "\u03A9") + tol);
             if (be.isRNoiseless()) lines.add("(noiseless)");
         } else if (block == ModBlocks.CAPACITOR.get()) {
-            lines.add(formatScalarOrVar(val, valExpr, "F"));
+            lines.add(formatScalarOrVar(val, valExpr, "F") + tol);
         } else if (block == ModBlocks.INDUCTOR.get()) {
-            lines.add(formatScalarOrVar(val, valExpr, "H"));
+            lines.add(formatScalarOrVar(val, valExpr, "H") + tol);
             // Series resistance rides in the acValue slot; 0 = ideal (hidden).
             double rser     = be.getAcValue();
             String rserExpr = be.getAcValueExpr();
