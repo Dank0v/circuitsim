@@ -544,6 +544,51 @@ public class CircuitExtractor {
                         k, "DC", 0, "", lp, ls, rp, rs,
                         compNum, null, kExpr, lpExpr, lsExpr, rpExpr, rsExpr));
 
+            } else if (block instanceof TransmissionLineBlock) {
+                // Transmission line: one component per 2×3 instance, at the
+                // anchor. West pins (CTRL_*) = port 1 +/−, east pins (OUT_*)
+                // = port 2 +/−. The mode string ("" / "lossless" vs "ltra")
+                // rides in modelName; the five parameter slots are
+                // mode-interpreted (lossless | lossy): value = Z0 | R,
+                // wParam = TD | L, lParam = F | G, multParam = NL | C,
+                // nfParam = — | LEN.
+                Controlled2x3Block.CellKind kind = state.getValue(Controlled2x3Block.CELL_KIND);
+                if (kind != Controlled2x3Block.CellKind.ANCHOR) continue;
+
+                Direction facing = state.getValue(Controlled2x3Block.FACING);
+                double p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0;
+                int    compNum = 0;
+                String mode = "";
+                String e1 = "", e2 = "", e3 = "", e4 = "", e5 = "";
+                if (level.getBlockEntity(pos) instanceof com.circuitsim.blockentity.ComponentBlockEntity be) {
+                    mode    = be.getModelName();
+                    p1      = be.getValue();
+                    e1      = be.getValueExpr();
+                    p2      = be.getWParam();
+                    e2      = be.getWExpr();
+                    p3      = be.getLParam();
+                    e3      = be.getLExpr();
+                    p4      = be.getMultParam();
+                    e4      = be.getMultExpr();
+                    p5      = be.getNfParam();
+                    e5      = be.getNfExpr();
+                    compNum = be.getComponentNumber();
+                }
+
+                int p1p = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.CTRL_P, visited, nodeMap, nextNode);
+                int p1n = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.CTRL_N, visited, nodeMap, nextNode);
+                int p2p = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.OUT_P, visited, nodeMap, nextNode);
+                int p2n = pinNodeOf(level, pos, facing,
+                        Controlled2x3Block.CellKind.OUT_N, visited, nodeMap, nextNode);
+
+                components.add(new NetlistBuilder.CircuitComponent(
+                        block, pos, p1p, p1n, p2p, p2n,
+                        p1, "DC", 0, mode == null ? "" : mode, p2, p3, p4, p5,
+                        compNum, null, e1, e2, e3, e4, e5));
+
             } else if (block instanceof Controlled2x3Block) {
                 // Only emit one component per 2×3 instance — at the anchor cell.
                 Controlled2x3Block.CellKind kind = state.getValue(Controlled2x3Block.CELL_KIND);

@@ -127,6 +127,13 @@ public final class CircuitLinter {
             return List.of(new int[]{c.nodeA, c.nodeB}, new int[]{c.nodeC, c.nodeD});
         }
 
+        // Transmission line: two conductors, each a DC path end-to-end
+        // (port1+ ↔ port2+ and port1− ↔ port2−); the conductors stay
+        // isolated from each other at DC.
+        if (b instanceof TransmissionLineBlock) {
+            return List.of(new int[]{c.nodeA, c.nodeC}, new int[]{c.nodeB, c.nodeD});
+        }
+
         // Two-terminal DC conductors.
         if (b instanceof ResistorBlock || b instanceof IcResistorBlock
                 || b instanceof InductorBlock

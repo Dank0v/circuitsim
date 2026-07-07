@@ -144,6 +144,10 @@ public class ModBlocks {
             () -> new TransformerBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_CYAN).strength(2.0f).pushReaction(PushReaction.BLOCK)));
 
+    public static final RegistryObject<Block> TRANSMISSION_LINE = BLOCKS.register("transmission_line",
+            () -> new TransmissionLineBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.COLOR_LIGHT_BLUE).strength(2.0f).pushReaction(PushReaction.BLOCK)));
+
     public static final RegistryObject<Block> VSWITCH = BLOCKS.register("vswitch",
             () -> new VSwitchBlock(BlockBehaviour.Properties.of()
                     .mapColor(MapColor.COLOR_BROWN).strength(2.0f).pushReaction(PushReaction.BLOCK)));

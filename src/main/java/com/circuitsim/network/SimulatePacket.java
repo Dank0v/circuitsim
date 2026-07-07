@@ -35,7 +35,7 @@ public class SimulatePacket {
     private final String pdkName; // "none", "sky130A", "placeholder"
     private final String pdkLibPath; // path to .lib file (hsa-style)
     private final String pdkLibPaths; // newline-separated .INCLUDE paths (psa-style)
-    private final String ngBehavior; // ngspice compat mode: hsa, psa, lt, ki, va
+    private final String ngBehavior; // ngspice compat mode: none, hsa, psa, ki
     private final String rawParam1; // raw UI strings preserved for round-trip display
     private final String rawParam2;
     private final String rawParam3;
@@ -399,6 +399,13 @@ public class SimulatePacket {
             );
             return;
         }
+        // Resolve each discrete FET/BJT/diode's model name against the
+        // included libraries (.model card vs .subckt → M/Q/D vs X/XQ/XD
+        // emission) before anything reads the components: the netlist
+        // builders re-run this themselves, but describeDevices (K-menu OP
+        // annotation, meas signals) may see a different components list after
+        // a parametric rebuild, so stamp the top-level extraction here too.
+        NetlistBuilder.resolveModelKinds(extraction.components, pdkLibPaths, ngBehavior);
         // Subckt defs don't change under parametric substitution (substitution
         // only rewrites component values), so capture them from the top-level
         // extraction before the worker thread starts.

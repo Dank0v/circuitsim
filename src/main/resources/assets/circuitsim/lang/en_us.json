@@ -31,6 +31,7 @@
     "block.circuitsim.ccvs": "CCVS (H)",
     "block.circuitsim.cccs": "CCCS (F)",
     "block.circuitsim.transformer": "Transformer (K)",
+    "block.circuitsim.transmission_line": "Transmission Line (T)",
     "block.circuitsim.sim_link": "Simulation Link",
     "block.circuitsim.vswitch": "VC Switch",
     "block.circuitsim.subcircuit": "Subcircuit",

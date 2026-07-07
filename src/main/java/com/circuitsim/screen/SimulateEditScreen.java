@@ -68,9 +68,20 @@ public class SimulateEditScreen extends Screen {
     private MultiLineEditBox pdkLibPathsField;
 
     // "none" = strict ngspice, no compatibility tweaks (default for new
-    // blocks). The other modes match ngspice's `set ngbehavior=<x>` accepted
-    // values for HSPICE / PSPICE / Verilog-A flavours.
-    private static final String[] NG_MODES = {"none", "hsa", "psa", "va"};
+    // blocks). hsa/psa match ngspice's `set ngbehavior=<x>` accepted
+    // values for HSPICE / PSPICE flavours ("va" was dropped — unused). "ki"
+    // (KiCad) and "lt" (LTspice) share psa's .INCLUDE path list, and the
+    // runner maps both to `set ngbehavior=ltps` (PSpice+LTspice translation
+    // of included files — what KiCad itself uses; ngspice's own `ki` flag
+    // doesn't parse model files, and plain lt can't load the PSpice
+    // constructs in ADI/LT opamp macromodels). The two chips differ only in
+    // which library paths they pre-fill: KiCad's built-in Simulation_SPICE.sp
+    // vs LTspice's standard.dio/bjt/mos component databases.
+    //
+    // NG_MODES are the stored/simulated values (the runner still receives
+    // hsa/psa); NG_MODE_LABELS is only what the chips display.
+    private static final String[] NG_MODES       = {"none", "hsa", "psa", "ki", "lt"};
+    private static final String[] NG_MODE_LABELS = {"none", "hs",  "ps",  "ki", "lt"};
 
     private EditBox param1Field;
     private EditBox param2Field;
@@ -219,17 +230,22 @@ public class SimulateEditScreen extends Screen {
             loadedFromBe = true;
         }
 
-        boolean psa = "psa".equals(ngBehavior);
+        boolean psa = "psa".equals(ngBehavior) || "ki".equals(ngBehavior)
+                || "lt".equals(ngBehavior);
         boolean hsa = "hsa".equals(ngBehavior);
 
-        // Library widgets are only relevant for the two modes that emit
-        // includes (hsa → .lib, psa → .INCLUDE). Both present a single
+        // Library widgets are only relevant for the modes that emit includes
+        // (hsa → .lib, psa/ki → .INCLUDE). Both present a single
         // multi-line box (one path per line); the choice of model prefix
         // (e.g. sky130_fd_pr__) now lives on the IC component blocks, so the
-        // sim block no longer has a PDK selector. Other compat modes (none,
-        // va) leave this section empty.
+        // sim block no longer has a PDK selector. The "none" mode leaves
+        // this section empty.
         if (psa) {
-            String hint = "C:\\path\\to\\OPAMP.LIB\nC:\\path\\to\\models.lib";
+            String hint = "ki".equals(ngBehavior)
+                    ? "C:\\Program Files\\KiCad\\10.0\\...\\Simulation_SPICE.sp"
+                    : "lt".equals(ngBehavior)
+                    ? "%LOCALAPPDATA%\\LTspice\\lib\\cmp\\standard.mos"
+                    : "C:\\path\\to\\OPAMP.LIB\nC:\\path\\to\\models.lib";
             pdkLibPathsField = new MultiLineEditBox(
                 Minecraft.getInstance().font,
                 px + 16, py + Y_LIB_FIELD2, W - 32, H_LIB_FIELD,
@@ -475,6 +491,20 @@ public class SimulateEditScreen extends Screen {
         String newKind = pdkSectionKind(mode);
         captureWidgetState();
         ngBehavior = mode;
+        // First switch to KiCad/LTspice mode with no libraries configured:
+        // pre-fill the installed suite's built-in model libs. KiCad: the
+        // generic-model lib (opamps, varistor, potentiometer); LTspice: the
+        // standard.dio/bjt/mos component databases. Vendor opamp libs stay
+        // manual — they're per-project files under demos/ / sub/ / downloads.
+        if (("ki".equals(mode) || "lt".equals(mode))
+                && (pdkLibPaths == null || pdkLibPaths.isBlank())) {
+            String builtin = "ki".equals(mode) ? discoverKiCadBuiltinLib()
+                                               : discoverLtSpiceStandardLibs();
+            if (!builtin.isEmpty()) {
+                pdkLibPaths = builtin;
+                if (pdkLibPathsField != null) pdkLibPathsField.setValue(builtin);
+            }
+        }
         if (!oldKind.equals(newKind)) {
             rebuildWidgets();
         }
@@ -482,9 +512,66 @@ public class SimulateEditScreen extends Screen {
 
     /** Which PDK-section widget layout this compat mode uses. */
     private static String pdkSectionKind(String mode) {
-        if ("psa".equals(mode)) return "psa";
+        if ("psa".equals(mode) || "ki".equals(mode) || "lt".equals(mode)) return "psa";
         if ("hsa".equals(mode)) return "hsa";
         return "none";
+    }
+
+    /**
+     * Finds the installed LTspice's component databases
+     * ({@code lib\cmp\standard.dio/bjt/mos} — diode, BJT and VDMOS-MOSFET
+     * {@code .model} cards) and returns them newline-joined for the paths
+     * box. Checks the modern per-user location first
+     * ({@code %LOCALAPPDATA%\LTspice\lib}), then the LTspiceXVII Documents
+     * layout. Returns "" when no install is found. (The vendor opamp
+     * {@code .sub} files are deliberately not pre-filled: most are
+     * ADI-encrypted "<Binary File>" models only LTspice can read.)
+     */
+    private static String discoverLtSpiceStandardLibs() {
+        String local = System.getenv("LOCALAPPDATA");
+        String docs  = System.getProperty("user.home") + "\\Documents";
+        String[] roots = {
+            (local == null ? "" : local) + "\\LTspice\\lib",
+            docs + "\\LTspiceXVII\\lib",
+        };
+        for (String root : roots) {
+            java.nio.file.Path cmp = java.nio.file.Paths.get(root, "cmp");
+            StringBuilder sb = new StringBuilder();
+            for (String f : new String[]{"standard.dio", "standard.bjt", "standard.mos"}) {
+                java.nio.file.Path p = cmp.resolve(f);
+                if (!java.nio.file.Files.isRegularFile(p)) continue;
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(p);
+            }
+            if (sb.length() > 0) return sb.toString();
+        }
+        return "";
+    }
+
+    /**
+     * Finds the installed KiCad's built-in simulation model library
+     * ({@code share/kicad/symbols/Simulation_SPICE.sp}) under
+     * {@code %ProgramFiles%\KiCad\<version>}, preferring the highest
+     * version. Returns "" when no install is found (non-Windows or no KiCad).
+     */
+    private static String discoverKiCadBuiltinLib() {
+        String pf = System.getenv("ProgramFiles");
+        if (pf == null || pf.isBlank()) pf = "C:\\Program Files";
+        java.nio.file.Path root = java.nio.file.Paths.get(pf, "KiCad");
+        String best = "";
+        double bestVer = -1;
+        try (java.util.stream.Stream<java.nio.file.Path> dirs = java.nio.file.Files.list(root)) {
+            for (java.nio.file.Path verDir : (Iterable<java.nio.file.Path>) dirs::iterator) {
+                java.nio.file.Path lib = verDir.resolve("share").resolve("kicad")
+                        .resolve("symbols").resolve("Simulation_SPICE.sp");
+                if (!java.nio.file.Files.isRegularFile(lib)) continue;
+                double v;
+                try { v = Double.parseDouble(verDir.getFileName().toString()); }
+                catch (NumberFormatException e) { v = 0; }
+                if (v > bestVer) { bestVer = v; best = lib.toString(); }
+            }
+        } catch (java.io.IOException | java.nio.file.InvalidPathException ignored) {}
+        return best;
     }
 
     /** Copies current widget contents back into instance fields. */
@@ -697,14 +784,18 @@ public class SimulateEditScreen extends Screen {
             boolean sel = NG_MODES[i].equals(ngBehavior);
             g.fill(cx, cy, cx + 30, cy + 14, sel ? 0xFF1A4A6A : 0xFF333333);
             g.fill(cx + 1, cy + 1, cx + 29, cy + 13, sel ? 0xFF2A6A9A : 0xFF444444);
-            g.drawCenteredString(f, NG_MODES[i], cx + 15, cy + 3, sel ? SEL : DIM);
+            g.drawCenteredString(f, NG_MODE_LABELS[i], cx + 15, cy + 3, sel ? SEL : DIM);
         }
 
-        // Library section — only rendered for hsa (.lib) or psa (.INCLUDE).
-        // A single label above the multi-line box; one path per line. Other
-        // compat modes (none, va) leave the area blank.
+        // Library section — only rendered for hsa (.lib) or psa/ki (.INCLUDE).
+        // A single label above the multi-line box; one path per line. The
+        // "none" mode leaves the area blank.
         if ("psa".equals(ngBehavior)) {
             g.drawString(f, ".include paths (one per line):", px + 14, py + Y_LIB_LABEL2, LABEL);
+        } else if ("ki".equals(ngBehavior)) {
+            g.drawString(f, "KiCad model libs (one per line):", px + 14, py + Y_LIB_LABEL2, LABEL);
+        } else if ("lt".equals(ngBehavior)) {
+            g.drawString(f, "LTspice model libs (one per line):", px + 14, py + Y_LIB_LABEL2, LABEL);
         } else if ("hsa".equals(ngBehavior)) {
             g.drawString(f, ".lib paths (one per line):", px + 14, py + Y_LIB_LABEL2, LABEL);
         }

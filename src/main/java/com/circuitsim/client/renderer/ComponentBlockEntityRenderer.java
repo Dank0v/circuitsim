@@ -197,6 +197,21 @@ public class ComponentBlockEntityRenderer
         } else if (block == ModBlocks.VOLTAGE_SOURCE_SIN.get()) {
             lines.add(formatScalarOrVar(val, valExpr, "V"));
             lines.add(ComponentEditScreen.formatValue(be.getFrequency()) + "Hz");
+        } else if (block == ModBlocks.VOLTAGE_SOURCE_PULSE.get()) {
+            // Pulse params live in dedicated BE fields (pulseVLow/Tr/Tf/Pw),
+            // NOT the generic w/l/mult/nf slots — the extractor maps them
+            // into the carrier slots only at netlist time. Mirror the
+            // builders' fallbacks so the label shows what actually simulates.
+            lines.add("V1=" + ComponentEditScreen.formatValue(be.getPulseVLow()) + "V");
+            lines.add("V2=" + formatScalarOrVar(val, valExpr, "V"));
+            double tr  = be.getPulseTr()   > 0 ? be.getPulseTr()   : 1e-9;
+            double tf  = be.getPulseTf()   > 0 ? be.getPulseTf()   : 1e-9;
+            double pw  = be.getPulsePw()   > 0 ? be.getPulsePw()   : 1e-6;
+            double per = be.getFrequency() > 0 ? be.getFrequency() : 2e-6;
+            lines.add("TR=" + ComponentEditScreen.formatValue(tr) + "s");
+            lines.add("TF=" + ComponentEditScreen.formatValue(tf) + "s");
+            lines.add("PW=" + ComponentEditScreen.formatValue(pw) + "s");
+            lines.add("Per=" + ComponentEditScreen.formatValue(per) + "s");
         } else if (block == ModBlocks.CURRENT_SOURCE.get()) {
             lines.add(formatScalarOrVar(val, valExpr, "A"));
             String st = be.getSourceType();
@@ -273,6 +288,31 @@ public class ComponentBlockEntityRenderer
             // A never-edited block (k = 0) simulates as k = 1 — show that.
             lines.add("k=" + (!valExpr.isEmpty() ? valExpr
                     : ComponentEditScreen.formatValue(val <= 0 || val > 1 ? 1.0 : val)));
+        } else if (block == ModBlocks.TRANSMISSION_LINE.get()) {
+            // Slots are mode-interpreted (lossless | lossy): value = Z0 | R,
+            // wParam = TD | L, lParam = F | G, multParam = NL | C,
+            // nfParam = — | LEN.
+            if ("ltra".equals(be.getModelName())) {
+                lines.add("T-Line (LTRA)");
+                lines.add("R=" + formatScalarOrVar(val, valExpr, "")
+                        + " L=" + formatScalarOrVar(be.getWParam(), wExpr, ""));
+                lines.add("C=" + formatScalarOrVar(be.getMultParam(), multExpr, "")
+                        + " len=" + formatScalarOrVar(be.getNfParam(), nfExpr, ""));
+            } else {
+                lines.add("T-Line");
+                // A never-edited block simulates as Z0=50 TD=10ns — show that.
+                boolean neverEdited = val == 0 && valExpr.isEmpty();
+                lines.add("Z0=" + (neverEdited ? "50"
+                        : formatScalarOrVar(val, valExpr, "")) + "Ω");
+                double td = be.getWParam();
+                if (neverEdited) {
+                    lines.add("TD=10ns");
+                } else if (!wExpr.isEmpty() || td > 0) {
+                    lines.add("TD=" + formatScalarOrVar(td, wExpr, "s"));
+                } else {
+                    lines.add("F=" + formatScalarOrVar(be.getLParam(), lExpr, "Hz"));
+                }
+            }
         } else if (block == ModBlocks.VCVS.get()) {
             lines.add("VCVS");
             lines.add(formatScalarOrVar(val, valExpr, " V/V"));

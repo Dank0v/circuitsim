@@ -265,6 +265,16 @@ public class NgSpiceRunner {
             boolean hasLibDirective = netlistUpper.contains(".LIB ") || netlistUpper.contains(".INCLUDE");
             if (hasLibDirective) {
                 String mode = (ngBehavior != null && !ngBehavior.isBlank()) ? ngBehavior : "hsa";
+                // The mod's "ki" (KiCad) and "lt" (LTspice) chips both map to
+                // ngspice's ltps flags — PSpice + LTspice translation of
+                // .INCLUDE'd files only, which is what KiCad itself sets when
+                // it runs ngspice. ngspice's own `ki` flag merely quotes '/'
+                // in vector names and does nothing for model files; and plain
+                // `lt` (without ps) can't load the PSpice constructs (VSWITCH,
+                // POLY) that ADI/LT vendor opamp macromodels are written in.
+                // The chips differ only in UI: which library paths they
+                // pre-fill and the label shown.
+                if ("ki".equals(mode) || "lt".equals(mode)) mode = "ltps";
                 Path spiceInit = tempDir.resolve(".spiceinit");
                 try (BufferedWriter w = Files.newBufferedWriter(spiceInit, StandardCharsets.UTF_8)) {
                     w.write("set ngbehavior=" + mode + "\n");
@@ -1017,11 +1027,7 @@ public class NgSpiceRunner {
      * applied transparently each simulation.)
      */
     private static void normalizeLibFile(Path src, Path dst) throws IOException {
-        byte[] data = Files.readAllBytes(src);
-        for (int i = 0; i < data.length; i++) {
-            if (data[i] < 0) data[i] = 0x20; // signed-byte < 0 == unsigned byte >= 0x80
-        }
-        String text = new String(data, StandardCharsets.US_ASCII);
+        String text = decodeLibBytes(Files.readAllBytes(src));
         try (BufferedReader r = new BufferedReader(new java.io.StringReader(text));
              BufferedWriter w = Files.newBufferedWriter(dst, StandardCharsets.UTF_8)) {
             String line;
@@ -1031,6 +1037,57 @@ public class NgSpiceRunner {
             }
         }
     }
+
+    /**
+     * Decodes a SPICE library file's raw bytes to plain-ASCII text.
+     *
+     * <p>LTspice ships its component databases ({@code lib\cmp\standard.mos},
+     * {@code standard.bjt}) and many {@code .sub} models as UTF-16LE. ngspice
+     * reads bytes and silently loads <em>zero</em> models from such files (the
+     * interleaved NUL bytes break every token), so they must be transcoded.
+     * Detection: a UTF-16 BOM, or a NUL byte within the first 512 bytes
+     * (SPICE libs are otherwise pure text and never contain NUL) — byte order
+     * inferred from whether the NULs sit at odd (LE) or even (BE) offsets.
+     *
+     * <p>After decoding, every char {@code >= 0x80} becomes a space: OrCAD's
+     * OPAMP.LIB carries stray {@code 0x81} control bytes ngspice's UTF-8
+     * reader rejects, and vendor headers use {@code ©}/{@code µ} freely.
+     * SPICE syntax is ASCII-only, so this never destroys real content.
+     */
+    static String decodeLibBytes(byte[] data) {
+        String text;
+        if (data.length >= 2 && (data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0xFE) {
+            text = new String(data, 2, data.length - 2, StandardCharsets.UTF_16LE);
+        } else if (data.length >= 2 && (data[0] & 0xFF) == 0xFE && (data[1] & 0xFF) == 0xFF) {
+            text = new String(data, 2, data.length - 2, StandardCharsets.UTF_16BE);
+        } else {
+            int oddNuls = 0, evenNuls = 0, scan = Math.min(data.length, 512);
+            for (int i = 0; i < scan; i++) {
+                if (data[i] == 0) { if ((i & 1) == 1) oddNuls++; else evenNuls++; }
+            }
+            if (oddNuls + evenNuls > 0) {
+                text = new String(data, oddNuls >= evenNuls
+                        ? StandardCharsets.UTF_16LE : StandardCharsets.UTF_16BE);
+            } else {
+                text = new String(data, StandardCharsets.ISO_8859_1);
+            }
+        }
+        StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            sb.append(c < 0x80 ? c : ' ');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * LTspice B-source lookup function: {@code B1 a b I=TABLE(V(x), x1,y1, ...)}.
+     * ngspice's identical-semantics function is spelled {@code pwl(...)}; the
+     * lt compat translator doesn't map it, so we do. Applies only to B device
+     * lines — PSpice {@code E ... TABLE {expr} = (x,y)} syntax is a different
+     * construct handled by the ps translator and must stay untouched.
+     */
+    private static final Pattern B_TABLE_LINE = Pattern.compile("^\\s*[Bb]\\S*\\s");
 
     /**
      * Rewrites a PSpice POLY E/F/G/H source into a ngspice B-source. We have to
@@ -1057,6 +1114,9 @@ public class NgSpiceRunner {
      * surfaces as a normal ngspice error rather than silent corruption.
      */
     static String normalizePspiceLine(String line) {
+        if (B_TABLE_LINE.matcher(line).find()) {
+            return line.replaceAll("(?i)\\bTABLE\\s*\\(", "pwl(");
+        }
         if (!POLY_LINE.matcher(line).find()) return line;
 
         String stripped = line.replace(',', ' ').replace('(', ' ').replace(')', ' ');
@@ -1207,9 +1267,41 @@ public class NgSpiceRunner {
                 p.getInputStream().readAllBytes();
                 boolean done = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
                 if (!done) { p.destroyForcibly(); continue; }
-                return candidate;
+                return toAbsolute(candidate);
             } catch (IOException | InterruptedException ignored) {}
         }
         return null;
+    }
+
+    /**
+     * Expands a bare executable name to its absolute path by searching PATH.
+     *
+     * <p>ngspice locates its init file {@code spinit} — the script that loads
+     * the XSPICE code models (aswitch, a_poly, …) — relative to argv[0].
+     * Launched by bare name (which is what ProcessBuilder passes), it can't
+     * find its own install directory, silently skips spinit, and any PSpice
+     * {@code VSWITCH}/{@code TABLE} construct the compat translator turns
+     * into an XSPICE device dies with {@code MIF-ERROR - unable to find
+     * definition of model ...} (seen with KiCad's OPA1641 vendor lib). A full
+     * argv[0] path avoids that. Falls back to the bare name when no PATH
+     * entry contains the binary.
+     */
+    private static String toAbsolute(String name) {
+        String pathEnv = System.getenv("PATH");
+        if (pathEnv == null) return name;
+        // Windows PATH lookup appends .exe to bare names; try that first and
+        // the plain name second so the same code works on unix.
+        String[] exts = name.toLowerCase().endsWith(".exe")
+                ? new String[]{""} : new String[]{".exe", ""};
+        for (String dir : pathEnv.split(java.io.File.pathSeparator)) {
+            if (dir.isBlank()) continue;
+            for (String ext : exts) {
+                try {
+                    Path cand = Paths.get(dir.strip(), name + ext);
+                    if (Files.isRegularFile(cand)) return cand.toAbsolutePath().toString();
+                } catch (java.nio.file.InvalidPathException ignored) {}
+            }
+        }
+        return name;
     }
 }

@@ -34,7 +34,10 @@ public class NetlistBuilder {
         // 14=B (behavioral V/I sources — both share the B namespace),
         // 15=K (coupled inductors — the K line only; the transformer's two
         //       winding L lines draw from the shared family-3 counter)
+        // 16=T/O (transmission line — lossless T and lossy O share one
+        //       counter; indices need only be unique within each letter)
         if (c.subcircuitNodes != null) return 8;
+        if (c.block instanceof TransmissionLineBlock) return 16;
         if (c.block instanceof TransformerBlock) return 15;
         if (c.block instanceof BehavioralVoltageSourceBlock
                 || c.block instanceof BehavioralCurrentSourceBlock) return 14;
@@ -63,7 +66,7 @@ public class NetlistBuilder {
                                     IndexAssigner e, IndexAssigner f,
                                     IndexAssigner g, IndexAssigner h,
                                     IndexAssigner s, IndexAssigner b,
-                                    IndexAssigner k) {
+                                    IndexAssigner k, IndexAssigner t) {
         for (CircuitComponent comp : components) {
             int n = comp.componentNumber;
             if (n <= 0) continue;
@@ -83,6 +86,7 @@ public class NetlistBuilder {
                 case 13 -> s.claim(n);
                 case 14 -> b.claim(n);
                 case 15 -> k.claim(n);
+                case 16 -> t.claim(n);
                 default -> {}
             }
         }
@@ -156,6 +160,68 @@ public class NetlistBuilder {
         sb.append(String.format("L%d %s %s %s\n%s %s %s %s",
                 idx, nodeRef(nodeP, aliases), midNode, lValue,
                 rName, midNode, nodeRef(nodeN, aliases), num(rser, rserExpr)));
+    }
+
+    // -------------------------------------------------------------------------
+    // Transmission line (lossless T element, or lossy O element + LTRA model)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Formats a transmission line instance. Pins: nodeA/nodeB = port 1 +/−,
+     * nodeC/nodeD = port 2 +/−. The mode string rides in {@code modelName}
+     * ({@code "ltra"} = lossy, anything else = lossless); the parameter slots
+     * are mode-interpreted (lossless | lossy): value = Z0 | R,
+     * wParam = TD | L, lParam = F | G, multParam = NL | C, nfParam = — | LEN.
+     *
+     * <p>Lossless emits one {@code T<n> ... Z0=... TD=...} line. The line
+     * length may instead be given as {@code F=<freq>} plus optional
+     * {@code NL=<nrmlen>} (ngspice defaults NL to 0.25, quarter-wave): TD
+     * wins when both are set, and a block with neither falls back to
+     * {@code TD=10NS}. A never-edited block (Z0 = 0, no expr) emits the
+     * classic {@code Z0=50 TD=10NS} — the BE's generic 1.0 slot defaults
+     * were never meant as seconds/hertz.
+     *
+     * <p>Lossy emits {@code O<n> ... LTRAMOD<n>} plus a per-instance
+     * {@code .model LTRAMOD<n> LTRA(...)} card (R/L/G/C per unit length +
+     * LEN, which ngspice requires — 0/unset falls back to 1). Both T and O
+     * indices come from the shared family-16 counter; uniqueness only
+     * matters within one letter, so gaps are harmless.
+     */
+    private static String formatTransmissionLine(CircuitComponent comp, IndexAssigner tIdx,
+                                                 java.util.Map<Integer, String> aliases) {
+        int n = tIdx.assign(comp.componentNumber);
+        String pins = String.format("%s %s %s %s",
+                nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases),
+                nodeRef(comp.nodeC, aliases), nodeRef(comp.nodeD, aliases));
+
+        if (TransmissionLineBlock.MODE_LTRA.equals(comp.modelName)) {
+            boolean lenSet = comp.nfParam > 0
+                    || (comp.nfExpr != null && !comp.nfExpr.isEmpty());
+            String len = lenSet ? num(comp.nfParam, comp.nfExpr) : "1";
+            return String.format("O%d %s LTRAMOD%d\n.model LTRAMOD%d LTRA(R=%s L=%s G=%s C=%s LEN=%s)",
+                    n, pins, n, n,
+                    num(comp.value, comp.valueExpr), num(comp.wParam, comp.wExpr),
+                    num(comp.lParam, comp.lExpr), num(comp.multParam, comp.multExpr),
+                    len);
+        }
+
+        boolean neverEdited = comp.value == 0
+                && (comp.valueExpr == null || comp.valueExpr.isEmpty());
+        String z0 = neverEdited ? "50" : num(comp.value, comp.valueExpr);
+        String lengthSpec;
+        if (neverEdited) {
+            lengthSpec = "TD=10NS";
+        } else if (comp.wParam > 0 || (comp.wExpr != null && !comp.wExpr.isEmpty())) {
+            lengthSpec = "TD=" + num(comp.wParam, comp.wExpr);
+        } else if (comp.lParam > 0 || (comp.lExpr != null && !comp.lExpr.isEmpty())) {
+            lengthSpec = "F=" + num(comp.lParam, comp.lExpr);
+            if (comp.multParam > 0 || (comp.multExpr != null && !comp.multExpr.isEmpty())) {
+                lengthSpec += " NL=" + num(comp.multParam, comp.multExpr);
+            }
+        } else {
+            lengthSpec = "TD=10NS";
+        }
+        return String.format("T%d %s Z0=%s %s", n, pins, z0, lengthSpec);
     }
 
     /**
@@ -321,12 +387,26 @@ public class NetlistBuilder {
     private static String formatSubcircuit(int idx, CircuitComponent comp,
                                             java.util.Map<Integer, String> aliases) {
         StringBuilder sb = new StringBuilder();
-        // Discrete BJTs reference a SPICE .model (e.g. from a vendor BIPOLAR.lib)
-        // and so are emitted as native Q devices (Q<n> C B E MODEL), not X
-        // subcircuit instances. Everything else on this path is a real .SUBCKT.
+        // The device letter follows the resolved model kind (see
+        // resolveModelKinds), falling back to each block's legacy default:
+        //  - Discrete BJTs default to native Q devices (Q<n> C B E MODEL,
+        //    e.g. a vendor BIPOLAR.lib .model card); when the name resolves
+        //    to a .subckt (KiCad-style macromodel) they become XQ<n>
+        //    instances instead. The XQ prefix keeps them out of the plain
+        //    X<n> namespace shared with amplifiers / user subcircuits,
+        //    mirroring the IC mosfets' XM<n> convention.
+        //  - Discrete MOSFETs default to X<n> D G S subckt instances; when
+        //    the name resolves to a .model card (KiCad/LTspice VDMOS) they
+        //    become native M<n> devices — same node order.
         boolean isBjt = comp.block instanceof DiscreteNpnBlock
                 || comp.block instanceof DiscretePnpBlock;
-        sb.append(isBjt ? 'Q' : 'X').append(idx);
+        boolean isFet = comp.block instanceof DiscreteNmosBlock
+                || comp.block instanceof DiscretePmosBlock;
+        String prefix;
+        if (isBjt)      prefix = Boolean.TRUE.equals(comp.modelIsSubckt)  ? "XQ" : "Q";
+        else if (isFet) prefix = Boolean.FALSE.equals(comp.modelIsSubckt) ? "M"  : "X";
+        else            prefix = "X";
+        sb.append(prefix).append(idx);
         for (int n : comp.subcircuitNodes) sb.append(' ').append(nodeRef(n, aliases));
         String model = comp.modelName == null || comp.modelName.isBlank()
                 ? "UNDEFINED_MODEL"
@@ -371,9 +451,9 @@ public class NetlistBuilder {
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
                       sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
-                      kIdx = new IndexAssigner();
+                      kIdx = new IndexAssigner(), tIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx, tIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         boolean hasDiode = false;
 
@@ -397,6 +477,8 @@ public class NetlistBuilder {
                 line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof TransformerBlock) {
                 line = formatTransformer(comp, lIdx, kIdx, aliases);
+            } else if (comp.block instanceof TransmissionLineBlock) {
+                line = formatTransmissionLine(comp, tIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // Carry both DC bias and (when set) AC magnitude so the subckt
                 // is usable in .op AND .ac without re-extraction.
@@ -428,7 +510,11 @@ public class NetlistBuilder {
             } else if (comp.block instanceof DiodeBlock) {
                 String dmodel = (comp.modelName == null || comp.modelName.isBlank())
                         ? "DMOD" : comp.modelName.trim();
-                line = String.format("D%d %s %s %s",
+                // Vendor/KiCad libs ship some diodes as .subckt macromodels
+                // (package parasitics around the junction) — those become
+                // XD<n> instances; plain .model cards stay native D<n>.
+                line = String.format("%s%d %s %s %s",
+                        Boolean.TRUE.equals(comp.modelIsSubckt) ? "XD" : "D",
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
@@ -506,6 +592,7 @@ public class NetlistBuilder {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim Netlist\n");
         appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+        resolveModelKinds(components, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
@@ -516,9 +603,9 @@ public class NetlistBuilder {
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
                       sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
-                      kIdx = new IndexAssigner();
+                      kIdx = new IndexAssigner(), tIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx, tIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
@@ -543,6 +630,8 @@ public class NetlistBuilder {
                 line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof TransformerBlock) {
                 line = formatTransformer(comp, lIdx, kIdx, aliases);
+            } else if (comp.block instanceof TransmissionLineBlock) {
+                line = formatTransmissionLine(comp, tIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // OP analysis cares only about the DC bias; the AC magnitude is
                 // a small-signal perturbation that is meaningless here.
@@ -569,7 +658,11 @@ public class NetlistBuilder {
                 // provided by an included library (.lib / .INCLUDE).
                 String dmodel = (comp.modelName == null || comp.modelName.isBlank())
                         ? "DMOD" : comp.modelName.trim();
-                line = String.format("D%d %s %s %s",
+                // Vendor/KiCad libs ship some diodes as .subckt macromodels
+                // (package parasitics around the junction) — those become
+                // XD<n> instances; plain .model cards stay native D<n>.
+                line = String.format("%s%d %s %s %s",
+                        Boolean.TRUE.equals(comp.modelIsSubckt) ? "XD" : "D",
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
@@ -675,6 +768,10 @@ public class NetlistBuilder {
         List<DeviceRef> out = new ArrayList<>();
         for (CircuitComponent comp : components) {
             int f = rIndexFamily(comp);
+            // Transmission lines (family 16) have no meaningful single
+            // operating point and no show class — no annotation. Their T/O
+            // counter is exclusive to them, so skipping burns nothing that
+            // another device's name depends on.
             if (f < 1 || f > 15) continue;
             if (f == 15) {
                 // Transformer: its two winding L lines consume shared L-family
@@ -707,13 +804,28 @@ public class NetlistBuilder {
                 || b instanceof VoltageSourcePulseBlock)
                                              return new DeviceRef(comp.pos, "V"  + idx, 'v', false, "voltage_source","Voltage Source");
         if (b instanceof CurrentSourceBlock) return new DeviceRef(comp.pos, "I"  + idx, 'i', false, "current_source","Current Source");
-        if (b instanceof DiodeBlock)         return new DeviceRef(comp.pos, "D"  + idx, 'd', false, "diode",        "Diode");
+        // Discrete FET / BJT / diode letters follow the resolved model kind,
+        // mirroring formatSubcircuit / the diode emission branches exactly —
+        // a mismatch here silently breaks the K-menu OP annotation.
+        boolean subK = Boolean.TRUE.equals(comp.modelIsSubckt);
+        boolean modK = Boolean.FALSE.equals(comp.modelIsSubckt);
+        if (b instanceof DiodeBlock)         return subK
+                ? new DeviceRef(comp.pos, "XD" + idx, 'd', true,  "diode",        "Diode")
+                : new DeviceRef(comp.pos, "D"  + idx, 'd', false, "diode",        "Diode");
         if (b instanceof IcNmos4Block)       return new DeviceRef(comp.pos, "XM" + idx, 'm', true,  "ic_nmos4",     "NMOS (IC)");
         if (b instanceof IcPmos4Block)       return new DeviceRef(comp.pos, "XM" + idx, 'm', true,  "ic_pmos4",     "PMOS (IC)");
-        if (b instanceof DiscreteNmosBlock)  return new DeviceRef(comp.pos, "X"  + idx, 'm', true,  "discrete_nmos","NMOS");
-        if (b instanceof DiscretePmosBlock)  return new DeviceRef(comp.pos, "X"  + idx, 'm', true,  "discrete_pmos","PMOS");
-        if (b instanceof DiscreteNpnBlock)   return new DeviceRef(comp.pos, "Q"  + idx, 'q', false, "discrete_npn", "NPN");
-        if (b instanceof DiscretePnpBlock)   return new DeviceRef(comp.pos, "Q"  + idx, 'q', false, "discrete_pnp", "PNP");
+        if (b instanceof DiscreteNmosBlock)  return modK
+                ? new DeviceRef(comp.pos, "M"  + idx, 'm', false, "discrete_nmos","NMOS")
+                : new DeviceRef(comp.pos, "X"  + idx, 'm', true,  "discrete_nmos","NMOS");
+        if (b instanceof DiscretePmosBlock)  return modK
+                ? new DeviceRef(comp.pos, "M"  + idx, 'm', false, "discrete_pmos","PMOS")
+                : new DeviceRef(comp.pos, "X"  + idx, 'm', true,  "discrete_pmos","PMOS");
+        if (b instanceof DiscreteNpnBlock)   return subK
+                ? new DeviceRef(comp.pos, "XQ" + idx, 'q', true,  "discrete_npn", "NPN")
+                : new DeviceRef(comp.pos, "Q"  + idx, 'q', false, "discrete_npn", "NPN");
+        if (b instanceof DiscretePnpBlock)   return subK
+                ? new DeviceRef(comp.pos, "XQ" + idx, 'q', true,  "discrete_pnp", "PNP")
+                : new DeviceRef(comp.pos, "Q"  + idx, 'q', false, "discrete_pnp", "PNP");
         if (b instanceof BehavioralVoltageSourceBlock)
                                              return new DeviceRef(comp.pos, "B"  + idx, 'b', false, "behavioral_voltage_source", "B-Source V");
         if (b instanceof BehavioralCurrentSourceBlock)
@@ -864,6 +976,7 @@ public class NetlistBuilder {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim AC Netlist\n");
         appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+        resolveModelKinds(components, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
@@ -874,9 +987,9 @@ public class NetlistBuilder {
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
                       sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
-                      kIdx = new IndexAssigner();
+                      kIdx = new IndexAssigner(), tIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx, tIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode    = false;
@@ -902,6 +1015,8 @@ public class NetlistBuilder {
                 line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof TransformerBlock) {
                 line = formatTransformer(comp, lIdx, kIdx, aliases);
+            } else if (comp.block instanceof TransmissionLineBlock) {
+                line = formatTransmissionLine(comp, tIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // Both halves are independent: DC sets the bias point that the
                 // small-signal solver linearises around, AC is the perturbation.
@@ -938,7 +1053,11 @@ public class NetlistBuilder {
                 // provided by an included library (.lib / .INCLUDE).
                 String dmodel = (comp.modelName == null || comp.modelName.isBlank())
                         ? "DMOD" : comp.modelName.trim();
-                line = String.format("D%d %s %s %s",
+                // Vendor/KiCad libs ship some diodes as .subckt macromodels
+                // (package parasitics around the junction) — those become
+                // XD<n> instances; plain .model cards stay native D<n>.
+                line = String.format("%s%d %s %s %s",
+                        Boolean.TRUE.equals(comp.modelIsSubckt) ? "XD" : "D",
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
@@ -1059,6 +1178,7 @@ public class NetlistBuilder {
           .append(voltageInjection ? "voltage" : "current")
           .append(" injection)\n");
         appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+        resolveModelKinds(components, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
@@ -1069,9 +1189,9 @@ public class NetlistBuilder {
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
                       sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
-                      kIdx = new IndexAssigner();
+                      kIdx = new IndexAssigner(), tIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx, tIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         boolean hasDiode = false;
 
@@ -1097,6 +1217,8 @@ public class NetlistBuilder {
                 line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof TransformerBlock) {
                 line = formatTransformer(comp, lIdx, kIdx, aliases);
+            } else if (comp.block instanceof TransmissionLineBlock) {
+                line = formatTransmissionLine(comp, tIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 // AC forced to 0 — only the injection excites the loop.
                 line = String.format("V%d %s %s DC %s AC 0",
@@ -1117,7 +1239,11 @@ public class NetlistBuilder {
             } else if (comp.block instanceof DiodeBlock) {
                 String dmodel = (comp.modelName == null || comp.modelName.isBlank())
                         ? "DMOD" : comp.modelName.trim();
-                line = String.format("D%d %s %s %s",
+                // Vendor/KiCad libs ship some diodes as .subckt macromodels
+                // (package parasitics around the junction) — those become
+                // XD<n> instances; plain .model cards stay native D<n>.
+                line = String.format("%s%d %s %s %s",
+                        Boolean.TRUE.equals(comp.modelIsSubckt) ? "XD" : "D",
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
@@ -1195,6 +1321,7 @@ public class NetlistBuilder {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim NOISE Netlist\n");
         appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+        resolveModelKinds(components, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
@@ -1205,9 +1332,9 @@ public class NetlistBuilder {
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
                       sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
-                      kIdx = new IndexAssigner();
+                      kIdx = new IndexAssigner(), tIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx, tIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
@@ -1232,6 +1359,8 @@ public class NetlistBuilder {
                 line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof TransformerBlock) {
                 line = formatTransformer(comp, lIdx, kIdx, aliases);
+            } else if (comp.block instanceof TransmissionLineBlock) {
+                line = formatTransmissionLine(comp, tIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 line = String.format("V%d %s %s DC %s AC %s",
                         vIdx.assign(comp.componentNumber),
@@ -1250,7 +1379,11 @@ public class NetlistBuilder {
             } else if (comp.block instanceof DiodeBlock) {
                 String dmodel = (comp.modelName == null || comp.modelName.isBlank())
                         ? "DMOD" : comp.modelName.trim();
-                line = String.format("D%d %s %s %s",
+                // Vendor/KiCad libs ship some diodes as .subckt macromodels
+                // (package parasitics around the junction) — those become
+                // XD<n> instances; plain .model cards stay native D<n>.
+                line = String.format("%s%d %s %s %s",
+                        Boolean.TRUE.equals(comp.modelIsSubckt) ? "XD" : "D",
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
@@ -1325,6 +1458,7 @@ public class NetlistBuilder {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim DC Netlist\n");
         appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+        resolveModelKinds(components, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
@@ -1335,9 +1469,9 @@ public class NetlistBuilder {
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
                       sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
-                      kIdx = new IndexAssigner();
+                      kIdx = new IndexAssigner(), tIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx, tIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
@@ -1362,6 +1496,8 @@ public class NetlistBuilder {
                 line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof TransformerBlock) {
                 line = formatTransformer(comp, lIdx, kIdx, aliases);
+            } else if (comp.block instanceof TransmissionLineBlock) {
+                line = formatTransmissionLine(comp, tIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 line = String.format("V%d %s %s DC %s", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceSinBlock) {
@@ -1381,7 +1517,11 @@ public class NetlistBuilder {
                 // provided by an included library (.lib / .INCLUDE).
                 String dmodel = (comp.modelName == null || comp.modelName.isBlank())
                         ? "DMOD" : comp.modelName.trim();
-                line = String.format("D%d %s %s %s",
+                // Vendor/KiCad libs ship some diodes as .subckt macromodels
+                // (package parasitics around the junction) — those become
+                // XD<n> instances; plain .model cards stay native D<n>.
+                line = String.format("%s%d %s %s %s",
+                        Boolean.TRUE.equals(comp.modelIsSubckt) ? "XD" : "D",
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
@@ -1497,6 +1637,7 @@ public class NetlistBuilder {
         StringBuilder sb = new StringBuilder();
         sb.append("* CircuitSim TRAN Netlist\n");
         appendPdkLib(sb, pdkName, pdkLibPath, pdkLibPaths, ngBehavior);
+        resolveModelKinds(components, pdkLibPaths, ngBehavior);
 
         java.util.Map<Integer, String> aliases = aliasesFromProbes(probes);
 
@@ -1507,9 +1648,9 @@ public class NetlistBuilder {
                       eIdx = new IndexAssigner(), fIdx = new IndexAssigner(),
                       gIdx = new IndexAssigner(), hIdx = new IndexAssigner(),
                       sIdx = new IndexAssigner(), bIdx = new IndexAssigner(),
-                      kIdx = new IndexAssigner();
+                      kIdx = new IndexAssigner(), tIdx = new IndexAssigner();
         claimManual(components, rIdx, cIdx, lIdx, vIdx, iIdx, dIdx, mIdx, xIdx,
-                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx);
+                eIdx, fIdx, gIdx, hIdx, sIdx, bIdx, kIdx, tIdx);
         java.util.Map<String, String> swModels = new java.util.LinkedHashMap<>();
         int vmCount = 1;
         boolean hasDiode = false;
@@ -1534,6 +1675,8 @@ public class NetlistBuilder {
                 line = formatInductor(lIdx.assign(comp.componentNumber), comp, aliases);
             } else if (comp.block instanceof TransformerBlock) {
                 line = formatTransformer(comp, lIdx, kIdx, aliases);
+            } else if (comp.block instanceof TransmissionLineBlock) {
+                line = formatTransmissionLine(comp, tIdx, aliases);
             } else if (comp.block instanceof VoltageSourceBlock) {
                 line = String.format("V%d %s %s DC %s", vIdx.assign(comp.componentNumber), nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), num(comp.value, comp.valueExpr));
             } else if (comp.block instanceof VoltageSourceSinBlock) {
@@ -1566,7 +1709,11 @@ public class NetlistBuilder {
                 // provided by an included library (.lib / .INCLUDE).
                 String dmodel = (comp.modelName == null || comp.modelName.isBlank())
                         ? "DMOD" : comp.modelName.trim();
-                line = String.format("D%d %s %s %s",
+                // Vendor/KiCad libs ship some diodes as .subckt macromodels
+                // (package parasitics around the junction) — those become
+                // XD<n> instances; plain .model cards stay native D<n>.
+                line = String.format("%s%d %s %s %s",
+                        Boolean.TRUE.equals(comp.modelIsSubckt) ? "XD" : "D",
                         dIdx.assign(comp.componentNumber),
                         nodeRef(comp.nodeA, aliases), nodeRef(comp.nodeB, aliases), dmodel);
                 if ("DMOD".equals(dmodel)) hasDiode = true;
@@ -1675,10 +1822,12 @@ public class NetlistBuilder {
     /**
      * Emits library include directives.
      *
-     * <p>In PSpice compatibility mode ({@code ngBehavior="psa"}) each non-empty
-     * line of {@code pdkLibPaths} becomes a separate {@code .INCLUDE "..."}
-     * directive — psa collapses {@code .lib} to {@code .include} anyway and
-     * has no hierarchical section support, so we emit .INCLUDE directly.
+     * <p>In PSpice compatibility mode ({@code ngBehavior="psa"}), KiCad mode
+     * ({@code "ki"}) and LTspice mode ({@code "lt"}) each non-empty line of
+     * {@code pdkLibPaths} becomes a separate {@code .INCLUDE "..."} directive
+     * — psa collapses {@code .lib} to {@code .include} anyway and has no
+     * hierarchical section support, so we emit .INCLUDE directly; KiCad and
+     * LTspice model libraries are flat files too.
      *
      * <p>In any other mode (the sky130A HSPICE path) each non-empty line of
      * {@code pdkLibPath} becomes its own {@code .lib <path>} directive; this
@@ -1687,7 +1836,7 @@ public class NetlistBuilder {
      */
     private static void appendPdkLib(StringBuilder sb, String pdkName, String pdkLibPath,
                                      String pdkLibPaths, String ngBehavior) {
-        if ("psa".equals(ngBehavior)) {
+        if ("psa".equals(ngBehavior) || "ki".equals(ngBehavior) || "lt".equals(ngBehavior)) {
             if (pdkLibPaths == null || pdkLibPaths.isBlank()) return;
             for (String raw : pdkLibPaths.split("\\r?\\n")) {
                 String line = raw.strip();
@@ -1712,6 +1861,114 @@ public class NetlistBuilder {
                 if (line.isEmpty()) continue;
                 sb.append(".lib ").append(line).append("\n");
             }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Included-library model-kind resolution (KiCad / vendor lib support)
+    // -------------------------------------------------------------------------
+
+    /** Name sets from one scan of the {@code .INCLUDE} library list. */
+    private record LibNameIndex(Set<String> subckts, Set<String> models) {}
+
+    /**
+     * Cache of the last {@link #scanLibs} result, keyed by the paths string
+     * plus each file's (size, mtime) signature, so per-step netlist rebuilds
+     * inside temp/DC/Monte-Carlo sweeps don't re-read the files every step.
+     */
+    private static volatile String       libScanKey   = null;
+    private static volatile LibNameIndex libScanIndex = null;
+
+    private static final java.util.regex.Pattern LIB_DEF_LINE =
+            java.util.regex.Pattern.compile("(?i)^\\s*\\.(subckt|model)\\s+(\\S+)");
+
+    /**
+     * Scans every readable file listed in {@code pdkLibPaths} (one path per
+     * line, optional surrounding quotes) and collects the lowercased names of
+     * all {@code .subckt} and {@code .model} definitions. Files are read as
+     * ISO-8859-1 so stray high bytes in old vendor libs can't abort the scan;
+     * nested {@code .include}s inside the libraries are not followed.
+     */
+    private static LibNameIndex scanLibs(String pdkLibPaths) {
+        List<java.nio.file.Path> files = new ArrayList<>();
+        StringBuilder key = new StringBuilder(pdkLibPaths);
+        for (String raw : pdkLibPaths.split("\\r?\\n")) {
+            String line = raw.strip();
+            if (line.length() >= 2 && line.startsWith("\"") && line.endsWith("\"")) {
+                line = line.substring(1, line.length() - 1).strip();
+            }
+            if (line.isEmpty()) continue;
+            try {
+                java.nio.file.Path p = java.nio.file.Paths.get(line);
+                if (!java.nio.file.Files.isRegularFile(p)) continue;
+                long size = java.nio.file.Files.size(p);
+                // A multi-megabyte file is a PDK, not a vendor device lib —
+                // skip it rather than stall the sim thread parsing it.
+                if (size > 4_000_000L) continue;
+                key.append('|').append(size).append('@')
+                   .append(java.nio.file.Files.getLastModifiedTime(p).toMillis());
+                files.add(p);
+            } catch (java.nio.file.InvalidPathException | java.io.IOException ignored) {}
+        }
+        String k = key.toString();
+        LibNameIndex cached = libScanIndex;
+        if (cached != null && k.equals(libScanKey)) return cached;
+
+        Set<String> subckts = new HashSet<>();
+        Set<String> models  = new HashSet<>();
+        for (java.nio.file.Path p : files) {
+            try {
+                // Decode via the runner's lib decoder — LTspice's standard.mos
+                // / standard.bjt are UTF-16LE, and a raw byte read would see a
+                // NUL between every char and match no definitions at all.
+                String text = NgSpiceRunner.decodeLibBytes(java.nio.file.Files.readAllBytes(p));
+                for (String line : text.split("\\r?\\n")) {
+                    java.util.regex.Matcher m = LIB_DEF_LINE.matcher(line);
+                    if (!m.find()) continue;
+                    String name = m.group(2).toLowerCase(java.util.Locale.ROOT);
+                    if (m.group(1).equalsIgnoreCase("subckt")) subckts.add(name);
+                    else                                       models.add(name);
+                }
+            } catch (java.io.IOException ignored) {}
+        }
+        LibNameIndex idx = new LibNameIndex(subckts, models);
+        libScanKey   = k;
+        libScanIndex = idx;
+        return idx;
+    }
+
+    /**
+     * Resolves how each discrete MOSFET / BJT / diode's model name is defined
+     * in the included libraries and stamps {@link CircuitComponent#modelIsSubckt}
+     * so emission (and {@link #describeDevices}) can pick the right device
+     * letter: KiCad ships VDMOS MOSFETs as {@code .model} cards (need an
+     * {@code M} line, not the legacy {@code X}) and BJTs as {@code .subckt}s
+     * (need {@code X}, not the legacy {@code Q}); vendor diode libs mix both.
+     *
+     * <p>Only runs for the compat modes that actually emit the {@code .INCLUDE}
+     * path list ({@code psa}, {@code ki}, {@code lt}); names that don't appear in any
+     * scanned file keep the legacy default. Mutates the components in place and
+     * is idempotent — the netlist builders call it on every build, and
+     * SimulatePacket calls it once after extraction so OP-annotation refs stay
+     * correct even when a parametric rebuild swaps the component list.
+     */
+    public static void resolveModelKinds(List<CircuitComponent> components,
+                                         String pdkLibPaths, String ngBehavior) {
+        boolean scans = "psa".equals(ngBehavior) || "ki".equals(ngBehavior)
+                || "lt".equals(ngBehavior);
+        if (!scans || pdkLibPaths == null || pdkLibPaths.isBlank()) return;
+        LibNameIndex idx = scanLibs(pdkLibPaths);
+        if (idx.subckts().isEmpty() && idx.models().isEmpty()) return;
+        for (CircuitComponent comp : components) {
+            Block b = comp.block;
+            boolean eligible = b instanceof DiscreteNmosBlock || b instanceof DiscretePmosBlock
+                    || b instanceof DiscreteNpnBlock || b instanceof DiscretePnpBlock
+                    || b instanceof DiodeBlock;
+            if (!eligible) continue;
+            if (comp.modelName == null || comp.modelName.isBlank()) continue;
+            String name = comp.modelName.trim().toLowerCase(java.util.Locale.ROOT);
+            if (idx.subckts().contains(name))     comp.modelIsSubckt = Boolean.TRUE;
+            else if (idx.models().contains(name)) comp.modelIsSubckt = Boolean.FALSE;
         }
     }
 
@@ -2046,6 +2303,16 @@ public class NetlistBuilder {
         // to avoid threading it through the telescoping constructor chain; the
         // copy helpers (withValue/substituteVariable) carry it forward.
         public String         pdkName = "none";
+        /**
+         * How {@link #modelName} resolved against the included libraries
+         * (see {@link #resolveModelKinds}): {@code TRUE} = a {@code .subckt}
+         * (emit an X line), {@code FALSE} = a {@code .model} card (emit the
+         * native device letter), {@code null} = unresolved — keep each block's
+         * legacy default (X for discrete MOSFETs, Q for BJTs, D for diodes).
+         * Non-final for the same reason as {@link #pdkName}; the copy helpers
+         * carry it forward.
+         */
+        public Boolean        modelIsSubckt = null;
         // user-chosen index in the netlist (e.g. R5). 0 = auto-assigned.
         public final int      componentNumber;
         /**
@@ -2176,6 +2443,12 @@ public class NetlistBuilder {
                     1.0, 1.0, 1.0, 1.0, componentNumber, pinNodes);
         }
 
+        /** Attaches the resolved model kind and returns {@code this} (fluent). */
+        public CircuitComponent withModelKind(Boolean isSubckt) {
+            this.modelIsSubckt = isSubckt;
+            return this;
+        }
+
         /** Attaches the process PDK and returns {@code this} (fluent). */
         public CircuitComponent withPdkName(String pdk) {
             this.pdkName = (pdk == null || pdk.isBlank()) ? "none" : pdk;
@@ -2189,7 +2462,7 @@ public class NetlistBuilder {
                     modelName, wParam, lParam, multParam, nfParam,
                     componentNumber, subcircuitNodes, "",
                     wExpr, lExpr, multExpr, nfExpr,
-                    acValue, acValueExpr).withPdkName(pdkName);
+                    acValue, acValueExpr).withPdkName(pdkName).withModelKind(modelIsSubckt);
         }
 
         /** Copy with the value slot re-pointed at {@code expr}; the numeric
@@ -2201,7 +2474,7 @@ public class NetlistBuilder {
                     modelName, wParam, lParam, multParam, nfParam,
                     componentNumber, subcircuitNodes, expr,
                     wExpr, lExpr, multExpr, nfExpr,
-                    acValue, acValueExpr).withPdkName(pdkName);
+                    acValue, acValueExpr).withPdkName(pdkName).withModelKind(modelIsSubckt);
         }
 
         /** True if any expression slot references {@code varName}. */
@@ -2231,7 +2504,7 @@ public class NetlistBuilder {
                     modelName, w, l, m, n,
                     componentNumber, subcircuitNodes, ve,
                     we, le, me, ne,
-                    ac, ace).withPdkName(pdkName);
+                    ac, ace).withPdkName(pdkName).withModelKind(modelIsSubckt);
         }
 
         /** Which slot of this component references {@code varName}, or null. */

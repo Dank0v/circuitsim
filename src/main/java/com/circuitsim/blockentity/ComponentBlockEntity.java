@@ -183,6 +183,7 @@ public class ComponentBlockEntity extends BlockEntity {
         if (block == ModBlocks.VCVS.get())                 return "vcvs";
         if (block == ModBlocks.VCCS.get())                 return "vccs";
         if (block == ModBlocks.TRANSFORMER.get())          return "transformer";
+        if (block == ModBlocks.TRANSMISSION_LINE.get())    return "transmission_line";
         return "unknown";
     }
 
@@ -423,10 +424,13 @@ public class ComponentBlockEntity extends BlockEntity {
         if (tag.contains("ngBehavior")) {
             ngBehavior = tag.getString("ngBehavior");
             // Old saves may carry compat modes that are no longer offered
-            // ("lt" for LTspice, "ki" for Keysight). Quietly downgrade them
-            // to "none" so those blocks fall back to strict ngspice instead
-            // of leaving a now-invisible mode selected.
-            if ("lt".equals(ngBehavior) || "ki".equals(ngBehavior)) ngBehavior = "none";
+            // ("va" for Verilog-A). Quietly downgrade them to "none" so those
+            // blocks fall back to strict ngspice instead of leaving a
+            // now-invisible mode selected. ("ki" and "lt" once got the same
+            // treatment as removed modes; both have since been reintroduced —
+            // ki as the KiCad mode, lt as the LTspice mode — so they now
+            // load as-is.)
+            if ("va".equals(ngBehavior)) ngBehavior = "none";
         }
         if (tag.contains("simAnalysis")) simAnalysis = tag.getString("simAnalysis");
         if (tag.contains("simParam1"))   simParam1   = tag.getString("simParam1");
