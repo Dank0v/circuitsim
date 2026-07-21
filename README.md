@@ -84,6 +84,7 @@ The repository ships with a ready-to-play save in [`example_world/`](example_wor
 
 ## Known Issues / TODO
 
+- **Linux + Flatpak launchers** — when Minecraft runs through a Flatpak launcher (Prism, etc.), the sandbox can't see ngspice or your model-library files by default, so simulations fail with *"ngspice was not found"* or *"Could not find include file"*. Fixed with a `flatpak override` (and, for libraries, matching Linux's case-sensitive filenames): [ngspice not found on Linux (Flatpak)](https://github.com/Dank0v/circuitsim/wiki/ngspice-Not-Found-on-Linux-%28Flatpak%29) · [Library paths on Linux (Flatpak)](https://github.com/Dank0v/circuitsim/wiki/Library-Paths-on-Linux-%28Flatpak%29).
 
 ---
 
